@@ -1,8 +1,9 @@
 # Source provenance
 
 This bootstrap branch is locally prepared from `erniesg/erniesg` source SHA
-`90b0623f933c4f2915cc22f2eed0068c63066971`. Promotion remains conditional on
-that hardening commit landing and the coordinator reconfirming the exact SHA.
+`485edb69e83179d4a8b15dfbd324f4b5f89dda44`, the landed app default head.
+The app `src/struct` tree at that revision is
+`9adfe1bc352f31ddb40e34f6137d7157ed7e6ab7`.
 
 | App source | Package destination |
 | --- | --- |

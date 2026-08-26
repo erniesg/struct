@@ -11,9 +11,14 @@ import { legacyStructDigest, structDigest } from '../src/core/ids'
 import { sha256HexSync } from '../src/core/sha256'
 import { buildStructEpub } from '../src/renderers/epub'
 import { renderPublicationXhtml } from '../src/renderers/xhtml'
-import { MAX_STRUCT_ASSET_BYTES, parseBytes } from '../src/core/codec/bytes'
+import {
+  MAX_STRUCT_ASSET_BYTES,
+  parseBytes,
+  preflightBytes,
+} from '../src/core/codec/bytes'
 import { validateStructConsultationReceipt } from '../src/core/consultation-receipt'
 import { MAX_STRUCT_STRING_BYTES, stringValue } from '../src/core/codec/primitives'
+import { MAX_RENDERED_INLINE_SEGMENTS } from '../src/core/emitted-ids'
 
 const hash = 'a'.repeat(64)
 const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))
@@ -283,6 +288,19 @@ describe('STRUCT runtime codec', () => {
     expect(validateStructConsultationReceipt(receipt)).toBe(false)
   })
 
+  it('rejects negative zero in a source-neutral consultation receipt', () => {
+    expect(
+      validateStructConsultationReceipt({
+        schemaVersion: '1.0.0',
+        documentId: 'fixture-document',
+        sourceSha256: hash,
+        consultations: [],
+        decisions: [],
+        metrics: { rate: -0 },
+      }),
+    ).toBe(false)
+  })
+
   it('decodes a strict 0.1.0 document and restores JSON-safe asset bytes', () => {
     const decoded = decodeStructDocument(validDocument())
 
@@ -352,6 +370,9 @@ describe('STRUCT runtime codec', () => {
     'sl-rozaj-biske-1994',
     'en-US-u-ca-gregory',
     'x-private-private',
+    'en-x-a-a',
+    'en-a-foo-x-a-a',
+    'en-x-private-x-again',
   ])('accepts the BCP-47 language tag %s', (language) => {
     const value = validDocument()
     value.metadata.language = language
@@ -365,6 +386,14 @@ describe('STRUCT runtime codec', () => {
 
     expect(() => parseBytes(encoded, '$.asset.bytes')).toThrow(
       /resource bound/i,
+    )
+  })
+
+  it('accepts a base64 asset payload above the general text bound when its decoded size is bounded', () => {
+    const encoded = 'AAAA'.repeat(Math.ceil((MAX_STRUCT_STRING_BYTES + 4) / 4))
+
+    expect(preflightBytes(encoded, '$.asset.bytes')).toBe(
+      (encoded.length / 4) * 3,
     )
   })
 
@@ -2013,6 +2042,106 @@ describe('STRUCT runtime codec', () => {
       status: 'matched',
     }))
     expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('bounds numeric citation matching before materializing every token range', () => {
+    const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      kind: 'citation',
+      label: '1',
+      to: ['https://example.test/reference-1'],
+      status: 'matched',
+    }
+    value.blocks[0].text = '1 '.repeat(MAX_RENDERED_INLINE_SEGMENTS + 1)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: value.blocks[0].text.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'citation',
+      },
+    ]
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/citation.*budget/i)
+  })
+
+  it('skips an oversized comma-only citation label without tokenizing it', () => {
+    const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      kind: 'citation',
+      label: ','.repeat(3 * 1024 * 1024),
+      to: [],
+      status: 'matched',
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: value.blocks[0].text.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'citation',
+      },
+    ]
+
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
+  })
+
+  it('preserves bounded mismatched citation labels', () => {
+    const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      kind: 'citation',
+      label: 'Smith, 2020',
+      to: ['https://example.test/smith-2020'],
+      status: 'matched',
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: value.blocks[0].text.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'citation',
+      },
+    ]
+
+    expect(renderPublicationXhtml(value)).toContain(
+      'href="https://example.test/smith-2020"',
+    )
+  })
+
+  it('skips an oversized cross-reference label before tokenizing it', () => {
+    const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      kind: 'cross-reference',
+      label: 'a,'.repeat(1_500_000),
+      to: [
+        'https://example.test/reference-1',
+        'https://example.test/reference-2',
+      ],
+      status: 'matched',
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: value.blocks[0].text.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+    ]
+
+    expect(renderPublicationXhtml(value)).toContain(
+      'Additional cross-reference target 1',
+    )
   })
 
   it('rejects an early source budget before inspecting a later hostile source', () => {

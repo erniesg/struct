@@ -1366,6 +1366,23 @@ function preflightPublicationReceipt(value: unknown, path: string) {
     )
 }
 
+function snapshotPublicationReceipt(
+  value: unknown,
+  path: string,
+  state: PublicationSnapshotState,
+) {
+  return copyRecord(
+    dataEntries(value, path, MAX_STRUCT_DOCUMENT_ITEMS - state.nodes).map(
+      ([key, entry]) => [
+        key,
+        key === 'modelConsultations'
+          ? copyCanonicalJson(entry, `${path}.${key}`)
+          : snapshotPublicationValue(entry, `${path}.${key}`, state, 1),
+      ],
+    ),
+  )
+}
+
 function chargePublicationString(
   value: string,
   path: string,
@@ -1438,6 +1455,12 @@ function snapshotPublicationValue(
   if (typeof value === 'string') {
     return chargePublicationString(value, path, state)
   }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) fail('NUMBER', path, 'number must be finite')
+    if (Object.is(value, -0))
+      fail('NUMBER', path, 'negative zero is not canonical')
+    return value
+  }
   if (!value || typeof value !== 'object') return value
   if (state.active.has(value))
     fail('OBJECT', path, 'cycles are not permitted in publication input')
@@ -1485,7 +1508,7 @@ export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
             parseRecovery(entry, '$.recovery'))
           : key === 'receipt'
             ? (preflightPublicationReceipt(entry, '$.receipt'),
-              snapshotPublicationValue(entry, '$.receipt', state, 1))
+              snapshotPublicationReceipt(entry, '$.receipt', state))
             : snapshotPublicationValue(entry, `$.${key}`, state, 1),
     ]),
   ) as StructDocument

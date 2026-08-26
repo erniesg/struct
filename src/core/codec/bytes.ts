@@ -1,10 +1,4 @@
-import {
-  array,
-  fail,
-  integer,
-  isStructCodecError,
-  stringValue,
-} from './primitives'
+import { array, fail, integer, isStructCodecError } from './primitives'
 
 /** Bound decoded binary data before allocating an output buffer. */
 export const MAX_STRUCT_ASSET_BYTES = 128 * 1024 * 1024
@@ -66,7 +60,8 @@ function arrayByteLength(value: unknown, path: string) {
 }
 
 function encodedByteLength(value: unknown, path: string) {
-  const encoded = stringValue(value, path)
+  if (typeof value !== 'string') fail('TYPE', path, 'expected a base64 string')
+  const encoded = value
   if (
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
       encoded,

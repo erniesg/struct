@@ -474,12 +474,16 @@ function validatePages(document: StructDocument) {
       '$.pages',
       'page layouts cannot exceed source.pageCount',
     )
-  const pageNumbers = new Set(document.pages.map((page) => page.page))
+  const pagesByNumber = new Map(document.pages.map((page) => [page.page, page]))
+  const pageNumbers = new Set(pagesByNumber.keys())
   const checkPage = (page: number, path: string) => {
-    if (!pageNumbers.has(page))
+    if (!pagesByNumber.has(page))
       fail('PAGE_BINDING', path, 'page exceeds source.pageCount')
   }
   const blocksById = new Map(document.blocks.map((block) => [block.id, block]))
+  const pageBlockIds = new Map(
+    document.pages.map((page) => [page.page, new Set(page.blocks)]),
+  )
   for (const [index, page] of document.pages.entries()) {
     if (page.page > document.source.pageCount)
       fail(
@@ -509,6 +513,7 @@ function validatePages(document: StructDocument) {
       }
     }
     const columnBlockIds = page.columns.flatMap((column) => column.blockIds)
+    const columnBlockIdSet = new Set(columnBlockIds)
     if (new Set(columnBlockIds).size !== columnBlockIds.length)
       fail(
         'PAGE_BINDING',
@@ -517,7 +522,7 @@ function validatePages(document: StructDocument) {
       )
     if (
       columnBlockIds.length !== page.blocks.length ||
-      !page.blocks.every((blockId) => columnBlockIds.includes(blockId))
+      !page.blocks.every((blockId) => columnBlockIdSet.has(blockId))
     )
       fail(
         'PAGE_BINDING',
@@ -543,8 +548,7 @@ function validatePages(document: StructDocument) {
           `$.blocks[${index}].page`,
           'block page must be listed in block.evidence.pages',
         )
-      const page = document.pages.find((entry) => entry.page === block.page)
-      if (!page?.blocks.includes(block.id))
+      if (!pageBlockIds.get(block.page)?.has(block.id))
         fail(
           'PAGE_BINDING',
           `$.blocks[${index}].page`,

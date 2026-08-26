@@ -88,7 +88,8 @@ function canonicalJson(
     }
     return !credentialShapedValue(value)
   }
-  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value === 'number')
+    return Number.isFinite(value) && !Object.is(value, -0)
   if (typeof value !== 'object' || active.has(value)) return false
 
   active.add(value)

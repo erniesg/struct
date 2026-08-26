@@ -8,6 +8,7 @@ import {
   buildRenderedPublicationPlan,
   emittedXhtmlIds,
   groupedCitationLinks,
+  isPackagedAssetId,
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
@@ -182,11 +183,29 @@ function renderAuthors(
   publicationPlan: RenderedPublicationPlan,
 ) {
   if (document.metadata.authors.length === 0) return ''
+  const targetCache = new Map<string, ReturnType<typeof resolveStructTarget>>()
+  for (const asset of document.assets)
+    if (isPackagedAssetId(asset.id))
+      targetCache.set(asset.id, {
+        id: asset.id,
+        href: asset.href,
+        kind: 'asset',
+      })
+  for (const block of document.blocks)
+    if (block.kind !== 'furniture' && !targetCache.has(block.id))
+      targetCache.set(block.id, {
+        id: block.id,
+        href: `#${block.id}`,
+        kind: 'block',
+      })
   const authors = document.metadata.authors
     .map((author) => {
       const references = (publicationPlan.authorNotesByAuthor.get(author) ?? [])
         .map((reference) => {
-          const target = resolveStructTarget(document, reference.target)
+          const target =
+            targetCache.get(reference.target) ??
+            resolveStructTarget(document, reference.target)
+          targetCache.set(reference.target, target)
           emittedRelationshipIds.add(stableId(reference.id))
           return `<sup><a id="${attribute(stableId(reference.id))}" href="${attribute(target.href)}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`
         })

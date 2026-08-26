@@ -46,7 +46,9 @@ export function bcp47Language(value: unknown, path: string) {
 
   const extensionSingletons = new Set<string>()
   for (const subtag of parsed.split('-')) {
-    if (subtag.length !== 1 || subtag.toLowerCase() === 'x') continue
+    if (subtag.length !== 1) continue
+    // BCP-47 private-use subtags are opaque and consume the remainder.
+    if (subtag.toLowerCase() === 'x') break
     const singleton = subtag.toLowerCase()
     if (extensionSingletons.has(singleton))
       fail(

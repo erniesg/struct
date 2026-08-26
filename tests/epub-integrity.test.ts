@@ -172,6 +172,18 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
+  it.each([NaN, Infinity, -Infinity, -0])(
+    'rejects non-canonical number %s through the direct EPUB boundary',
+    async (number) => {
+      const document = documentWithHref('#target')
+      document.blocks[0]!.evidence.confidence = number
+
+      await expect(buildStructEpub(document)).rejects.toThrow(
+        /number|finite|negative zero/i,
+      )
+    },
+  )
+
   it('rejects oversized generic receipt JSON before direct EPUB snapshotting', async () => {
     const document = documentWithHref('#target')
     document.receipt.modelConsultations = {
@@ -186,6 +198,42 @@ describe('STRUCT EPUB href integrity', () => {
     await expect(buildStructEpub(document)).rejects.toThrow(
       'INVALID_MODEL_CONSULTATION_RECEIPT',
     )
+  })
+
+  it('bounds a stateful generic receipt proxy during direct EPUB snapshotting', async () => {
+    const document = documentWithHref('#target')
+    let descriptorReads = 0
+    document.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: document.documentId!,
+      sourceSha256: document.source.sha256,
+      consultations: [],
+      decisions: [],
+      metrics: new Proxy(
+        {},
+        {
+          ownKeys() {
+            return ['field']
+          },
+          getOwnPropertyDescriptor() {
+            descriptorReads += 1
+            if (descriptorReads > 3)
+              throw new Error('receipt was traversed after copy rejection')
+            return {
+              configurable: true,
+              enumerable: true,
+              value:
+                descriptorReads < 3 ? 'small' : 'x'.repeat(10 * 1024 * 1024),
+            }
+          },
+        },
+      ),
+    }
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+    expect(descriptorReads).toBe(3)
   })
 
   it('rejects aggregate recovery text before direct EPUB parsing', async () => {
