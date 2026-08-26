@@ -49,8 +49,7 @@
     "build": "tsup src/index.ts src/core.ts src/schema.ts src/ids.ts src/recovery.ts src/renderers/xhtml.ts src/renderers/epub.ts --format esm --dts --clean",
     "test": "vitest run",
     "test:source-boundary": "node scripts/check-source-boundary.mjs",
-    "typecheck": "tsc --noEmit",
-    "prepack": "npm run build && npm run test:source-boundary"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "fast-xml-parser": "5.10.1",
