@@ -1,0 +1,72 @@
+{
+  "name": "@erniesg/struct",
+  "version": "0.0.0",
+  "description": "Source-neutral StructDocument codecs and deterministic document renderers.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "MIGRATION.md",
+    "NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./ids": {
+      "types": "./dist/ids.d.ts",
+      "import": "./dist/ids.js"
+    },
+    "./recovery": {
+      "types": "./dist/recovery.d.ts",
+      "import": "./dist/recovery.js"
+    },
+    "./renderers/xhtml": {
+      "types": "./dist/renderers/xhtml.d.ts",
+      "import": "./dist/renderers/xhtml.js"
+    },
+    "./renderers/epub": {
+      "types": "./dist/renderers/epub.d.ts",
+      "import": "./dist/renderers/epub.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts src/core.ts src/schema.ts src/ids.ts src/recovery.ts src/renderers/xhtml.ts src/renderers/epub.ts --format esm --dts --clean",
+    "test": "vitest run",
+    "test:source-boundary": "node scripts/check-source-boundary.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.10.1",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "tsup": "8.5.0",
+    "typescript": "5.9.2",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "directories": {
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": ""
+}
