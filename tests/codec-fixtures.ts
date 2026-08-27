@@ -1,5 +1,5 @@
-import { legacyStructDigest, structDigest } from '../src/core/ids'
-import { sha256HexSync } from '../src/core/sha256'
+import { legacyStructDigest, structDigest } from '../src/identity'
+import { sha256HexSync } from '../src/sha256'
 
 export const hash = 'a'.repeat(64)
 export const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))

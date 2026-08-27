@@ -3,18 +3,20 @@ import type {
   StructDocument,
   StructTable,
   StructTableCell,
-} from '../core/types'
+} from '../document/types'
 import {
   buildRenderedPublicationPlan,
   emittedXhtmlIds,
   groupedCitationLinks,
   isPackagedAssetId,
+  RenderedPublicationPlanError,
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
   type RenderedInlineSourcePlan,
   type RenderedPublicationPlan,
-} from '../core/emitted-ids'
+} from './xhtml-plan'
+import { normalizeStructDocumentForRenderer } from './ingress'
 
 export type StructXhtmlOptions = {
   embedStyles?: boolean
@@ -291,10 +293,16 @@ function renderBlock(
 }
 
 function assertUniqueEmittedIds(entries: readonly EmittedXhtmlId[]) {
-  const seen = new Set<string>()
-  for (const { id } of entries) {
-    if (seen.has(id)) throw new Error(`STRUCT XHTML duplicate id ${id}`)
-    seen.add(id)
+  const seen = new Map<string, string>()
+  for (const { id, path } of entries) {
+    const previous = seen.get(id)
+    if (previous)
+      throw new RenderedPublicationPlanError(
+        'DUPLICATE_IDENTIFIER',
+        path,
+        `emitted XHTML identifier ${id} is also used by ${previous}`,
+      )
+    seen.set(id, path)
   }
 }
 
@@ -303,6 +311,7 @@ export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
+  document = normalizeStructDocumentForRenderer(document, 'xhtml')
   const publicationPlan = buildRenderedPublicationPlan(document)
   assertUniqueEmittedIds(emittedXhtmlIds(document, publicationPlan))
   const emittedRelationshipIds = new Set<string>()

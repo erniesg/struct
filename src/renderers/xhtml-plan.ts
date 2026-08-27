@@ -1,4 +1,4 @@
-import type { StructDocument, StructInline } from './types'
+import type { StructDocument, StructInline } from '../document/types'
 
 const EPUB_RESERVED_IDS = new Set([
   'publication-id',

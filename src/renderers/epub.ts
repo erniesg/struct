@@ -8,26 +8,20 @@ import {
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import {
-  snapshotStructDocumentForEpub,
-  validateStructDocumentTableBounds,
-} from '../core/codec/parsers'
-import { isStructCodecError } from '../core/codec/primitives'
-import {
   bcp47Language,
   mediaType,
   rfc3339Date,
   rfc3339DateTime,
-} from '../core/codec/standards'
-import { sha256HexSync } from '../core/sha256'
-import { legacyStructDigestMatches, structDigest } from '../core/ids'
-import { validateStructConsultationReceipt } from '../core/consultation-receipt'
-import { isPackagedAssetId } from '../core/emitted-ids'
+} from '../document/codec/standards'
+import { sha256HexSync } from '../sha256'
+import { verifyStructReceipt } from '../receipt'
+import { isPackagedAssetId } from './xhtml-plan'
 import { renderPublicationXhtml } from './xhtml'
+import type { StructDocument } from '../document/types'
 import {
-  LEGACY_STRUCT_SCHEMA_VERSION,
-  STRUCT_SCHEMA_VERSION,
-  type StructDocument,
-} from '../core/types'
+  isRendererIngressCodecError,
+  normalizeStructDocumentForRenderer,
+} from './ingress'
 
 const EPUB_MIMETYPE = 'application/epub+zip' as const
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
@@ -356,67 +350,6 @@ function assertXhtmlHrefIntegrity(
   }
 }
 
-function assertStructReceiptIntegrity(document: StructDocument) {
-  const receipt = document.receipt
-  const hasLegacyDocumentBinding =
-    document.documentId === undefined &&
-    receipt.documentId === undefined &&
-    receipt.modelConsultations === undefined
-  const hasBoundDocumentId =
-    typeof document.documentId === 'string' &&
-    document.documentId.length > 0 &&
-    receipt.documentId === document.documentId
-  const hasLegacySchema =
-    document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION &&
-    receipt.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
-  const hasCurrentSchema =
-    document.schemaVersion === STRUCT_SCHEMA_VERSION &&
-    receipt.schemaVersion === STRUCT_SCHEMA_VERSION
-  if (
-    (!(hasLegacySchema && hasLegacyDocumentBinding) && !hasBoundDocumentId) ||
-    (!hasLegacySchema && !hasCurrentSchema) ||
-    receipt.sourceSha256 !== document.source.sha256 ||
-    receipt.blockCount !== document.blocks.length ||
-    receipt.assetCount !== document.assets.length ||
-    receipt.relationshipCount !== document.relationships.length ||
-    receipt.diagnosticCount !== document.diagnostics.length ||
-    receipt.textCharacterCount !== receipt.conservation.sourceTextCharacterCount
-  ) {
-    throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH')
-  }
-
-  const modelConsultations = receipt.modelConsultations
-  if (modelConsultations !== undefined) {
-    if (!validateStructConsultationReceipt(modelConsultations)) {
-      throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
-    }
-    if (modelConsultations.sourceSha256 !== document.source.sha256) {
-      throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
-    }
-    if (modelConsultations.documentId !== document.documentId) {
-      throw new Error('MODEL_CONSULTATION_DOCUMENT_MISMATCH')
-    }
-  }
-
-  const { receipt: _receipt, ...withoutReceipt } = document
-  const digestInput = {
-    ...withoutReceipt,
-    conservation: receipt.conservation,
-    ...(modelConsultations ? { modelConsultations } : {}),
-    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
-  }
-  const expectedGeneratedSha256 = structDigest(digestInput)
-  if (
-    expectedGeneratedSha256 !== receipt.generatedSha256 &&
-    !(
-      hasLegacySchema &&
-      legacyStructDigestMatches(digestInput, receipt.generatedSha256)
-    )
-  ) {
-    throw new Error('STRUCT_RECEIPT_DIGEST_MISMATCH')
-  }
-}
-
 /** Assemble a deterministic EPUB using only the canonical STRUCT contract. */
 export function buildStructEpub(
   document: StructDocument,
@@ -429,12 +362,11 @@ export async function buildStructEpub(
   document: StructDocument,
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
-  validateStructDocumentTableBounds(document)
   try {
-    document = snapshotStructDocumentForEpub(document)
+    document = normalizeStructDocumentForRenderer(document, 'epub')
   } catch (error) {
     if (
-      isStructCodecError(error) &&
+      isRendererIngressCodecError(error) &&
       ((error.code === 'BUDGET' && error.path === '$.assets') ||
         error.code === 'ASSET_BOUNDS' ||
         (error.path.startsWith('$.assets[') &&
@@ -443,16 +375,32 @@ export async function buildStructEpub(
     )
       throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT', { cause: error })
     if (
-      isStructCodecError(error) &&
+      isRendererIngressCodecError(error) &&
       error.path.startsWith('$.receipt.modelConsultations')
     )
       throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT', { cause: error })
+    if (
+      isRendererIngressCodecError(error) &&
+      (error.code === 'SCHEMA_VERSION' ||
+        error.code === 'MIGRATION' ||
+        error.code === 'BINDING' ||
+        error.path === '$.documentId')
+    )
+      throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH', { cause: error })
+    if (isRendererIngressCodecError(error) && error.code === 'DIGEST')
+      throw new Error('STRUCT_RECEIPT_DIGEST_MISMATCH', { cause: error })
+    if (isRendererIngressCodecError(error) && error.code === 'REFERENCE')
+      throw new Error('STRUCT EPUB has a dangling internal reference', {
+        cause: error,
+      })
+    if (isRendererIngressCodecError(error) && error.code === 'URL')
+      throw new Error('STRUCT EPUB has an unsafe href', { cause: error })
     throw error
   }
-  validateStructDocumentTableBounds(document)
   assertBuilderScalars(document)
   assertNoSemanticZeroWidthRuns(document)
-  assertStructReceiptIntegrity(document)
+  if (!verifyStructReceipt(document))
+    throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH')
   if (document.recovery.status !== 'ready')
     throw new Error('STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED')
   assertNoNegativeZero(document)

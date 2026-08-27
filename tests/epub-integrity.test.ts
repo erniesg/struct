@@ -1,10 +1,10 @@
 import { strFromU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { assertStructEpubArchiveByteLength, buildStructEpub } from '../src/renderers/epub'
-import { MAX_STRUCT_STRING_BYTES } from '../src/core/codec/primitives'
-import { legacyStructDigest, structDigest } from '../src/core/ids'
-import { sha256HexSync } from '../src/core/sha256'
-import type { StructDocument } from '../src/core/types'
+import { MAX_STRUCT_STRING_BYTES } from '../src/document/codec/primitives'
+import { legacyStructDigest, structDigest } from '../src/identity'
+import { sha256HexSync } from '../src/sha256'
+import type { StructDocument } from '../src/document/types'
 
 function refreshReceipt(document: StructDocument) {
   document.receipt.documentId = document.documentId

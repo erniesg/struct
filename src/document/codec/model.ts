@@ -10,7 +10,7 @@ import {
   MAX_STRUCT_RECEIPT_JSON_STRING_BYTES,
   MAX_STRUCT_RECEIPT_JSON_TOTAL_BYTES,
   preflightStructConsultationReceipt,
-} from '../consultation-receipt'
+} from '../../receipt'
 
 const MAX_CANONICAL_DEPTH = 128
 const MAX_CANONICAL_NODES = 100_000

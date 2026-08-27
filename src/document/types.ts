@@ -1,5 +1,3 @@
-import type { StructConsultationReceipt } from './consultation-receipt'
-
 /**
  * Source-agnostic document structure used between extraction and typesetting.
  *
@@ -13,6 +11,16 @@ export const LEGACY_STRUCT_SCHEMA_VERSION = '0.1.0' as const
 export const STRUCT_SCHEMA_VERSION = '0.2.0' as const
 export type StructSchemaVersion =
   typeof LEGACY_STRUCT_SCHEMA_VERSION | typeof STRUCT_SCHEMA_VERSION
+
+export type StructConsultationReceipt = {
+  schemaVersion: string
+  documentId: string
+  sourceSha256: string | null
+  consultations: readonly Record<string, unknown>[]
+  decisions: readonly Record<string, unknown>[]
+  metrics: Record<string, unknown>
+  semanticStateSha256?: string
+}
 
 export type StructSourceFormat = 'pdf' | 'docx' | 'html' | 'image' | 'unknown'
 
