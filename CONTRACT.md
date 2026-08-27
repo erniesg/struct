@@ -1,11 +1,10 @@
 # Struct package contract
 
-This is the normative package contract for `@erniesg/struct`. ADR-0001,
-`docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md`
-at architecture head `61185b79309c853d2ef640838a3802526cd15522`, is the
-detailed normative architecture source for the planned Bundle protocol. This
-document freezes the package-level decisions without duplicating that protocol
-verbatim.
+This is the normative package contract for `@erniesg/struct`. The accepted
+[ADR-0001](https://github.com/erniesg/erniesg/blob/131560e07ef692c27f57acd40a89eaac1f975d62/docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md)
+at Ernie.SG commit `131560e07ef692c27f57acd40a89eaac1f975d62` is the detailed
+normative architecture source for the planned Bundle protocol. This document
+freezes the package-level decisions without duplicating that protocol verbatim.
 
 ## Ownership and state
 
@@ -85,17 +84,38 @@ and copy asset bytes on every read; forged handles and mutation/aliasing fail to
 alter verified content.
 
 External assets use only an explicit, versioned isolated resolver/executor
-protocol. The package has no implicit network or filesystem access. Resolver
-allocation is side-effect-free and supplies one-shot start control, a unique
-non-reused execution ID, synchronous revocation/quarantine, idempotent cleanup,
-and terminal join receipts before adapter authority starts. The request carries
-separate `logicalHref`, digest-only `resourceId`, expected asset metadata,
-versioned strict policy, policy digest, monotonic budget, and cancellation
-signal. Trusted consumer configuration maps a resource ID to transport
-authority; URLs, paths, storage keys, headers, and credentials never enter
-canonical bytes, errors, receipts, or logs. Missing executor, unresolved asset,
-policy/receipt mismatch, timeout, cancellation, incomplete cleanup, or returned
-byte mismatch fails verification.
+protocol. The package has no implicit network or filesystem access. Allocation
+is side-effect-free: before any adapter authority can start, it returns a
+supervisor-controlled handle with a collision-resistant, lifetime-unique
+execution ID plus independently controlled `revokeAndQuarantine()`, idempotent
+`cleanup()`, and `terminateAndJoin()` operations. It returns control, not a
+terminal receipt, before one-shot `start()` atomically consumes the sole
+authority-granting start right. A terminal receipt is produced only by teardown
+after start or a pre-start failure.
+
+Every outcome—success, synchronous startup throw, rejection, timeout,
+never-settling start, stream error, limit breach, cancellation, or cleanup
+failure—closes future grants and descendant admission; attempts revocation,
+iterator return where available, cleanup within the reserved budget, and then
+terminates and joins the isolated host before returning. All accepted
+revocation/terminal receipts are bound to the active exact execution ID.
+Missing, mismatched, swapped, failed, or never-settling revocation or terminal
+join receipts force parent-proven fail-stop, proof that the host and descendants
+are dead, permanent retirement/tombstoning of the implicated capacity, and no
+normal completion or capacity reuse. After accepted revocation, instrumentation
+must prove zero surviving broker grants/calls and zero admitted descendants.
+
+The request carries separate `logicalHref`, digest-only `resourceId`, expected
+asset metadata, versioned strict policy, policy digest, monotonic budget, and
+cancellation signal. Trusted consumer configuration maps a resource ID to
+transport authority; URLs, paths, storage keys, headers, and credentials never
+enter canonical bytes, errors, receipts, or logs. Missing executor, unresolved
+asset, policy/receipt mismatch, timeout, cancellation, incomplete cleanup, or
+returned-byte mismatch fails verification. S-03 conformance must cover duplicate
+and retired execution IDs, late completion after timeout/revocation, revocation
+failure, mismatched or swapped receipts, never-settling cleanup/join, residual
+work, and zero post-revocation authority, alongside one-shot start and ordinary
+success/failure cases.
 
 The public versioned limits profile caps raw input, each field, each asset,
 asset count, decoded bytes, aggregate bytes, concurrency, nesting, and string
@@ -108,6 +128,15 @@ recompute unkeyed digests and receipts. A provenance-requiring consumer must
 authenticate an Ernie.SG producer release/export record or detached signature
 bound to `bundleSha256`, and persist its own exact package pin and import/event
 receipt.
+
+For any consumer ingress that can resolve external assets, producer
+authentication is ordered before decoding: cap and hash raw envelope bytes;
+authenticate current, fresh, audience-authorized, rollback-safe policy/status
+producer evidence bound to that digest; then invoke the exact-pinned bytes-only
+decoder with that authenticated digest as `expectedBundleSha256`. A forged,
+revoked, stale, wrong-audience, replayed, or digest-mismatched record fails
+before resolver allocation or `start()`. Later S-03/consumer negative tests
+must prove zero allocation and zero start for each of those evidence failures.
 
 ## Current public surface
 

@@ -6,10 +6,12 @@ relationships, reading order, source-neutral diagnostics/recovery facts,
 semantic receipts, and deterministic XHTML/reflowable EPUB output. It does not
 own acquisition, PDF/DOCX/URL extraction, private reconstruction,
 source-specific recovery wording, editorial decisions, approvals, release
-records, application UI, providers, credentials, deployment, or public routes;
-those are Ernie.SG responsibilities. Aether may consume a verified, pinned
-bundle but owns visual composition and derivatives. Rucksack remains generic
-orchestration and owns none of these domain models.
+records, application UI, providers, or public routes. Ernie.SG owns its
+source-specific acquisition, reconstruction, editorial, and public-delivery
+responsibilities. Credentials and deployment authority stay at each owning
+application/adapter boundary; Struct never receives them. Aether may consume a
+verified, pinned bundle but owns visual composition and derivatives. Rucksack
+remains generic orchestration and owns none of these domain models.
 
 ## State and evidence
 

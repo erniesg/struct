@@ -2,20 +2,21 @@
 
 This manifest records current executable exports at base
 `6ecb78d1753b847ec7295bf45f43237225663728` and the documented first-release
-target from ADR-0001. It does not modify runtime exports. Current aliases are
-private-package prerelease compatibility only, not a promise of a released API.
+target from ADR-0001. It does not modify runtime exports. The table separates
+what exists now from each path's first-release disposition; a current facade is
+not automatically a permanent stable API.
 
 ## Current package exports
 
-| Current path | Source barrel | Classification | Contents |
-| --- | --- | --- | --- |
-| `@erniesg/struct` | `src/index.ts` | Current prerelease alias | Document types; codec operations; IDs; reading order; recovery; XHTML/EPUB renderer exports. |
-| `@erniesg/struct/core` | `src/core.ts` | Current prerelease alias | Types, IDs, reading order, recovery, consultation receipt. |
-| `@erniesg/struct/schema` | `src/schema.ts` | Current prerelease alias | Codec operations, `StructDocumentJson`, document types. |
-| `@erniesg/struct/ids` | `src/ids.ts` | Current prerelease alias | ID and semantic-digest operations. |
-| `@erniesg/struct/recovery` | `src/recovery.ts` | Intended stable first-release surface | Structured source-neutral recovery utilities. |
-| `@erniesg/struct/renderers/xhtml` | `src/renderers/xhtml.ts` | Intended stable first-release surface | `renderPublicationXhtml`, `StructXhtmlOptions`. |
-| `@erniesg/struct/renderers/epub` | `src/renderers/epub.ts` | Intended stable first-release surface | `buildStructEpub`, EPUB export/profile/options types, archive-size assertion. |
+| Current path | Source barrel | Current form | First-release disposition | Contents |
+| --- | --- | --- | --- | --- |
+| `@erniesg/struct` | `src/index.ts` | Current private prerelease root facade | Intended stable slim root facade | Document types; codec operations; IDs; reading order; recovery; XHTML/EPUB renderer exports. |
+| `@erniesg/struct/core` | `src/core.ts` | Current prerelease compatibility alias | Replace/remove after the documented alias window | Types, IDs, reading order, recovery, consultation receipt. |
+| `@erniesg/struct/schema` | `src/schema.ts` | Current prerelease compatibility alias | Replace/remove after the documented alias window | Codec operations, `StructDocumentJson`, document types. |
+| `@erniesg/struct/ids` | `src/ids.ts` | Current prerelease compatibility alias | Replace/remove after the documented alias window | ID and semantic-digest operations. |
+| `@erniesg/struct/recovery` | `src/recovery.ts` | Current private prerelease facade | Intended stable recovery subpath | Structured source-neutral recovery utilities. |
+| `@erniesg/struct/renderers/xhtml` | `src/renderers/xhtml.ts` | Current private prerelease facade | Intended stable renderer subpath | `renderPublicationXhtml`, `StructXhtmlOptions`. |
+| `@erniesg/struct/renderers/epub` | `src/renderers/epub.ts` | Current private prerelease facade | Intended stable renderer subpath | `buildStructEpub`, EPUB export/profile/options types, archive-size assertion. |
 
 The root currently re-exports `StructCodecError`, `decodeStructDocument`,
 `encodeStructDocument`, and `migrateStructDocument`; the latter is a current
