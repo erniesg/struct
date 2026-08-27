@@ -10,7 +10,9 @@
     "dist",
     "LICENSE",
     "README.md",
+    "CONTRACT.md",
     "MIGRATION.md",
+    "API.md",
     "NOTICE"
   ],
   "exports": {
