@@ -15,6 +15,9 @@ function refreshReceipt(document: StructDocument) {
   document.receipt.assetCount = document.assets.length
   document.receipt.relationshipCount = document.relationships.length
   document.receipt.diagnosticCount = document.diagnostics.length
+  document.receipt.conservation.sourceAssetCount = document.assets.length
+  document.receipt.conservation.accountedSourceAssetCount = document.assets.length
+  document.receipt.conservation.structAssetCount = document.assets.length
   const { receipt, ...withoutReceipt } = document
   receipt.generatedSha256 = structDigest({
     ...withoutReceipt,
@@ -399,8 +402,6 @@ describe('STRUCT EPUB href integrity', () => {
 
   it.each([
     ['same-document fragment', '#target'],
-    ['packaged XHTML fragment', 'content.xhtml#target'],
-    ['packaged document', 'nav.xhtml'],
     ['HTTP URL', 'http://example.test/reference'],
     ['HTTPS URL', 'https://example.test/reference?q=one&part=two'],
     ['email URL', 'mailto:reader@example.test'],
@@ -411,6 +412,15 @@ describe('STRUCT EPUB href integrity', () => {
       mediaType: 'application/epub+zip',
       mode: 'publication',
     })
+  })
+
+  it.each([
+    ['packaged XHTML fragment', 'content.xhtml#target'],
+    ['packaged document', 'nav.xhtml'],
+  ])('rejects a semantically undeclared %s', async (_label, href) => {
+    await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
+      /unsafe href/i,
+    )
   })
 
   it('accepts serialized legacy 0.1.0 documents without document bindings', async () => {
@@ -507,13 +517,19 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
-  it.each([
-    ['missing fragment', '#missing'],
-    ['missing packaged document', 'missing.xhtml'],
-    ['missing fragment in a packaged document', 'content.xhtml#missing'],
-  ])('rejects a %s', async (_label, href) => {
+  it('rejects a missing fragment', async () => {
+    const href = '#missing'
     await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
       /dangling internal reference/i,
+    )
+  })
+
+  it.each([
+    ['missing packaged document', 'missing.xhtml'],
+    ['missing fragment in a packaged document', 'content.xhtml#missing'],
+  ])('rejects a semantically undeclared %s', async (_label, href) => {
+    await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
+      /unsafe href/i,
     )
   })
 
@@ -551,7 +567,7 @@ describe('STRUCT EPUB href integrity', () => {
       })
 
       await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
-        /dangling internal reference/i,
+        /unsafe href/i,
       )
     },
   )

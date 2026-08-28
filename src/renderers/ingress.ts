@@ -1,5 +1,6 @@
 import type { StructDocument } from '../document/index'
 import {
+  decodeStructDocument,
   snapshotStructDocumentForRenderer,
   validateStructDocumentTableBounds,
 } from '../document/codec/parsers'
@@ -10,7 +11,9 @@ export function normalizeStructDocumentForRenderer(
   input: StructDocument,
 ): StructDocument {
   validateStructDocumentTableBounds(input)
-  const document = snapshotStructDocumentForRenderer(input)
+  const document = decodeStructDocument(
+    snapshotStructDocumentForRenderer(input),
+  )
   validateStructDocumentTableBounds(document)
   return document
 }

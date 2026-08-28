@@ -384,7 +384,8 @@ export async function buildStructEpub(
       (error.code === 'SCHEMA_VERSION' ||
         error.code === 'MIGRATION' ||
         error.code === 'BINDING' ||
-        error.path === '$.documentId')
+        error.path === '$.documentId' ||
+        error.path === '$.receipt.documentId')
     )
       throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH', { cause: error })
     if (isRendererIngressCodecError(error) && error.code === 'DIGEST')

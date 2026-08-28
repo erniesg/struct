@@ -29,6 +29,48 @@ import {
 } from '../src/renderers/xhtml-plan'
 import { hash, seal, validDocument } from './codec-fixtures'
 
+type InvalidSemanticDocumentCase = [
+  label: string,
+  mutate: (value: any) => void,
+  code: string,
+  path: string,
+]
+
+const invalidXhtmlSemanticDocuments: InvalidSemanticDocumentCase[] = [
+  [
+    'unknown root field',
+    (value) => {
+      value.unexpected = 'sealed-but-undeclared'
+    },
+    'UNKNOWN_FIELD',
+    '$.unexpected',
+  ],
+  [
+    'invalid base direction',
+    (value) => {
+      value.metadata.baseDirection = 'sideways'
+    },
+    'ENUM',
+    '$.metadata.baseDirection',
+  ],
+  [
+    'invalid BCP-47 language',
+    (value) => {
+      value.metadata.language = 'not a language'
+    },
+    'LANGUAGE',
+    '$.metadata.language',
+  ],
+  [
+    'invalid block kind',
+    (value) => {
+      value.blocks[0].kind = 'unsupported-kind'
+    },
+    'ENUM',
+    '$.blocks[0].kind',
+  ],
+]
+
 describe('STRUCT publication rendering', () => {
   it('rejects an invalid semantic receipt through the direct XHTML boundary', () => {
     const value = validDocument() as any
@@ -55,6 +97,36 @@ describe('STRUCT publication rendering', () => {
 
     expect(() => renderPublicationXhtml(value)).toThrow(/accessor|data value/i)
   })
+
+  it.each(invalidXhtmlSemanticDocuments)(
+    'rejects a receipt-sealed %s through the direct XHTML boundary',
+    (_label, mutate, code, path) => {
+      const value = validDocument() as any
+      mutate(value)
+      seal(value)
+
+      try {
+        renderPublicationXhtml(value)
+        throw new Error('expected strict semantic ingress rejection')
+      } catch (error) {
+        expect(error).toBeInstanceOf(StructCodecError)
+        expect((error as StructCodecError).code).toBe(code)
+        expect((error as StructCodecError).path).toBe(path)
+      }
+    },
+  )
+
+  it.each(invalidXhtmlSemanticDocuments)(
+    'rejects a receipt-sealed %s through the direct EPUB boundary',
+    async (_label, mutate, code, path) => {
+      const value = validDocument() as any
+      mutate(value)
+      seal(value)
+      value.assets[0].bytes = new Uint8Array([0, 255, 128])
+
+      await expect(buildStructEpub(value)).rejects.toMatchObject({ code, path })
+    },
+  )
 
   it('defers normalized emitted-id collisions to the XHTML boundary', () => {
     const value = validDocument()
@@ -716,7 +788,7 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('defers semantic expansion budgets to renderer ingress', async () => {
@@ -779,7 +851,7 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('does not expand shadowed semantic owners before selecting the rendered owner', () => {
@@ -854,7 +926,7 @@ describe('STRUCT publication rendering', () => {
       },
     )
     value.blocks.push(later)
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('uses the planning target index instead of scanning document nodes per target', () => {
@@ -995,6 +1067,9 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
+    value.receipt.textCharacterCount = 800
+    value.receipt.conservation.sourceTextCharacterCount = 800
+    value.receipt.conservation.structTextCharacterCount = 800
     seal(value)
     expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
@@ -1036,7 +1111,7 @@ describe('STRUCT publication rendering', () => {
       from: `citation-block-${index}`,
       status: 'matched',
     }))
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('bounds numeric citation matching before materializing every token range', () => {
@@ -1060,7 +1135,9 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
-    expect(() => renderPublicationXhtml(value)).toThrow(/citation.*budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(
+      /citation.*budget/i,
+    )
   })
 
   it('skips an oversized comma-only citation label without tokenizing it', () => {
@@ -1169,7 +1246,7 @@ describe('STRUCT publication rendering', () => {
       },
     )
     value.blocks.push(later)
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('accepts the exact active-owner and wrapper budget boundary', () => {
