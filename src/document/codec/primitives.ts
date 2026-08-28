@@ -1,4 +1,4 @@
-import { SAFE_ID } from '../ids'
+import { SAFE_ID } from '../../identity'
 
 export type DataObject = Record<string, unknown>
 export type EnumValue<T extends readonly string[]> = T[number]

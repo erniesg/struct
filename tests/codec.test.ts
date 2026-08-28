@@ -6,19 +6,23 @@ import {
   encodeStructDocument,
   migrateStructDocument,
   StructCodecError,
-} from '../src/schema'
-import { legacyStructDigest, structDigest } from '../src/core/ids'
-import { sha256HexSync } from '../src/core/sha256'
+} from '../src/document/index'
+import { structDigest } from '../src/identity'
+import { legacyStructDigest } from '../src/legacy-digest'
+import { sha256HexSync } from '../src/sha256'
 import { buildStructEpub } from '../src/renderers/epub'
 import { renderPublicationXhtml } from '../src/renderers/xhtml'
 import {
   MAX_STRUCT_ASSET_BYTES,
   parseBytes,
   preflightBytes,
-} from '../src/core/codec/bytes'
-import { validateStructConsultationReceipt } from '../src/core/consultation-receipt'
-import { MAX_STRUCT_STRING_BYTES, stringValue } from '../src/core/codec/primitives'
-import { MAX_RENDERED_INLINE_SEGMENTS } from '../src/core/emitted-ids'
+} from '../src/document/codec/bytes'
+import { validateStructConsultationReceipt } from '../src/receipt'
+import {
+  MAX_STRUCT_STRING_BYTES,
+  stringValue,
+} from '../src/document/codec/primitives'
+import { MAX_RENDERED_INLINE_SEGMENTS } from '../src/renderers/xhtml-plan'
 import { hash, seal, validDocument } from './codec-fixtures'
 
 describe('STRUCT runtime codec', () => {

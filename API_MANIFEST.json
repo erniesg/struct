@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "1.0.0",
+  "packageName": "@erniesg/struct",
+  "exportPaths": [
+    ".",
+    "./document",
+    "./identity",
+    "./ordering",
+    "./receipt",
+    "./recovery",
+    "./renderers/xhtml",
+    "./renderers/epub"
+  ],
+  "runtimeExports": {
+    ".": [
+      "LEGACY_STRUCT_SCHEMA_VERSION",
+      "STRUCT_SCHEMA_VERSION",
+      "StructCodecError",
+      "decodeCompatibleStructDocument",
+      "decodeStructDocument",
+      "encodeStructDocument",
+      "migrateStructDocument"
+    ],
+    "./document": [
+      "LEGACY_STRUCT_SCHEMA_VERSION",
+      "STRUCT_SCHEMA_VERSION",
+      "StructCodecError",
+      "decodeCompatibleStructDocument",
+      "decodeStructDocument",
+      "encodeStructDocument",
+      "migrateStructDocument"
+    ],
+    "./identity": [
+      "CREDENTIAL_SHAPED_ID_PATTERNS",
+      "SAFE_ID",
+      "SAFE_ID_FORMAT",
+      "credentialShapedValue",
+      "structDigest",
+      "structId"
+    ],
+    "./ordering": [
+      "orderBlocksByLayout",
+      "pageLayoutsFromBlocks"
+    ],
+    "./receipt": [
+      "MAX_STRUCT_RECEIPT_JSON_STRING_BYTES",
+      "MAX_STRUCT_RECEIPT_JSON_TOTAL_BYTES",
+      "preflightStructConsultationReceipt",
+      "structReceiptDigest",
+      "validateStructConsultationReceipt",
+      "verifyStructReceipt"
+    ],
+    "./recovery": [
+      "diagnosticCategory",
+      "hasActionableRecovery",
+      "recoveryFact",
+      "recoverySummary",
+      "toStructDiagnostic"
+    ],
+    "./renderers/xhtml": [
+      "renderPublicationXhtml"
+    ],
+    "./renderers/epub": [
+      "assertStructEpubArchiveByteLength",
+      "buildStructEpub"
+    ]
+  },
+  "deprecated": {
+    "migrateStructDocument": {
+      "replacement": "decodeCompatibleStructDocument",
+      "removalDate": "2026-11-30",
+      "behavior": "decode-compatibility"
+    }
+  },
+  "unavailablePaths": [
+    "./core",
+    "./schema",
+    "./ids",
+    "./bundle"
+  ]
+}

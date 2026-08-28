@@ -37,21 +37,21 @@ EPUB builder is asynchronous and must be awaited:
 
 ```ts
 import {
-  decodeStructDocument,
+  decodeCompatibleStructDocument,
   encodeStructDocument,
-  renderPublicationXhtml,
-  buildStructEpub,
 } from '@erniesg/struct'
+import { renderPublicationXhtml } from '@erniesg/struct/renderers/xhtml'
+import { buildStructEpub } from '@erniesg/struct/renderers/epub'
 
-const document = decodeStructDocument(input)
+const document = decodeCompatibleStructDocument(input)
 const canonicalJson = encodeStructDocument(document)
 const xhtml = renderPublicationXhtml(document)
 const epub = await buildStructEpub(document)
 ```
 
-The current root facade is a prerelease convenience surface. Do not import
-private `src/**` files in consumers; see [API.md](./API.md) for the intended
-first-release root and subpath surfaces and the alias-removal window.
+The root facade contains document types and core codecs only. Do not import
+private `src/**` files in consumers; see [API.md](./API.md) for the explicit
+subpaths and the bounded deprecated-alias window.
 
 ## Package contract and migration
 

@@ -16,6 +16,12 @@ Ernie.SG, Aether, Rucksack, UI, storage, transport, providers, credentials,
 extraction, editorial/release state, or source-specific recovery wording.
 Document/schema modules must not depend on renderers.
 
+Source-neutral recovery utilities emit facts, categories, and machine-readable
+status only. Applications own source-specific and workflow-specific user copy.
+Emitted XHTML identifier normalization, collision checks, and publication
+planning belong to the XHTML renderer boundary; a semantically valid document
+is not rejected merely because renderer-normalized identifiers collide.
+
 At base `6ecb78d1753b847ec7295bf45f43237225663728`, only the private `0.0.0`
 document/codecs/IDs/recovery/XHTML/EPUB capabilities are **current**.
 `StructBundle`, its decoder, verifier, resolver executor, and `./bundle`

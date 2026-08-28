@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decodeStructDocument } from '../src/schema'
+import { decodeStructDocument } from '../src/document/index'
 import { validDocument } from './codec-fixtures'
 
 describe('codec fixture contract', () => {

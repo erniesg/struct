@@ -1,22 +1,21 @@
-import { credentialShapedValue, SAFE_ID } from './ids'
-import { fail, utf8ByteLength } from './codec/primitives'
+import {
+  credentialShapedValue,
+  SAFE_ID,
+  structDigest,
+} from './identity'
+import {
+  legacyStructDigest,
+  legacyStructDigestMatches,
+} from './legacy-digest'
+import { fail, utf8ByteLength } from './document/codec/primitives'
+import {
+  LEGACY_STRUCT_SCHEMA_VERSION,
+  STRUCT_SCHEMA_VERSION,
+  type StructConsultationReceipt,
+  type StructDocument,
+} from './document/types'
 
-/**
- * Source-neutral, serialized consultation receipt envelope.
- *
- * The contents of consultations, decisions, and metrics belong to an
- * application adapter. STRUCT only snapshots them as closed canonical JSON
- * and binds the envelope to its enclosing document and source.
- */
-export type StructConsultationReceipt = {
-  schemaVersion: string
-  documentId: string
-  sourceSha256: string | null
-  consultations: readonly Record<string, unknown>[]
-  decisions: readonly Record<string, unknown>[]
-  metrics: Record<string, unknown>
-  semanticStateSha256?: string
-}
+export type { StructConsultationReceipt } from './document/types'
 
 const HASH = /^[a-f0-9]{64}$/u
 const STRUCT_CONSULTATION_RECEIPT_SCHEMA_VERSION = '1.0.0'
@@ -242,6 +241,71 @@ export function validateStructConsultationReceipt(
 ): value is StructConsultationReceipt {
   try {
     return validateStructConsultationReceiptUnsafe(value)
+  } catch {
+    return false
+  }
+}
+
+function semanticReceiptInput(document: StructDocument) {
+  const { receipt: _receipt, ...withoutReceipt } = document
+  return {
+    ...withoutReceipt,
+    conservation: document.receipt.conservation,
+    ...(document.receipt.modelConsultations
+      ? { modelConsultations: document.receipt.modelConsultations }
+      : {}),
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  }
+}
+
+/** Compute the authoritative semantic receipt digest for a decoded document. */
+export function structReceiptDigest(document: StructDocument) {
+  const input = semanticReceiptInput(document)
+  return document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
+    ? legacyStructDigest(input)
+    : structDigest(input)
+}
+
+function verifyStructReceiptUnsafe(document: StructDocument) {
+  const receipt = document.receipt
+  const legacy = document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
+  const bindingMatches = legacy
+    ? document.documentId === undefined &&
+      receipt.documentId === undefined &&
+      receipt.modelConsultations === undefined &&
+      receipt.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
+    : document.schemaVersion === STRUCT_SCHEMA_VERSION &&
+      receipt.schemaVersion === STRUCT_SCHEMA_VERSION &&
+      typeof document.documentId === 'string' &&
+      document.documentId.length > 0 &&
+      receipt.documentId === document.documentId
+  if (
+    !bindingMatches ||
+    receipt.sourceSha256 !== document.source.sha256 ||
+    receipt.blockCount !== document.blocks.length ||
+    receipt.assetCount !== document.assets.length ||
+    receipt.relationshipCount !== document.relationships.length ||
+    receipt.diagnosticCount !== document.diagnostics.length ||
+    receipt.textCharacterCount !== receipt.conservation.sourceTextCharacterCount
+  )
+    return false
+  if (
+    receipt.modelConsultations !== undefined &&
+    (!validateStructConsultationReceipt(receipt.modelConsultations) ||
+      receipt.modelConsultations.sourceSha256 !== document.source.sha256 ||
+      receipt.modelConsultations.documentId !== document.documentId)
+  )
+    return false
+  const input = semanticReceiptInput(document)
+  return legacy
+    ? legacyStructDigestMatches(input, document.receipt.generatedSha256)
+    : structDigest(input) === document.receipt.generatedSha256
+}
+
+/** Verify the semantic receipt without coercing or changing document versions. */
+export function verifyStructReceipt(document: StructDocument) {
+  try {
+    return verifyStructReceiptUnsafe(document)
   } catch {
     return false
   }

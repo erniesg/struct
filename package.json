@@ -13,6 +13,7 @@
     "CONTRACT.md",
     "MIGRATION.md",
     "API.md",
+    "API_MANIFEST.json",
     "NOTICE"
   ],
   "exports": {
@@ -20,17 +21,21 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./core": {
-      "types": "./dist/core.d.ts",
-      "import": "./dist/core.js"
+    "./document": {
+      "types": "./dist/document/index.d.ts",
+      "import": "./dist/document/index.js"
     },
-    "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js"
+    "./identity": {
+      "types": "./dist/identity.d.ts",
+      "import": "./dist/identity.js"
     },
-    "./ids": {
-      "types": "./dist/ids.d.ts",
-      "import": "./dist/ids.js"
+    "./ordering": {
+      "types": "./dist/ordering.d.ts",
+      "import": "./dist/ordering.js"
+    },
+    "./receipt": {
+      "types": "./dist/receipt.d.ts",
+      "import": "./dist/receipt.js"
     },
     "./recovery": {
       "types": "./dist/recovery.d.ts",
@@ -48,8 +53,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts src/core.ts src/schema.ts src/ids.ts src/recovery.ts src/renderers/xhtml.ts src/renderers/epub.ts --format esm --dts --clean",
+    "build": "tsup src/index.ts src/document/index.ts src/identity.ts src/ordering.ts src/receipt.ts src/recovery.ts src/renderers/xhtml.ts src/renderers/epub.ts --format esm --dts --clean",
     "test": "vitest run",
+    "test:package": "npm run build && node scripts/test-packed-consumer.mjs",
     "test:source-boundary": "node scripts/check-source-boundary.mjs",
     "typecheck": "tsc --noEmit"
   },

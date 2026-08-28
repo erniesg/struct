@@ -1,4 +1,4 @@
-import type { StructBlock, StructPageLayout } from './types'
+import type { StructBlock, StructPageLayout } from './document/types'
 
 /**
  * Conservative geometry ordering for adapters that do not have an explicit

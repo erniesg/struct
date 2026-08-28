@@ -6,31 +6,146 @@ import {
   encodeStructDocument,
   migrateStructDocument,
   StructCodecError,
-} from '../src/schema'
-import { legacyStructDigest, structDigest } from '../src/core/ids'
-import { sha256HexSync } from '../src/core/sha256'
+} from '../src/document/index'
+import { structDigest } from '../src/identity'
+import { legacyStructDigest } from '../src/legacy-digest'
+import { sha256HexSync } from '../src/sha256'
 import { buildStructEpub } from '../src/renderers/epub'
 import { renderPublicationXhtml } from '../src/renderers/xhtml'
 import {
   MAX_STRUCT_ASSET_BYTES,
   parseBytes,
   preflightBytes,
-} from '../src/core/codec/bytes'
-import { validateStructConsultationReceipt } from '../src/core/consultation-receipt'
-import { MAX_STRUCT_STRING_BYTES, stringValue } from '../src/core/codec/primitives'
-import { MAX_RENDERED_INLINE_SEGMENTS } from '../src/core/emitted-ids'
+} from '../src/document/codec/bytes'
+import { validateStructConsultationReceipt } from '../src/receipt'
+import {
+  MAX_STRUCT_STRING_BYTES,
+  stringValue,
+} from '../src/document/codec/primitives'
+import {
+  buildRenderedPublicationPlan,
+  MAX_RENDERED_INLINE_SEGMENTS,
+  RenderedPublicationPlanError,
+} from '../src/renderers/xhtml-plan'
 import { hash, seal, validDocument } from './codec-fixtures'
 
+type InvalidSemanticDocumentCase = [
+  label: string,
+  mutate: (value: any) => void,
+  code: string,
+  path: string,
+]
+
+const invalidXhtmlSemanticDocuments: InvalidSemanticDocumentCase[] = [
+  [
+    'unknown root field',
+    (value) => {
+      value.unexpected = 'sealed-but-undeclared'
+    },
+    'UNKNOWN_FIELD',
+    '$.unexpected',
+  ],
+  [
+    'invalid base direction',
+    (value) => {
+      value.metadata.baseDirection = 'sideways'
+    },
+    'ENUM',
+    '$.metadata.baseDirection',
+  ],
+  [
+    'invalid BCP-47 language',
+    (value) => {
+      value.metadata.language = 'not a language'
+    },
+    'LANGUAGE',
+    '$.metadata.language',
+  ],
+  [
+    'invalid block kind',
+    (value) => {
+      value.blocks[0].kind = 'unsupported-kind'
+    },
+    'ENUM',
+    '$.blocks[0].kind',
+  ],
+]
+
 describe('STRUCT publication rendering', () => {
-  it('rejects emitted XHTML ids that collide after stable normalization', () => {
+  it('rejects an invalid semantic receipt through the direct XHTML boundary', () => {
+    const value = validDocument() as any
+    value.receipt.generatedSha256 = '0'.repeat(64)
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/receipt/i)
+  })
+
+  it('rejects over-budget text through the direct XHTML boundary', () => {
+    const value = validDocument() as any
+    value.metadata.title = 'x'.repeat(MAX_STRUCT_STRING_BYTES + 1)
+    seal(value)
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/resource bound/i)
+  })
+
+  it('rejects live accessor input through the direct XHTML boundary', () => {
+    const value = validDocument() as any
+    const title = value.metadata.title
+    Object.defineProperty(value.metadata, 'title', {
+      enumerable: true,
+      get: () => title,
+    })
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/accessor|data value/i)
+  })
+
+  it.each(invalidXhtmlSemanticDocuments)(
+    'rejects a receipt-sealed %s through the direct XHTML boundary',
+    (_label, mutate, code, path) => {
+      const value = validDocument() as any
+      mutate(value)
+      seal(value)
+
+      try {
+        renderPublicationXhtml(value)
+        throw new Error('expected strict semantic ingress rejection')
+      } catch (error) {
+        expect(error).toBeInstanceOf(StructCodecError)
+        expect((error as StructCodecError).code).toBe(code)
+        expect((error as StructCodecError).path).toBe(path)
+      }
+    },
+  )
+
+  it.each(invalidXhtmlSemanticDocuments)(
+    'rejects a receipt-sealed %s through the direct EPUB boundary',
+    async (_label, mutate, code, path) => {
+      const value = validDocument() as any
+      mutate(value)
+      seal(value)
+      value.assets[0].bytes = new Uint8Array([0, 255, 128])
+
+      await expect(buildStructEpub(value)).rejects.toMatchObject({ code, path })
+    },
+  )
+
+  it('defers normalized emitted-id collisions to the XHTML boundary', () => {
     const value = validDocument()
     value.metadata.authorNotes![0].id = '1'
     value.blocks[0].sourceObservationAnchorIds = ['n-1']
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
-    expect(() => renderPublicationXhtml(value as any)).toThrow(
-      /duplicate|identifier/i,
-    )
+    const decoded = decodeStructDocument(value)
+    try {
+      renderPublicationXhtml(decoded)
+      throw new Error('expected XHTML emitted-id collision')
+    } catch (error) {
+      expect(error).toBeInstanceOf(RenderedPublicationPlanError)
+      expect((error as RenderedPublicationPlanError).code).toBe(
+        'DUPLICATE_IDENTIFIER',
+      )
+      expect((error as RenderedPublicationPlanError).path).toBe(
+        '$.metadata.authorNotes[0].id',
+      )
+    }
   })
 
   it('rejects a normalized relationship id colliding with a block id', () => {
@@ -47,8 +162,10 @@ describe('STRUCT publication rendering', () => {
     value.pages[0].blocks = ['n-1']
     value.pages[0].columns[0].blockIds = ['n-1']
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
-    expect(() => renderPublicationXhtml(value)).toThrow(/duplicate|identifier/i)
+    const decoded = decodeStructDocument(value)
+    expect(() => renderPublicationXhtml(decoded)).toThrow(
+      /duplicate|identifier/i,
+    )
   })
 
   it('emits a relationship id only once when used in two blocks', async () => {
@@ -107,8 +224,10 @@ describe('STRUCT publication rendering', () => {
     value.receipt.blockCount = 2
     value.receipt.conservation.structBlockCount = 2
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
-    expect(() => renderPublicationXhtml(value)).toThrow(/duplicate|identifier/i)
+    const decoded = decodeStructDocument(value)
+    expect(() => renderPublicationXhtml(decoded)).toThrow(
+      /duplicate|identifier/i,
+    )
   })
 
   it.each([
@@ -614,7 +733,7 @@ describe('STRUCT publication rendering', () => {
     expect(renderPublicationXhtml(decoded)).toContain('x'.repeat(runCount))
   })
 
-  it('rejects nested inline ownership before rendering large markup', () => {
+  it('defers nested inline ownership budgets to the XHTML boundary', () => {
     const value = validDocument() as any
     const runCount = 2_000
     const textLength = runCount * 2
@@ -628,13 +747,16 @@ describe('STRUCT publication rendering', () => {
     value.receipt.conservation.sourceTextCharacterCount = textLength
     value.receipt.conservation.structTextCharacterCount = textLength
     seal(value)
+    const decoded = decodeStructDocument(value)
     try {
-      decodeStructDocument(value)
+      renderPublicationXhtml(decoded)
       throw new Error('expected nested ownership budget failure')
     } catch (error) {
-      expect(error).toBeInstanceOf(StructCodecError)
-      expect((error as StructCodecError).code).toBe('BUDGET')
-      expect((error as StructCodecError).path).toBe('$.blocks[0].inline[0]')
+      expect(error).toBeInstanceOf(RenderedPublicationPlanError)
+      expect((error as RenderedPublicationPlanError).code).toBe('BUDGET')
+      expect((error as RenderedPublicationPlanError).path).toBe(
+        '$.blocks[0].inline[0]',
+      )
     }
   })
 
@@ -666,10 +788,10 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
-  it('reports semantic expansion as a path-bearing strict budget failure', async () => {
+  it('defers semantic expansion budgets to renderer ingress', async () => {
     const value = validDocument() as any
     const targetIds = Array.from(
       { length: 800 },
@@ -698,12 +820,16 @@ describe('STRUCT publication rendering', () => {
     value.receipt.conservation.sourceTextCharacterCount = 800
     value.receipt.conservation.structTextCharacterCount = 800
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(StructCodecError)
+    const decoded = decodeStructDocument(value)
     try {
-      decodeStructDocument(value)
+      renderPublicationXhtml(decoded)
+      throw new Error('expected semantic expansion budget failure')
     } catch (error) {
-      expect((error as StructCodecError).code).toBe('BUDGET')
-      expect((error as StructCodecError).path).toMatch(/blocks\[0\]\.inline/)
+      expect(error).toBeInstanceOf(RenderedPublicationPlanError)
+      expect((error as RenderedPublicationPlanError).code).toBe('BUDGET')
+      expect((error as RenderedPublicationPlanError).path).toMatch(
+        /blocks\[0\]\.inline/,
+      )
     }
     value.assets[0].bytes = new Uint8Array([0, 255, 128])
     await expect(buildStructEpub(value as any)).rejects.toThrow(/budget/i)
@@ -725,7 +851,7 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('does not expand shadowed semantic owners before selecting the rendered owner', () => {
@@ -751,7 +877,7 @@ describe('STRUCT publication rendering', () => {
       relationshipId: `shadowed-${index}`,
       semanticRole: 'cross-reference',
     }))
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('refuses same-year citation matching before touching a later hostile source', () => {
@@ -800,7 +926,7 @@ describe('STRUCT publication rendering', () => {
       },
     )
     value.blocks.push(later)
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('uses the planning target index instead of scanning document nodes per target', () => {
@@ -830,7 +956,7 @@ describe('STRUCT publication rendering', () => {
         throw new Error('asset find must not be used during planning')
       },
     })
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('does not inspect later node ids before refusing external semantic output', () => {
@@ -876,7 +1002,7 @@ describe('STRUCT publication rendering', () => {
       },
     )
     value.blocks.push(later)
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('refuses a target-list tail before reading beyond the output budget', () => {
@@ -911,7 +1037,7 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('charges short semantic targets only across segments owned by that run', () => {
@@ -941,6 +1067,10 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
+    value.receipt.textCharacterCount = 800
+    value.receipt.conservation.sourceTextCharacterCount = 800
+    value.receipt.conservation.structTextCharacterCount = 800
+    seal(value)
     expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
@@ -981,7 +1111,7 @@ describe('STRUCT publication rendering', () => {
       from: `citation-block-${index}`,
       status: 'matched',
     }))
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('bounds numeric citation matching before materializing every token range', () => {
@@ -1005,7 +1135,9 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
-    expect(() => renderPublicationXhtml(value)).toThrow(/citation.*budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(
+      /citation.*budget/i,
+    )
   })
 
   it('skips an oversized comma-only citation label without tokenizing it', () => {
@@ -1028,6 +1160,7 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
+    seal(value)
     expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
@@ -1051,6 +1184,7 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
+    seal(value)
     expect(renderPublicationXhtml(value)).toContain(
       'href="https://example.test/smith-2020"',
     )
@@ -1079,6 +1213,7 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
+    seal(value)
     expect(renderPublicationXhtml(value)).toContain(
       'Additional cross-reference target 1',
     )
@@ -1111,7 +1246,7 @@ describe('STRUCT publication rendering', () => {
       },
     )
     value.blocks.push(later)
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('accepts the exact active-owner and wrapper budget boundary', () => {
@@ -1207,7 +1342,7 @@ describe('STRUCT publication rendering', () => {
         target: 'block-1',
       },
     ]
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('recovers semantic occurrence paths without searching the source run array', () => {
@@ -1231,7 +1366,7 @@ describe('STRUCT publication rendering', () => {
         throw new Error('source.runs.indexOf must not be used')
       },
     })
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {
@@ -1428,14 +1563,16 @@ describe('STRUCT publication rendering', () => {
     },
   )
 
-  it('rejects numeric asset ids before publication can diverge', () => {
+  it('defers numeric emitted asset ids to renderer validation', async () => {
     const value = validDocument() as any
     value.assets[0].id = '1'
     value.blocks[0].fallbackAssetIds = ['1']
     value.relationships[0].to = ['1']
     value.relationships[0].candidates[0].target = '1'
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(/asset|identifier/i)
+    const decoded = decodeStructDocument(value)
+    expect(() => renderPublicationXhtml(decoded)).toThrow(/asset|package/i)
+    await expect(buildStructEpub(decoded)).rejects.toThrow(/asset|reserved/i)
   })
 
   it('fails closed when an author note targets non-rendered furniture', () => {
@@ -1477,16 +1614,18 @@ describe('STRUCT publication rendering', () => {
     expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
   })
 
-  it('rejects later-position source anchors through decode and migration', () => {
+  it('defers normalized source-anchor collisions to XHTML', () => {
     const value = validDocument() as any
     value.blocks[0].sourceObservationAnchorIds = ['anchor-1', 'n-1']
     value.metadata.authorNotes[0].id = '1'
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
-    expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
+    const decoded = decodeStructDocument(value)
+    expect(() => renderPublicationXhtml(decoded)).toThrow(
+      /duplicate|identifier/i,
+    )
   })
 
-  it('maps later-position anchors from every block into migration validation', () => {
+  it('maps later-position anchors from every block into XHTML validation', () => {
     const value = validDocument() as any
     delete value.blocks[0].sourceObservationAnchorIds
     const second = { ...value.blocks[0], id: 'block-2', order: 1, page: null }
@@ -1502,7 +1641,10 @@ describe('STRUCT publication rendering', () => {
     value.receipt.blockCount = 2
     value.receipt.conservation.structBlockCount = 2
     seal(value)
-    expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
+    const decoded = decodeStructDocument(value)
+    expect(() => renderPublicationXhtml(decoded)).toThrow(
+      /duplicate|identifier/i,
+    )
   })
 
   it('rejects a forbidden XML 1.0 string before digest sealing', () => {

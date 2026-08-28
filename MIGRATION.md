@@ -7,16 +7,31 @@ The app `src/struct` tree at that revision is
 
 | App source | Package destination |
 | --- | --- |
-| `src/struct/types.ts` | `src/core/types.ts` |
-| `src/struct/{sha256,ids,reading-order,recovery}.ts` | `src/core/` |
-| `src/struct/{consultation-receipt,emitted-ids}.ts` | `src/core/` |
-| `src/struct/codec/**` | `src/core/codec/**` |
+| `src/struct/types.ts` | `src/document/types.ts` |
+| `src/struct/codec/**` | `src/document/codec/**` |
+| `src/struct/ids.ts` | `src/identity.ts` |
+| `src/struct/reading-order.ts` | `src/ordering.ts` |
+| `src/struct/recovery.ts` | `src/recovery.ts` |
+| `src/struct/consultation-receipt.ts` | `src/receipt.ts` |
+| `src/struct/emitted-ids.ts` | `src/renderers/xhtml-plan.ts` |
 | `src/struct/xhtml.ts` | `src/renderers/xhtml.ts` |
 | `src/struct/epub.ts` | `src/renderers/epub.ts` |
 
 No app adapter, PDF/DOCX implementation, UI, provider, deployment code, or
 `model-consultation-receipt.ts` is included. The package begins as private and
 has no publish workflow.
+
+## Prerelease API naming transition
+
+Use `decodeCompatibleStructDocument` for supported-version reads. It performs
+strict decode compatibility and never changes a document's declared version.
+The old `migrateStructDocument` name is a deprecated alias for that exact
+operation, not a migration. It remains available through **2026-11-30** and is
+removed after that date. No transform or migration receipt is invented.
+
+The old package paths `./core`, `./schema`, and `./ids` are removed in favor of
+the explicit paths in [API.md](./API.md). `./bundle` remains unavailable until
+S-03.
 
 ## Staged migration contract
 

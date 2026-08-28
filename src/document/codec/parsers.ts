@@ -62,7 +62,7 @@ import {
   rfc3339DateTime,
 } from './standards'
 import { validateStructDocument } from './invariants'
-import { sha256HexSync } from '../sha256'
+import { sha256HexSync } from '../../sha256'
 
 export { StructCodecError } from './primitives'
 
@@ -1489,8 +1489,10 @@ function snapshotPublicationValue(
   }
 }
 
-/** Canonicalize every direct-publication field without retaining caller objects. */
-export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
+/** Bound and snapshot renderer ingress without retaining caller objects. */
+export function snapshotStructDocumentForRenderer(
+  value: unknown,
+): StructDocument {
   const root = dataEntries(value, '$')
   const state: PublicationSnapshotState = {
     active: new WeakSet<object>(),
@@ -1520,13 +1522,17 @@ export function decodeStructDocument(input: unknown): StructDocument {
 }
 
 /**
- * Explicit STRUCT migration entrypoint. There are no historical migrations in
- * this slice: declared 0.1.0 and 0.2.0 documents are canonically decoded and
- * returned at their declared version; every other version fails closed.
+ * Decode any declared compatible STRUCT schema without changing its version.
  */
-export function migrateStructDocument(input: unknown): StructDocument {
+export function decodeCompatibleStructDocument(input: unknown): StructDocument {
   return decodeStructDocument(input)
 }
+
+/**
+ * @deprecated Use decodeCompatibleStructDocument. This prerelease alias performs
+ * decode compatibility, not migration, and will be removed after 2026-11-30.
+ */
+export const migrateStructDocument = decodeCompatibleStructDocument
 
 function toJsonValue(value: unknown): unknown {
   if (value instanceof Uint8Array) return bytesToBase64(value)

@@ -4,37 +4,15 @@ import {
   type StructInline,
   type StructReceipt,
 } from '../types'
-import { legacyStructDigestMatches, structDigest } from '../ids'
-import { SAFE_ID } from '../ids'
-import {
-  emittedXhtmlIds,
-  isPackagedAssetId,
-  RenderedPublicationPlanError,
-} from '../emitted-ids'
+import { SAFE_ID } from '../../identity'
+import { verifyStructReceipt } from '../../receipt'
 import { fail, type DataObject, unique } from './primitives'
 
 const CONSULTATION_RECEIPT_BINDING =
   'consultation receipt must match the enclosing document and source'
 
-function digestInput(document: StructDocument) {
-  const { receipt: _receipt, ...withoutReceipt } = document
-  return {
-    ...withoutReceipt,
-    conservation: document.receipt.conservation,
-    ...(document.receipt.modelConsultations
-      ? { modelConsultations: document.receipt.modelConsultations }
-      : {}),
-    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
-  }
-}
-
 function validateDigest(document: StructDocument) {
-  const input = digestInput(document)
-  const matches =
-    document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
-      ? legacyStructDigestMatches(input, document.receipt.generatedSha256)
-      : structDigest(input) === document.receipt.generatedSha256
-  if (!matches)
+  if (!verifyStructReceipt(document))
     fail(
       'DIGEST',
       '$.receipt.generatedSha256',
@@ -289,6 +267,7 @@ function validateConservation(document: StructDocument) {
 
 function validateReferences(document: StructDocument) {
   const ids = new Map<string, string>()
+  unique(document.metadata.authors, '$.metadata.authors', 'metadata author')
   const authors = new Set(document.metadata.authors)
   addCategoryIds(
     ids,
@@ -342,25 +321,6 @@ function validateReferences(document: StructDocument) {
     document.blocks.flatMap((block) => block.sourceObservationAnchorIds ?? []),
     'blocks.sourceObservationAnchorIds',
   )
-  const emittedIds = new Map<string, string>()
-  let emittedEntries
-  try {
-    emittedEntries = emittedXhtmlIds(document)
-  } catch (error) {
-    if (error instanceof RenderedPublicationPlanError)
-      fail(error.code, error.path, error.message)
-    throw error
-  }
-  for (const { id, path } of emittedEntries) {
-    const previous = emittedIds.get(id)
-    if (previous)
-      fail(
-        'DUPLICATE_IDENTIFIER',
-        path,
-        `emitted XHTML identifier ${id} is also used by ${previous}`,
-      )
-    emittedIds.set(id, path)
-  }
   if (document.documentId && ids.has(document.documentId))
     fail(
       'DUPLICATE_IDENTIFIER',
@@ -377,14 +337,6 @@ function validateReferences(document: StructDocument) {
     '$.assets',
     'asset href',
   )
-  for (const [index, asset] of document.assets.entries())
-    if (!isPackagedAssetId(asset.id))
-      fail(
-        'IDENTIFIER',
-        `$.assets[${index}].id`,
-        `asset id is not a valid EPUB manifest id: ${asset.id}`,
-      )
-
   for (const [index, relationship] of document.relationships.entries()) {
     if (!nodeIds.has(relationship.from))
       fail(
