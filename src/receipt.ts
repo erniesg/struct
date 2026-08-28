@@ -1,10 +1,12 @@
 import {
   credentialShapedValue,
-  legacyStructDigest,
-  legacyStructDigestMatches,
   SAFE_ID,
   structDigest,
 } from './identity'
+import {
+  legacyStructDigest,
+  legacyStructDigestMatches,
+} from './legacy-digest'
 import { fail, utf8ByteLength } from './document/codec/primitives'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,

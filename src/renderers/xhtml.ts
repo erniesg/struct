@@ -17,6 +17,7 @@ import {
   type RenderedPublicationPlan,
 } from './xhtml-plan'
 import { normalizeStructDocumentForRenderer } from './ingress'
+import { verifyStructReceipt } from '../receipt'
 
 export type StructXhtmlOptions = {
   embedStyles?: boolean
@@ -311,9 +312,11 @@ export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
-  document = normalizeStructDocumentForRenderer(document, 'xhtml')
+  document = normalizeStructDocumentForRenderer(document)
   const publicationPlan = buildRenderedPublicationPlan(document)
   assertUniqueEmittedIds(emittedXhtmlIds(document, publicationPlan))
+  if (!verifyStructReceipt(document))
+    throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH')
   const emittedRelationshipIds = new Set<string>()
   const language = document.metadata.language ?? 'und'
   const direction =

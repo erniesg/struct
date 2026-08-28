@@ -1,4 +1,5 @@
-import { legacyStructDigest, structDigest } from '../src/identity'
+import { structDigest } from '../src/identity'
+import { legacyStructDigest } from '../src/legacy-digest'
 import { sha256HexSync } from '../src/sha256'
 
 export const hash = 'a'.repeat(64)

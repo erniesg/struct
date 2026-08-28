@@ -2,8 +2,10 @@ import { strFromU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { assertStructEpubArchiveByteLength, buildStructEpub } from '../src/renderers/epub'
 import { MAX_STRUCT_STRING_BYTES } from '../src/document/codec/primitives'
-import { legacyStructDigest, structDigest } from '../src/identity'
+import { structDigest } from '../src/identity'
+import { legacyStructDigest } from '../src/legacy-digest'
 import { sha256HexSync } from '../src/sha256'
+import { StructCodecError } from '../src/document/index'
 import type { StructDocument } from '../src/document/types'
 
 function refreshReceipt(document: StructDocument) {
@@ -163,6 +165,35 @@ function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
 }
 
 describe('STRUCT EPUB href integrity', () => {
+  it('rejects an over-limit table before inspecting cell storage', async () => {
+    const document = documentWithHref('#target')
+    const block = document.blocks[0]!
+    block.kind = 'table'
+    block.text = ''
+    block.inline = []
+    block.table = {
+      rows: 100_001,
+      columns: 1,
+      cells: [],
+      semantic: 'verified',
+    }
+    refreshReceipt(document)
+    block.table.cells = new Proxy([], {
+      ownKeys() {
+        throw new Error('TABLE_CELL_STORAGE_INSPECTED')
+      },
+    })
+
+    try {
+      await buildStructEpub(document)
+      throw new Error('expected table bound rejection')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('TABLE_BOUNDS')
+      expect((error as StructCodecError).path).toBe('$.blocks[0].table')
+    }
+  })
+
   it('rejects an oversized title through the direct EPUB boundary', async () => {
     const document = documentWithHref('#target')
     document.metadata.title = 'x'.repeat(MAX_STRUCT_STRING_BYTES + 1)

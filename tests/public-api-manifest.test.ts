@@ -12,6 +12,15 @@ const acceptedExports = [
   './renderers/epub',
 ]
 
+const stableIdentityExports = [
+  'CREDENTIAL_SHAPED_ID_PATTERNS',
+  'SAFE_ID',
+  'SAFE_ID_FORMAT',
+  'credentialShapedValue',
+  'structDigest',
+  'structId',
+]
+
 describe('STRUCT package API manifest', () => {
   it('exposes only the accepted S-02 package subpaths', async () => {
     const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
@@ -32,5 +41,8 @@ describe('STRUCT package API manifest', () => {
         },
       },
     })
+    expect(manifest.runtimeExports['./identity']).toEqual(
+      stableIdentityExports,
+    )
   })
 })

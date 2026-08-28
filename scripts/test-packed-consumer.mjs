@@ -7,10 +7,12 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const repository = fileURLToPath(new URL('../', import.meta.url))
-const temporary = await mkdtemp(join(repository, '.tmp-public-consumer-'))
+const temporary = await mkdtemp(join(tmpdir(), 'struct-public-consumer-'))
 const consumer = join(temporary, 'consumer')
 
 try {
@@ -44,6 +46,12 @@ try {
     join(repository, 'tests/public-consumer/types.ts'),
     join(consumer, 'types.ts'),
   )
+  const resolutionPaths =
+    createRequire(join(consumer, 'runtime.mjs')).resolve.paths(
+      '__struct_isolation_probe__',
+    ) ?? []
+  if (resolutionPaths.includes(join(repository, 'node_modules')))
+    throw new Error('packed consumer can resolve producer node_modules')
   execFileSync(
     'npm',
     ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--offline'],

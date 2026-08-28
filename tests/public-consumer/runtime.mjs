@@ -42,3 +42,6 @@ assert.equal(
   manifest.deprecated.migrateStructDocument.removalDate,
   '2026-11-30',
 )
+assert.equal('legacyStructDigest' in modules['./identity'], false)
+assert.equal('legacyStructDigestMatches' in modules['./identity'], false)
+assert.equal('legacyStructDigests' in modules['./identity'], false)

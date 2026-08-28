@@ -7,7 +7,8 @@ import {
   migrateStructDocument,
   StructCodecError,
 } from '../src/document/index'
-import { legacyStructDigest, structDigest } from '../src/identity'
+import { structDigest } from '../src/identity'
+import { legacyStructDigest } from '../src/legacy-digest'
 import { sha256HexSync } from '../src/sha256'
 import { buildStructEpub } from '../src/renderers/epub'
 import { renderPublicationXhtml } from '../src/renderers/xhtml'
@@ -22,12 +23,39 @@ import {
   stringValue,
 } from '../src/document/codec/primitives'
 import {
+  buildRenderedPublicationPlan,
   MAX_RENDERED_INLINE_SEGMENTS,
   RenderedPublicationPlanError,
 } from '../src/renderers/xhtml-plan'
 import { hash, seal, validDocument } from './codec-fixtures'
 
 describe('STRUCT publication rendering', () => {
+  it('rejects an invalid semantic receipt through the direct XHTML boundary', () => {
+    const value = validDocument() as any
+    value.receipt.generatedSha256 = '0'.repeat(64)
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/receipt/i)
+  })
+
+  it('rejects over-budget text through the direct XHTML boundary', () => {
+    const value = validDocument() as any
+    value.metadata.title = 'x'.repeat(MAX_STRUCT_STRING_BYTES + 1)
+    seal(value)
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/resource bound/i)
+  })
+
+  it('rejects live accessor input through the direct XHTML boundary', () => {
+    const value = validDocument() as any
+    const title = value.metadata.title
+    Object.defineProperty(value.metadata, 'title', {
+      enumerable: true,
+      get: () => title,
+    })
+
+    expect(() => renderPublicationXhtml(value)).toThrow(/accessor|data value/i)
+  })
+
   it('defers normalized emitted-id collisions to the XHTML boundary', () => {
     const value = validDocument()
     value.metadata.authorNotes![0].id = '1'
@@ -777,7 +805,7 @@ describe('STRUCT publication rendering', () => {
       relationshipId: `shadowed-${index}`,
       semanticRole: 'cross-reference',
     }))
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('refuses same-year citation matching before touching a later hostile source', () => {
@@ -856,7 +884,7 @@ describe('STRUCT publication rendering', () => {
         throw new Error('asset find must not be used during planning')
       },
     })
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('does not inspect later node ids before refusing external semantic output', () => {
@@ -902,7 +930,7 @@ describe('STRUCT publication rendering', () => {
       },
     )
     value.blocks.push(later)
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('refuses a target-list tail before reading beyond the output budget', () => {
@@ -937,7 +965,7 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => buildRenderedPublicationPlan(value)).toThrow(/budget/i)
   })
 
   it('charges short semantic targets only across segments owned by that run', () => {
@@ -967,6 +995,7 @@ describe('STRUCT publication rendering', () => {
         bold: true,
       })),
     ]
+    seal(value)
     expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
@@ -1054,6 +1083,7 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
+    seal(value)
     expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
@@ -1077,6 +1107,7 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
+    seal(value)
     expect(renderPublicationXhtml(value)).toContain(
       'href="https://example.test/smith-2020"',
     )
@@ -1105,6 +1136,7 @@ describe('STRUCT publication rendering', () => {
       },
     ]
 
+    seal(value)
     expect(renderPublicationXhtml(value)).toContain(
       'Additional cross-reference target 1',
     )
@@ -1233,7 +1265,7 @@ describe('STRUCT publication rendering', () => {
         target: 'block-1',
       },
     ]
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('recovers semantic occurrence paths without searching the source run array', () => {
@@ -1257,7 +1289,7 @@ describe('STRUCT publication rendering', () => {
         throw new Error('source.runs.indexOf must not be used')
       },
     })
-    expect(() => renderPublicationXhtml(value)).not.toThrow()
+    expect(() => buildRenderedPublicationPlan(value)).not.toThrow()
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {

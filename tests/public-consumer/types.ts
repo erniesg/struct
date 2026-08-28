@@ -7,6 +7,8 @@ import {
 } from '@erniesg/struct'
 import { STRUCT_SCHEMA_VERSION } from '@erniesg/struct/document'
 import { structDigest, structId } from '@erniesg/struct/identity'
+// @ts-expect-error legacy digest compatibility remains package-internal
+import { legacyStructDigest } from '@erniesg/struct/identity'
 import { orderBlocksByLayout } from '@erniesg/struct/ordering'
 import {
   verifyStructReceipt,
@@ -27,6 +29,7 @@ migrateStructDocument(input)
 STRUCT_SCHEMA_VERSION satisfies '0.2.0'
 structDigest(document)
 structId('document', 'fixture')
+void legacyStructDigest
 orderBlocksByLayout(document.blocks)
 verifyStructReceipt(document)
 receipt.schemaVersion satisfies string

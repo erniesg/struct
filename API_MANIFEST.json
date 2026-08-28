@@ -35,9 +35,6 @@
       "SAFE_ID",
       "SAFE_ID_FORMAT",
       "credentialShapedValue",
-      "legacyStructDigest",
-      "legacyStructDigestMatches",
-      "legacyStructDigests",
       "structDigest",
       "structId"
     ],

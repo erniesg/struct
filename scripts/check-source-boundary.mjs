@@ -150,7 +150,10 @@ for (const file of sourceFiles) {
 }
 
 for (const component of stronglyConnectedComponents(graph))
-  if (component.length > 1)
+  if (
+    component.length > 1 ||
+    (component.length === 1 && graph.get(component[0])?.has(component[0]))
+  )
     violations.push(
       `strongly connected source cycle: ${component
         .map((file) => relative(root, file))

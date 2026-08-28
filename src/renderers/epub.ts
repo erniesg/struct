@@ -363,7 +363,7 @@ export async function buildStructEpub(
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
   try {
-    document = normalizeStructDocumentForRenderer(document, 'epub')
+    document = normalizeStructDocumentForRenderer(document)
   } catch (error) {
     if (
       isRendererIngressCodecError(error) &&

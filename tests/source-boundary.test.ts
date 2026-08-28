@@ -27,4 +27,10 @@ describe('source-boundary enforcement', () => {
     expect(result.status).not.toBe(0)
     expect(result.stderr).toMatch(/cycle|strongly connected/i)
   })
+
+  it('rejects a singleton source component with a self-edge', () => {
+    const result = checkFixture('source-self-cycle')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toMatch(/cycle|strongly connected/i)
+  })
 })

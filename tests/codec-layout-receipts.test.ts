@@ -7,7 +7,8 @@ import {
   migrateStructDocument,
   StructCodecError,
 } from '../src/document/index'
-import { legacyStructDigest, structDigest } from '../src/identity'
+import { structDigest } from '../src/identity'
+import { legacyStructDigest } from '../src/legacy-digest'
 import { sha256HexSync } from '../src/sha256'
 import { buildStructEpub } from '../src/renderers/epub'
 import { renderPublicationXhtml } from '../src/renderers/xhtml'
