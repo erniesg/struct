@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
-import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 const EVALUATION_ROOT = 'evaluation/layout-epub-v2'
 const FIXTURE_ROOT = `${EVALUATION_ROOT}/fixtures`
@@ -14,6 +14,14 @@ const MAX_TRACKED_FILE_BYTES = 8 * 1024 * 1024
 const MAX_GIT_LIST_BYTES = 8 * 1024 * 1024
 const LONG_ENCODED_RUN = 2048
 const LONG_HEX_RUN = 1024
+const REDACTED_PATH_TOKEN = '<redacted-relative-path>'
+const DESCRIPTOR_DIRECTORY = '/proc/self/fd'
+const READ_CHUNK_BYTES = 64 * 1024
+const TRAVERSAL_TEST_SEAM_ENVIRONMENT =
+  'STRUCT_LAYOUT_EVAL_BOUNDARY_TEST_SEAM'
+const TRAVERSAL_TEST_SEAM_VALUE = 'post-validation-intermediate-swap'
+const TRAVERSAL_TEST_READY_MESSAGE = 'intermediate-directory-validated'
+const TRAVERSAL_TEST_CONTINUE_MESSAGE = 'intermediate-substitution-complete'
 
 const mediaExtensions = new Set([
   '.avif',
@@ -129,7 +137,6 @@ const provenanceRecordKeys = [
   'provenanceKey',
 ]
 const syntheticIdentifierPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u
-const safeDisplayPathPattern = /^[A-Za-z0-9._/ -]{1,240}$/u
 const absolutePosixHomePattern =
   /(?:^|[\s"'`=(:,])\/(?:home|Users)\/[^/\s"'`<>]+(?:\/[^\s"'`<>]*)?/mu
 const absolutePosixWorkspacePattern =
@@ -158,30 +165,17 @@ const forbiddenTextControls = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true })
 
 class ViolationCollector {
-  #violations = new Map()
+  #policies = new Set()
 
-  add(policy, repositoryPath) {
-    const displayPath = safeDisplayPath(repositoryPath)
-    this.#violations.set(`${policy}\u0000${displayPath}`, {
-      policy,
-      path: displayPath,
-    })
+  add(policy) {
+    this.#policies.add(policy)
   }
 
   sorted() {
-    return [...this.#violations.values()].sort(
-      (left, right) =>
-        left.path.localeCompare(right.path) ||
-        left.policy.localeCompare(right.policy),
-    )
+    return [...this.#policies]
+      .sort((left, right) => left.localeCompare(right))
+      .map((policy) => ({ policy, path: REDACTED_PATH_TOKEN }))
   }
-}
-
-function safeDisplayPath(repositoryPath) {
-  return safeDisplayPathPattern.test(repositoryPath) &&
-    !repositoryPath.split('/').some((segment) => segment === '..')
-    ? repositoryPath
-    : '<redacted-relative-path>'
 }
 
 function git(root, args, maxBuffer = MAX_GIT_LIST_BYTES) {
@@ -211,7 +205,9 @@ function validRepositoryPath(root, repositoryPath) {
     repositoryPath.includes('\\') ||
     repositoryPath.includes('\u0000') ||
     isAbsolute(repositoryPath) ||
-    repositoryPath.split('/').some((segment) => !segment || segment === '..')
+    repositoryPath
+      .split('/')
+      .some((segment) => !segment || segment === '.' || segment === '..')
   )
     return false
   const target = resolve(root, ...repositoryPath.split('/'))
@@ -275,56 +271,252 @@ function parseIndexEntries(root, collector) {
   return entries
 }
 
-async function readWorktreeEntry(root, repositoryPath, collector) {
-  const segments = repositoryPath.split('/')
-  let target = root
-  for (let index = 0; index < segments.length; index += 1) {
-    target = join(target, segments[index])
-    let metadata
+function descriptorChildPath(directoryHandle, segment) {
+  // The held descriptor pins the parent directory; only the appended component
+  // is resolved, and every such open below uses O_NOFOLLOW.
+  return `${DESCRIPTOR_DIRECTORY}/${directoryHandle.fd}/${segment}`
+}
+
+function descriptorOpenFlags(directory) {
+  if (
+    !Number.isInteger(constants.O_NOFOLLOW) ||
+    (directory && !Number.isInteger(constants.O_DIRECTORY))
+  )
+    throw new Error('safe descriptor traversal unavailable')
+  return (
+    constants.O_RDONLY |
+    constants.O_NOFOLLOW |
+    (constants.O_NONBLOCK ?? 0) |
+    (directory ? constants.O_DIRECTORY : 0)
+  )
+}
+
+function errorCode(error) {
+  return error && typeof error === 'object' && typeof error.code === 'string'
+    ? error.code
+    : null
+}
+
+async function recordDescriptorOpenFailure(
+  error,
+  directoryHandle,
+  segment,
+  repositoryPath,
+  collector,
+) {
+  if (errorCode(error) === 'ENOENT') return 'missing'
+
+  if (errorCode(error) === 'ELOOP' || errorCode(error) === 'ENOTDIR') {
     try {
-      metadata = await lstat(target)
-    } catch (error) {
-      if (error && typeof error === 'object' && error.code === 'ENOENT') return null
-      collector.add('unreadable-tracked-file', repositoryPath)
-      return null
-    }
-    if (metadata.isSymbolicLink()) {
-      collector.add('unsafe-symlink', segments.slice(0, index + 1).join('/'))
-      return null
-    }
-    if (index < segments.length - 1 && !metadata.isDirectory()) {
-      collector.add('unsafe-worktree-entry', repositoryPath)
-      return null
-    }
-    if (index === segments.length - 1 && !metadata.isFile()) {
-      collector.add('unsafe-worktree-entry', repositoryPath)
-      return null
+      const metadata = await lstat(
+        descriptorChildPath(directoryHandle, segment),
+        { bigint: true },
+      )
+      collector.add(
+        metadata.isSymbolicLink()
+          ? 'unsafe-symlink'
+          : 'unsafe-worktree-entry',
+        repositoryPath,
+      )
+      return 'rejected'
+    } catch (classificationError) {
+      if (errorCode(classificationError) === 'ENOENT') return 'missing'
     }
   }
 
-  let handle
+  collector.add('unreadable-tracked-file', repositoryPath)
+  return 'rejected'
+}
+
+function sameDescriptorIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+async function assertDescriptorTraversalAvailable(rootHandle, rootMetadata) {
+  let aliasHandle
   try {
-    handle = await open(
-      target,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    aliasHandle = await open(
+      `${DESCRIPTOR_DIRECTORY}/${rootHandle.fd}/.`,
+      descriptorOpenFlags(true),
     )
-    const metadata = await handle.stat()
-    if (!metadata.isFile()) {
+    const aliasMetadata = await aliasHandle.stat({ bigint: true })
+    if (!sameDescriptorIdentity(rootMetadata, aliasMetadata))
+      throw new Error('safe descriptor traversal unavailable')
+  } finally {
+    await aliasHandle?.close()
+  }
+}
+
+async function descriptorBindingIsStable(
+  directoryHandle,
+  entryMetadata,
+  segment,
+  repositoryPath,
+  directory,
+  collector,
+) {
+  let reboundHandle
+  try {
+    reboundHandle = await open(
+      descriptorChildPath(directoryHandle, segment),
+      descriptorOpenFlags(directory),
+    )
+    const reboundMetadata = await reboundHandle.stat({ bigint: true })
+    if (!sameDescriptorIdentity(entryMetadata, reboundMetadata)) {
       collector.add('unsafe-worktree-entry', repositoryPath)
-      return null
+      return false
     }
-    if (metadata.size > MAX_TRACKED_FILE_BYTES) {
-      collector.add('oversized-tracked-file', repositoryPath)
-      return { bytes: null, size: metadata.size }
+    return true
+  } catch (error) {
+    await recordDescriptorOpenFailure(
+      error,
+      directoryHandle,
+      segment,
+      repositoryPath,
+      collector,
+    )
+    return false
+  } finally {
+    await reboundHandle?.close()
+  }
+}
+
+let traversalTestSeamUsed = false
+
+async function pauseAtTraversalTestSeam(repositoryPath, segmentIndex) {
+  if (
+    traversalTestSeamUsed ||
+    process.env[TRAVERSAL_TEST_SEAM_ENVIRONMENT] !==
+      TRAVERSAL_TEST_SEAM_VALUE ||
+    typeof process.send !== 'function' ||
+    !repositoryPath.includes('/') ||
+    segmentIndex !== 0
+  )
+    return
+
+  traversalTestSeamUsed = true
+  await new Promise((resolvePromise, rejectPromise) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      rejectPromise(new Error('traversal test seam timed out'))
+    }, 5_000)
+
+    function cleanup() {
+      clearTimeout(timeout)
+      process.off('message', onMessage)
+      process.off('disconnect', onDisconnect)
     }
-    const bytes = await handle.readFile()
-    return { bytes, size: metadata.size }
+
+    function onMessage(message) {
+      if (message !== TRAVERSAL_TEST_CONTINUE_MESSAGE) return
+      cleanup()
+      resolvePromise()
+    }
+
+    function onDisconnect() {
+      cleanup()
+      rejectPromise(new Error('traversal test seam disconnected'))
+    }
+
+    process.on('message', onMessage)
+    process.on('disconnect', onDisconnect)
+    process.send(TRAVERSAL_TEST_READY_MESSAGE)
+  })
+}
+
+async function readBoundedFile(handle) {
+  const chunks = []
+  let size = 0
+  while (size <= MAX_TRACKED_FILE_BYTES) {
+    const remaining = MAX_TRACKED_FILE_BYTES + 1 - size
+    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, remaining))
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, null)
+    if (bytesRead === 0) break
+    chunks.push(chunk.subarray(0, bytesRead))
+    size += bytesRead
+  }
+  return {
+    bytes:
+      size > MAX_TRACKED_FILE_BYTES ? null : Buffer.concat(chunks, size),
+    size,
+  }
+}
+
+async function readWorktreeEntry(rootHandle, repositoryPath, collector) {
+  const segments = repositoryPath.split('/')
+  const openedHandles = []
+  let directoryHandle = rootHandle
+
+  try {
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index]
+      const directory = index < segments.length - 1
+      let entryHandle
+      try {
+        entryHandle = await open(
+          descriptorChildPath(directoryHandle, segment),
+          descriptorOpenFlags(directory),
+        )
+      } catch (error) {
+        await recordDescriptorOpenFailure(
+          error,
+          directoryHandle,
+          segment,
+          repositoryPath,
+          collector,
+        )
+        return null
+      }
+      openedHandles.push(entryHandle)
+
+      let metadata
+      try {
+        metadata = await entryHandle.stat({ bigint: true })
+      } catch {
+        collector.add('unreadable-tracked-file', repositoryPath)
+        return null
+      }
+      if (directory ? !metadata.isDirectory() : !metadata.isFile()) {
+        collector.add('unsafe-worktree-entry', repositoryPath)
+        return null
+      }
+
+      await pauseAtTraversalTestSeam(repositoryPath, index)
+      if (
+        !(await descriptorBindingIsStable(
+          directoryHandle,
+          metadata,
+          segment,
+          repositoryPath,
+          directory,
+          collector,
+        ))
+      )
+        return null
+
+      if (directory) {
+        directoryHandle = entryHandle
+        continue
+      }
+
+      if (metadata.size > BigInt(MAX_TRACKED_FILE_BYTES)) {
+        collector.add('oversized-tracked-file', repositoryPath)
+        return { bytes: null, size: MAX_TRACKED_FILE_BYTES + 1 }
+      }
+      const entry = await readBoundedFile(entryHandle)
+      if (entry.bytes === null)
+        collector.add('oversized-tracked-file', repositoryPath)
+      return entry
+    }
   } catch {
     collector.add('unreadable-tracked-file', repositoryPath)
     return null
   } finally {
-    await handle?.close()
+    for (const handle of openedHandles.reverse()) await handle.close()
   }
+
+  collector.add('unsafe-worktree-entry', repositoryPath)
+  return null
 }
 
 function untrackedEvaluationPaths(root, collector) {
@@ -350,9 +542,22 @@ async function readWorktreeSnapshot(root, trackedPaths, collector) {
     ...trackedPaths,
     ...untrackedEvaluationPaths(root, collector),
   ])
-  for (const repositoryPath of [...repositoryPaths].sort()) {
-    const entry = await readWorktreeEntry(root, repositoryPath, collector)
-    if (entry !== null) entries.set(repositoryPath, entry)
+  let rootHandle
+  try {
+    rootHandle = await open(root, descriptorOpenFlags(true))
+    const rootMetadata = await rootHandle.stat({ bigint: true })
+    if (!rootMetadata.isDirectory()) throw new Error('repository root unavailable')
+    await assertDescriptorTraversalAvailable(rootHandle, rootMetadata)
+    for (const repositoryPath of [...repositoryPaths].sort()) {
+      const entry = await readWorktreeEntry(
+        rootHandle,
+        repositoryPath,
+        collector,
+      )
+      if (entry !== null) entries.set(repositoryPath, entry)
+    }
+  } finally {
+    await rootHandle?.close()
   }
   return entries
 }
@@ -670,12 +875,13 @@ try {
   if (violations.length === 0) {
     process.stdout.write('layout-eval-boundary: ok\n')
   } else {
-    process.stderr.write('layout-eval-boundary: failed\n')
     for (const violation of violations)
       process.stderr.write(`${violation.policy}: ${violation.path}\n`)
     process.exitCode = 1
   }
 } catch {
-  process.stderr.write('layout-eval-boundary-internal-error: repository\n')
+  process.stderr.write(
+    `layout-eval-boundary-internal-error: ${REDACTED_PATH_TOKEN}\n`,
+  )
   process.exitCode = 1
 }
