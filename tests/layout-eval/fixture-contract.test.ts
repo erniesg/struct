@@ -1,5 +1,16 @@
 import { readFile } from 'node:fs/promises'
 import { beforeAll, describe, expect, it } from 'vitest'
+import {
+  createAggregateAcceptance,
+  loadAggregateAcceptance,
+  type AcceptanceError,
+  type AggregateAcceptance,
+  type AggregateAcceptanceContext,
+  type AggregateContractIdentity,
+  type TrustedHoldoutAuthorization,
+  type TrustedHoldoutClaim,
+  type TrustedHoldoutState,
+} from './aggregate-acceptance'
 
 const categories = [
   'paragraph',
@@ -36,31 +47,20 @@ const versionAxes = [
   'cohortVersion',
 ] as const
 
+type Category = (typeof categories)[number]
 type JsonObject = Record<string, any>
 
+let acceptance: AggregateAcceptance
 let protocol: JsonObject
 let reportSchema: JsonObject
 
 beforeAll(async () => {
-  const loaded = await Promise.all([
-    readJson('evaluation/layout-epub-v1/protocol.json'),
-    readJson('evaluation/layout-epub-v1/aggregate-report.schema.json'),
-  ])
-  protocol = loaded[0]
-  reportSchema = loaded[1]
+  acceptance = await loadAggregateAcceptance()
+  protocol = acceptance.protocol
+  reportSchema = acceptance.reportSchema
 })
 
-async function readJson(path: string): Promise<JsonObject> {
-  return JSON.parse(await readFile(path, 'utf8'))
-}
-
 function syntheticReport(): JsonObject {
-  const categoryCells = Object.fromEntries(
-    categories.map((category) => [
-      category,
-      { status: 'reported', numerator: 5, denominator: 5, rate: 1 },
-    ]),
-  )
   return {
     schemaVersion: '1.0.0',
     versions: {
@@ -77,11 +77,7 @@ function syntheticReport(): JsonObject {
       gitCommit: 'a'.repeat(40),
       packedArtifactSha256: 'b'.repeat(64),
     },
-    evaluation: {
-      gate: 'development',
-      protocolState: 'development-open',
-      qualifyingTransactionCount: 1,
-    },
+    evaluation: { gate: 'development' },
     outcomes: {
       'rendered-ready': 18,
       'source-preserved-ready': 1,
@@ -129,7 +125,12 @@ function syntheticReport(): JsonObject {
       xhtmlByteMismatchCount: 0,
       epubByteMismatchCount: 0,
     },
-    categories: categoryCells,
+    categories: Object.fromEntries(
+      categories.map((category) => [
+        category,
+        { status: 'reported', numerator: 5, denominator: 5, rate: 1 },
+      ]),
+    ),
   }
 }
 
@@ -137,176 +138,39 @@ function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
-function resolveReference(root: JsonObject, reference: string): JsonObject {
-  if (!reference.startsWith('#/')) throw new Error('unsupported-schema-reference')
-  return reference
-    .slice(2)
-    .split('/')
-    .map((segment) => segment.replaceAll('~1', '/').replaceAll('~0', '~'))
-    .reduce<JsonObject>((value, segment) => value[segment], root)
+function categoryPopulations(population = 5): Record<Category, number> {
+  return Object.fromEntries(
+    categories.map((category) => [category, population]),
+  ) as Record<Category, number>
 }
 
-function schemaErrors(
-  schema: JsonObject,
-  value: unknown,
-  root: JsonObject = schema,
-  location = '$',
-): string[] {
-  if (typeof schema.$ref === 'string')
-    return schemaErrors(resolveReference(root, schema.$ref), value, root, location)
-
-  const errors: string[] = []
-  if (Array.isArray(schema.oneOf)) {
-    const matches = schema.oneOf.filter(
-      (candidate: JsonObject) =>
-        schemaErrors(candidate, value, root, location).length === 0,
-    )
-    if (matches.length !== 1) errors.push(`${location}:oneOf`)
-  }
-  if ('const' in schema && !Object.is(value, schema.const))
-    errors.push(`${location}:const`)
-  if (
-    Array.isArray(schema.enum) &&
-    !schema.enum.some((candidate: unknown) => Object.is(candidate, value))
-  )
-    errors.push(`${location}:enum`)
-
-  if (schema.type === 'object') {
-    if (typeof value !== 'object' || value === null || Array.isArray(value))
-      return [...errors, `${location}:type`]
-    const record = value as JsonObject
-    const properties = (schema.properties ?? {}) as JsonObject
-    for (const required of (schema.required ?? []) as string[])
-      if (!Object.hasOwn(record, required))
-        errors.push(`${location}.${required}:required`)
-    if (schema.additionalProperties === false)
-      for (const key of Object.keys(record))
-        if (!Object.hasOwn(properties, key))
-          errors.push(`${location}.${key}:closed`)
-    for (const [key, propertySchema] of Object.entries(properties))
-      if (Object.hasOwn(record, key))
-        errors.push(
-          ...schemaErrors(
-            propertySchema as JsonObject,
-            record[key],
-            root,
-            `${location}.${key}`,
-          ),
-        )
-  }
-
-  if (schema.type === 'array') {
-    if (!Array.isArray(value)) return [...errors, `${location}:type`]
-    if (typeof schema.minItems === 'number' && value.length < schema.minItems)
-      errors.push(`${location}:minItems`)
-    if (typeof schema.maxItems === 'number' && value.length > schema.maxItems)
-      errors.push(`${location}:maxItems`)
-    if (schema.uniqueItems === true && new Set(value).size !== value.length)
-      errors.push(`${location}:uniqueItems`)
-    if (schema.items)
-      value.forEach((item, index) =>
-        errors.push(
-          ...schemaErrors(
-            schema.items as JsonObject,
-            item,
-            root,
-            `${location}[${index}]`,
-          ),
-        ),
-      )
-  }
-
-  if (schema.type === 'string') {
-    if (typeof value !== 'string') return [...errors, `${location}:type`]
-    if (typeof schema.minLength === 'number' && value.length < schema.minLength)
-      errors.push(`${location}:minLength`)
-    if (typeof schema.maxLength === 'number' && value.length > schema.maxLength)
-      errors.push(`${location}:maxLength`)
-    if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern).test(value))
-      errors.push(`${location}:pattern`)
-  }
-
-  if (schema.type === 'integer' || schema.type === 'number') {
-    const validNumber =
-      typeof value === 'number' &&
-      Number.isFinite(value) &&
-      (schema.type !== 'integer' || Number.isInteger(value))
-    if (!validNumber) return [...errors, `${location}:type`]
-    if (typeof schema.minimum === 'number' && value < schema.minimum)
-      errors.push(`${location}:minimum`)
-    if (typeof schema.maximum === 'number' && value > schema.maximum)
-      errors.push(`${location}:maximum`)
-    if (typeof schema.multipleOf === 'number') {
-      const quotient = value / schema.multipleOf
-      if (Math.abs(quotient - Math.round(quotient)) > 1e-9)
-        errors.push(`${location}:multipleOf`)
-    }
-  }
-
-  if (schema.type === 'boolean' && typeof value !== 'boolean')
-    errors.push(`${location}:type`)
-  return errors
+function context(
+  populations: Readonly<Record<string, number>> = categoryPopulations(),
+  holdoutAuthorization?: TrustedHoldoutAuthorization,
+): AggregateAcceptanceContext {
+  return { categoryPopulations: populations, holdoutAuthorization }
 }
 
-function roundedRate(numerator: number, denominator: number): number {
-  const scale = 1_000_000
-  return (
-    Math.floor((2 * numerator * scale + denominator) / (2 * denominator)) /
-    scale
-  )
+function expectValid(
+  report: JsonObject,
+  acceptanceContext = context(),
+  evaluator = acceptance,
+): void {
+  expect(evaluator.acceptForPublicEmission(report, acceptanceContext)).toEqual({
+    accepted: true,
+    errors: [],
+  })
 }
 
-function aggregateErrors(report: JsonObject): string[] {
-  const errors = schemaErrors(reportSchema, report)
-  if (errors.length > 0) return errors
-
-  for (const [rateName, formula] of Object.entries(
-    protocol.metrics.overall as JsonObject,
-  )) {
-    const { numeratorCounter, denominatorCounter } = formula as JsonObject
-    const numerator = report.counts[numeratorCounter]
-    const denominator = report.counts[denominatorCounter]
-    if (numerator > denominator) errors.push(`counts.${rateName}:range`)
-    if (
-      Object.is(report.rates[rateName], -0) ||
-      report.rates[rateName] !== roundedRate(numerator, denominator)
-    )
-      errors.push(`rates.${rateName}:derived`)
-  }
-
-  for (const category of categories) {
-    const cell = report.categories[category]
-    if (cell.status !== 'reported') continue
-    if (cell.numerator > cell.denominator)
-      errors.push(`categories.${category}:range`)
-    if (
-      Object.is(cell.rate, -0) ||
-      cell.rate !== roundedRate(cell.numerator, cell.denominator)
-    )
-      errors.push(`categories.${category}.rate:derived`)
-  }
-
-  const completedFromOutcomes = outcomes.reduce(
-    (sum, outcome) => sum + report.outcomes[outcome],
-    0,
-  )
-  if (completedFromOutcomes !== report.counts.completed)
-    errors.push('outcomes:completion-conservation')
-  if (
-    report.outcomes['rendered-ready'] +
-      report.outcomes['source-preserved-ready'] !==
-    report.counts.publicationReady
-  )
-    errors.push('outcomes:ready-conservation')
-  return errors
-}
-
-function expectValid(report: JsonObject): void {
-  expect(aggregateErrors(report)).toEqual([])
-}
-
-function expectInvalid(report: JsonObject): void {
-  expect(aggregateErrors(report).length).toBeGreaterThan(0)
+function expectInvalid(
+  report: JsonObject,
+  expectedError?: AcceptanceError,
+  acceptanceContext = context(),
+  evaluator = acceptance,
+): void {
+  const result = evaluator.acceptForPublicEmission(report, acceptanceContext)
+  expect(result.accepted).toBe(false)
+  if (expectedError !== undefined) expect(result.errors).toContain(expectedError)
 }
 
 function expectClosedObjectSchemas(schema: JsonObject): void {
@@ -321,7 +185,64 @@ function expectClosedObjectSchemas(schema: JsonObject): void {
     expectClosedObjectSchemas(schema.items as JsonObject)
 }
 
+function contractIdentity(report: JsonObject): AggregateContractIdentity {
+  return {
+    schemaVersion: report.schemaVersion,
+    versions: clone(report.versions),
+    publicArtifact: clone(report.publicArtifact),
+  }
+}
+
+function futureFrozenAcceptance(): AggregateAcceptance {
+  const frozenProtocol = clone(protocol)
+  frozenProtocol.protocolVersion = '1.1.0'
+  frozenProtocol.protocolState = 'frozen'
+  frozenProtocol.aggregateReportSchemaVersion = '1.1.0'
+  const frozenSchema = clone(reportSchema)
+  frozenSchema.properties.schemaVersion.const = '1.1.0'
+  frozenSchema.$defs.evaluation.properties.gate = {
+    enum: ['development', 'holdout'],
+  }
+  return createAggregateAcceptance(frozenProtocol, frozenSchema)
+}
+
+function futureHoldoutReport(): JsonObject {
+  const candidate = clone(syntheticReport())
+  candidate.schemaVersion = '1.1.0'
+  candidate.versions.protocolVersion = '1.1.0'
+  candidate.evaluation = { gate: 'holdout' }
+  return candidate
+}
+
+class AtomicSingleUseState implements TrustedHoldoutState {
+  calls = 0
+  claims: TrustedHoldoutClaim[] = []
+  private consumed = false
+
+  constructor(
+    private readonly matches: (claim: TrustedHoldoutClaim) => boolean = () =>
+      true,
+  ) {}
+
+  async consultAndConsume(claim: TrustedHoldoutClaim): Promise<boolean> {
+    this.calls += 1
+    this.claims.push(claim)
+    if (!this.matches(claim) || this.consumed) return false
+    this.consumed = true
+    return true
+  }
+}
+
 describe('layout EPUB evaluation protocol', () => {
+  it('parses and compiles the actual declared Draft 2020-12 schema with pinned Ajv', async () => {
+    expect(reportSchema.$schema).toBe(
+      'https://json-schema.org/draft/2020-12/schema',
+    )
+    const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
+    expect(packageJson.devDependencies.ajv).toBe('8.20.0')
+    expectValid(syntheticReport())
+  })
+
   it('freezes the exact categories, outcomes, versions, formulas, and gates', () => {
     expect(protocol.categories).toEqual(categories)
     expect(protocol.outcomes).toEqual(outcomes)
@@ -330,6 +251,9 @@ describe('layout EPUB evaluation protocol', () => {
     expect(reportSchema.$defs.versions.required).toEqual(versionAxes)
     expect(reportSchema.$defs.outcomes.required).toEqual(outcomes)
     expect(reportSchema.$defs.categories.required).toEqual(categories)
+    expect(reportSchema.$defs.evaluation.properties.gate).toEqual({
+      const: 'development',
+    })
     expect(protocol).toMatchObject({
       protocolVersion: '1.0.0',
       protocolState: 'development-open',
@@ -338,7 +262,9 @@ describe('layout EPUB evaluation protocol', () => {
         minimumPopulation: 5,
         maximumCount: 1_000_000,
         rateDecimalPlaces: 6,
+        rateRounding: 'half-up',
         rateInputPolicy: 'trusted-aggregator-derived-only',
+        gateInputPolicy: 'exact-counter-ratio-before-rounding',
         suppressedFields: ['numerator', 'denominator', 'rate'],
         zeroToleranceSuppression: 'forbidden',
       },
@@ -359,6 +285,26 @@ describe('layout EPUB evaluation protocol', () => {
           maximumQualifyingTransactions: 1,
           retryPolicy: 'infrastructure-only-without-semantic-counters',
         },
+      },
+      ownerPrivateHoldoutState: {
+        storage: 'outside-struct',
+        freezeTiming: 'before-holdout-input-open',
+        authorizationOperation: 'atomic-consult-and-consume',
+        authorizationTiming: 'before-holdout-input-open',
+        authorizationEvidenceInReport: 'forbidden',
+        requiredBindings: [
+          'exactFrozenProtocolArtifact',
+          'protocolState',
+          'protocolVersion',
+          'aggregateReportSchemaVersion',
+          'fixtureVersion',
+          'rendererVersion',
+          'profileVersion',
+          'bridgeVersion',
+          'cohortVersion',
+          'publicArtifact',
+          'maximumQualifyingTransactions',
+        ],
       },
     })
     expect(protocol.metrics).toMatchObject({
@@ -418,14 +364,10 @@ describe('layout EPUB evaluation protocol', () => {
   })
 })
 
-describe('aggregate report contract', () => {
-  it('accepts a complete content-free synthetic aggregate', () => {
-    expectValid(syntheticReport())
-  })
-
+describe('aggregate report schema and privacy boundary', () => {
   it('closes every report object schema and rejects unknown fields at every level', () => {
     expectClosedObjectSchemas(reportSchema)
-    const objectLocations = [
+    for (const location of [
       'versions',
       'publicArtifact',
       'evaluation',
@@ -434,15 +376,14 @@ describe('aggregate report contract', () => {
       'rates',
       'zeroTolerance',
       'categories',
-    ]
-    for (const location of objectLocations) {
+    ]) {
       const candidate = clone(syntheticReport())
       candidate[location].unknown = true
-      expectInvalid(candidate)
+      expectInvalid(candidate, 'schema-invalid')
     }
     const categoryCandidate = clone(syntheticReport())
     categoryCandidate.categories.paragraph.unknown = true
-    expectInvalid(categoryCandidate)
+    expectInvalid(categoryCandidate, 'schema-invalid')
   })
 
   it.each([
@@ -458,13 +399,16 @@ describe('aggregate report contract', () => {
     'text',
     'geometry',
     'metadata',
+    'ledgerId',
+    'authorization',
+    'receipt',
   ])('rejects the forbidden field %s', (field) => {
     const candidate = clone(syntheticReport())
     candidate[field] = true
-    expectInvalid(candidate)
+    expectInvalid(candidate, 'schema-invalid')
   })
 
-  it('does not admit private fields through the public artifact identity', () => {
+  it('does not admit private fields through public artifact or evaluation objects', () => {
     for (const field of [
       'documentId',
       'path',
@@ -474,44 +418,133 @@ describe('aggregate report contract', () => {
       'outputHash',
       'timestamp',
       'metadata',
+      'ledgerId',
     ]) {
       const candidate = clone(syntheticReport())
       candidate.publicArtifact[field] = true
-      expectInvalid(candidate)
+      expectInvalid(candidate, 'schema-invalid')
+    }
+    for (const field of [
+      'protocolState',
+      'qualifyingTransactionCount',
+      'authorization',
+      'receipt',
+    ]) {
+      const candidate = clone(syntheticReport())
+      candidate.evaluation[field] = true
+      expectInvalid(candidate, 'schema-invalid')
     }
   })
 
-  it('omits all counts and rates from suppressed category cells', () => {
+  it.each([
+    '1.0.0',
+    '1.0.0-alpha',
+    '1.0.0-alpha.1',
+    '1.0.0-0.3.7',
+    '1.0.0-x.7.z.92',
+    '1.0.0+build.1',
+    '1.0.0-rc.1+build.1',
+    `1.0.0+${'a'.repeat(58)}`,
+  ])('accepts the bounded SemVer 2.0 version %s', (version) => {
+    const candidate = clone(syntheticReport())
+    candidate.versions.rendererVersion = version
+    expectValid(candidate)
+  })
+
+  it.each([
+    '01.0.0',
+    '1.01.0',
+    '1.0.01',
+    '1.0',
+    '1.0.0-',
+    '1.0.0-01',
+    '1.0.0-alpha..1',
+    '1.0.0+build_1',
+    `1.0.0+${'a'.repeat(59)}`,
+  ])('rejects the non-SemVer or over-bound version %s', (version) => {
+    const candidate = clone(syntheticReport())
+    candidate.versions.rendererVersion = version
+    expectInvalid(candidate, 'schema-invalid')
+  })
+})
+
+describe('required aggregate acceptance algorithm', () => {
+  it('accepts a complete content-free synthetic aggregate', () => {
+    expectValid(syntheticReport())
+  })
+
+  it('rejects a missing or caller-shaped trusted category population map', () => {
+    const candidate = syntheticReport()
+    expectInvalid(
+      candidate,
+      'trusted-category-populations-invalid',
+      {} as AggregateAcceptanceContext,
+    )
+    const missing = categoryPopulations()
+    delete (missing as Partial<Record<Category, number>>).paragraph
+    expectInvalid(
+      candidate,
+      'trusted-category-populations-invalid',
+      context(missing),
+    )
+    expectInvalid(
+      candidate,
+      'trusted-category-populations-invalid',
+      context({ ...categoryPopulations(), unknown: 1 }),
+    )
+  })
+
+  it('requires suppression below the minimum and reporting at the minimum', () => {
+    for (const category of categories) {
+      const suppressed = clone(syntheticReport())
+      suppressed.categories[category] = { status: 'suppressed' }
+      const belowMinimum = categoryPopulations()
+      belowMinimum[category] = 4
+      expectValid(suppressed, context(belowMinimum))
+      expectInvalid(
+        suppressed,
+        'suppression-ineligible',
+        context(categoryPopulations()),
+      )
+      expectInvalid(
+        syntheticReport(),
+        'suppression-required',
+        context(belowMinimum),
+      )
+    }
+  })
+
+  it('binds each reported denominator to the trusted pre-suppression population', () => {
+    for (const category of categories) {
+      const populations = categoryPopulations()
+      populations[category] = 6
+      expectInvalid(
+        syntheticReport(),
+        'category-population-mismatch',
+        context(populations),
+      )
+    }
+  })
+
+  it('omits every counter and rate from a suppressed category cell', () => {
+    const populations = categoryPopulations()
+    populations.paragraph = 4
     const suppressed = clone(syntheticReport())
     suppressed.categories.paragraph = { status: 'suppressed' }
-    expectValid(suppressed)
-
+    expectValid(suppressed, context(populations))
     for (const field of ['numerator', 'denominator', 'rate']) {
       const candidate = clone(suppressed)
       candidate.categories.paragraph[field] = 0
-      expectInvalid(candidate)
+      expectInvalid(candidate, 'schema-invalid', context(populations))
     }
-
-    const belowMinimum = clone(syntheticReport())
-    belowMinimum.categories.paragraph = {
-      status: 'reported',
-      numerator: 4,
-      denominator: 4,
-      rate: 1,
-    }
-    expectInvalid(belowMinimum)
   })
 
-  it('rejects submitted rates that differ from their integer counters', () => {
+  it('rejects every overall rate that differs from its counters', () => {
     for (const rate of Object.keys(syntheticReport().rates)) {
       const candidate = clone(syntheticReport())
       candidate.rates[rate] = 0.5
-      expectInvalid(candidate)
+      expectInvalid(candidate, 'rate-not-derived')
     }
-    const categoryCandidate = clone(syntheticReport())
-    categoryCandidate.categories.tables.rate = 0.5
-    expectInvalid(categoryCandidate)
-
     for (const invalidRate of [-0, -0.1, 1.1, 0.1234567]) {
       const candidate = clone(syntheticReport())
       candidate.rates.assignedCompletion = invalidRate
@@ -519,34 +552,319 @@ describe('aggregate report contract', () => {
     }
   })
 
+  it('rejects every category rate that differs from its counters', () => {
+    for (const category of categories) {
+      const candidate = clone(syntheticReport())
+      candidate.categories[category].rate = 0.8
+      expectInvalid(candidate, 'rate-not-derived')
+    }
+  })
+
+  it('rejects numerator overflow and zero denominator mutations', () => {
+    for (const formula of Object.values(
+      protocol.metrics.overall,
+    ) as JsonObject[]) {
+      const overflow = clone(syntheticReport())
+      overflow.counts[formula.numeratorCounter] =
+        overflow.counts[formula.denominatorCounter] + 1
+      expectInvalid(overflow)
+      const zero = clone(syntheticReport())
+      zero.counts[formula.denominatorCounter] = 0
+      expectInvalid(zero, 'schema-invalid')
+    }
+    for (const category of categories) {
+      const overflow = clone(syntheticReport())
+      overflow.categories[category].numerator = 6
+      expectInvalid(overflow, 'counter-range-invalid')
+      const zero = clone(syntheticReport())
+      zero.categories[category] = {
+        status: 'reported',
+        numerator: 0,
+        denominator: 0,
+        rate: 0,
+      }
+      expectInvalid(zero, 'schema-invalid')
+    }
+  })
+
+  it.each([
+    {
+      name: 'assigned completion',
+      mutate(candidate: JsonObject) {
+        candidate.counts.assigned = 21
+        candidate.rates.assignedCompletion = 0.952381
+      },
+    },
+    {
+      name: 'neutral conservation',
+      mutate(candidate: JsonObject) {
+        candidate.counts.conservedNeutralObligations = 39
+        candidate.rates.neutralConservation = 0.975
+      },
+    },
+    {
+      name: 'publication ready',
+      mutate(candidate: JsonObject) {
+        candidate.counts.publicationReady = 18
+        candidate.rates.publicationReady = 0.9
+        candidate.outcomes['rendered-ready'] = 17
+        candidate.outcomes['expected-review-refusal'] = 2
+      },
+    },
+    {
+      name: 'ambiguity safety',
+      mutate(candidate: JsonObject) {
+        candidate.counts.ambiguitySafe = 4
+        candidate.rates.ambiguitySafety = 0.8
+      },
+    },
+  ])('rejects a correctly derived failure of the $name gate', ({ mutate }) => {
+    const candidate = clone(syntheticReport())
+    mutate(candidate)
+    expectInvalid(candidate, 'overall-gate-failed')
+  })
+
+  it('keeps semantic coverage report-only', () => {
+    const candidate = clone(syntheticReport())
+    candidate.counts.renderedSemantically = 0
+    candidate.rates.semanticCoverage = 0
+    expectValid(candidate)
+  })
+
+  it('applies the overall threshold before display rounding', () => {
+    const candidate = clone(syntheticReport())
+    candidate.counts.assigned = 1_000_000
+    candidate.counts.completed = 1_000_000
+    candidate.counts.publicationEligible = 1_000_000
+    candidate.counts.publicationReady = 949_999
+    candidate.rates.publicationReady = 0.95
+    candidate.outcomes['rendered-ready'] = 949_999
+    candidate.outcomes['source-preserved-ready'] = 0
+    candidate.outcomes['expected-review-refusal'] = 50_001
+    expectInvalid(candidate, 'overall-gate-failed')
+  })
+
+  it('rejects every category-ready gate mutation', () => {
+    for (const category of categories) {
+      const candidate = clone(syntheticReport())
+      candidate.categories[category] = {
+        status: 'reported',
+        numerator: 4,
+        denominator: 5,
+        rate: 0.8,
+      }
+      expectInvalid(candidate, 'category-gate-failed')
+    }
+  })
+
+  it('applies category gates before display rounding', () => {
+    const candidate = clone(syntheticReport())
+    candidate.categories.paragraph = {
+      status: 'reported',
+      numerator: 899_999,
+      denominator: 1_000_000,
+      rate: 0.9,
+    }
+    const populations = categoryPopulations()
+    populations.paragraph = 1_000_000
+    expectInvalid(candidate, 'category-gate-failed', context(populations))
+  })
+
+  it('rejects every nonzero zero-tolerance gate mutation', () => {
+    for (const counter of Object.keys(syntheticReport().zeroTolerance)) {
+      const candidate = clone(syntheticReport())
+      candidate.zeroTolerance[counter] = 1
+      expectInvalid(candidate, 'zero-tolerance-gate-failed')
+    }
+  })
+
   it('never permits a zero-tolerance counter to be suppressed', () => {
     for (const counter of Object.keys(syntheticReport().zeroTolerance)) {
       const candidate = clone(syntheticReport())
       candidate.zeroTolerance[counter] = { status: 'suppressed' }
-      expectInvalid(candidate)
+      expectInvalid(candidate, 'schema-invalid')
     }
   })
 
-  it('accepts one frozen holdout transaction and rejects unfrozen or repeated reports', () => {
-    const holdout = clone(syntheticReport())
-    holdout.evaluation = {
+  it('rejects both outcome conservation mutations', () => {
+    const completion = clone(syntheticReport())
+    completion.outcomes['expected-review-refusal'] = 0
+    expectInvalid(completion, 'outcome-conservation-failed')
+    const ready = clone(syntheticReport())
+    ready.outcomes['rendered-ready'] = 17
+    ready.outcomes['expected-review-refusal'] = 2
+    expectInvalid(ready, 'outcome-conservation-failed')
+  })
+
+  it('rejects the independent review combined gate counterexample', () => {
+    const candidate = clone(syntheticReport())
+    candidate.counts.publicationReady = 18
+    candidate.rates.publicationReady = 0.9
+    candidate.outcomes['rendered-ready'] = 17
+    candidate.outcomes['expected-review-refusal'] = 2
+    candidate.zeroTolerance.falseLinkCount = 1
+    candidate.categories.paragraph = {
+      status: 'reported',
+      numerator: 4,
+      denominator: 5,
+      rate: 0.8,
+    }
+    const result = acceptance.acceptForPublicEmission(candidate, context())
+    expect(result).toMatchObject({ accepted: false })
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        'overall-gate-failed',
+        'category-gate-failed',
+        'zero-tolerance-gate-failed',
+      ]),
+    )
+  })
+
+  it('rejects report protocol-version mismatch', () => {
+    const candidate = clone(syntheticReport())
+    candidate.versions.protocolVersion = '2.0.0'
+    expectInvalid(candidate, 'report-version-mismatch')
+  })
+})
+
+describe('owner-private holdout state contract', () => {
+  it(
+    'rejects holdout at the committed development-open head without consulting state',
+    async () => {
+      const candidate = clone(syntheticReport())
+      candidate.evaluation = { gate: 'holdout' }
+      expectInvalid(candidate, 'schema-invalid')
+      const permissiveSchema = clone(reportSchema)
+      permissiveSchema.$defs.evaluation.properties.gate = {
+        enum: ['development', 'holdout'],
+      }
+      const permissiveAcceptance = createAggregateAcceptance(
+        protocol,
+        permissiveSchema,
+      )
+      expectInvalid(
+        candidate,
+        'evaluation-state-ineligible',
+        context(),
+        permissiveAcceptance,
+      )
+      const state = new AtomicSingleUseState()
+      const authorization = await acceptance.authorizeHoldoutBeforeInputOpen(
+        contractIdentity(candidate),
+        state,
+      )
+      expect(authorization).toEqual({
+        authorized: false,
+        error: 'holdout-protocol-ineligible',
+      })
+      expect(state.calls).toBe(0)
+    },
+  )
+
+  it('rejects caller-supplied holdout state and count fields as schema violations', () => {
+    const candidate = clone(syntheticReport())
+    candidate.evaluation = {
       gate: 'holdout',
       protocolState: 'frozen',
       qualifyingTransactionCount: 1,
     }
-    expectValid(holdout)
+    expectInvalid(candidate, 'schema-invalid')
+  })
 
-    for (const protocolState of ['development-open', 'closed']) {
-      const candidate = clone(holdout)
-      candidate.evaluation.protocolState = protocolState
-      expectInvalid(candidate)
+  it(
+    'requires injected trusted state and atomically rejects a second identical frozen claim',
+    async () => {
+      const frozenAcceptance = futureFrozenAcceptance()
+      const candidate = futureHoldoutReport()
+      expectInvalid(
+        candidate,
+        'holdout-authorization-required',
+        context(),
+        frozenAcceptance,
+      )
+      expectInvalid(
+        candidate,
+        'holdout-authorization-mismatch',
+        context(categoryPopulations(), {} as TrustedHoldoutAuthorization),
+        frozenAcceptance,
+      )
+      const claim = contractIdentity(candidate)
+      const expectedClaim: TrustedHoldoutClaim = {
+        exactFrozenProtocolArtifact: frozenAcceptance.protocol,
+        protocolState: 'frozen',
+        maximumQualifyingTransactions: 1,
+        ...claim,
+      }
+      const state = new AtomicSingleUseState(
+        (candidateClaim) =>
+          JSON.stringify(candidateClaim) === JSON.stringify(expectedClaim),
+      )
+      const [first, second] = await Promise.all([
+        frozenAcceptance.authorizeHoldoutBeforeInputOpen(claim, state),
+        frozenAcceptance.authorizeHoldoutBeforeInputOpen(claim, state),
+      ])
+      expect(first.authorized).toBe(true)
+      expect(second).toEqual({
+        authorized: false,
+        error: 'holdout-claim-rejected',
+      })
+      expect(state.calls).toBe(2)
+      expect(state.claims[0]).toEqual(expectedClaim)
+      expect(state.claims[1]).toEqual(state.claims[0])
+      if (!first.authorized) throw new Error('expected-test-authorization')
+      expectValid(
+        candidate,
+        context(categoryPopulations(), first.authorization),
+        frozenAcceptance,
+      )
+      expectInvalid(
+        candidate,
+        'holdout-authorization-consumed',
+        context(categoryPopulations(), first.authorization),
+        frozenAcceptance,
+      )
+    },
+  )
+
+  it('binds a frozen authorization to every report identity axis', async () => {
+    const frozenAcceptance = futureFrozenAcceptance()
+    const candidate = futureHoldoutReport()
+    const state = new AtomicSingleUseState()
+    const authorization = await frozenAcceptance.authorizeHoldoutBeforeInputOpen(
+      contractIdentity(candidate),
+      state,
+    )
+    if (!authorization.authorized)
+      throw new Error('expected-test-authorization')
+    for (const axis of versionAxes) {
+      if (axis === 'protocolVersion') continue
+      const mutation = clone(candidate)
+      mutation.versions[axis] = '1.0.1'
+      expectInvalid(
+        mutation,
+        'holdout-authorization-mismatch',
+        context(categoryPopulations(), authorization.authorization),
+        frozenAcceptance,
+      )
     }
-    const repeated = clone(holdout)
-    repeated.evaluation.qualifyingTransactionCount = 2
-    expectInvalid(repeated)
-
-    const repeatedDevelopment = clone(syntheticReport())
-    repeatedDevelopment.evaluation.qualifyingTransactionCount = 2
-    expectValid(repeatedDevelopment)
+    for (const field of [
+      'packageVersion',
+      'gitCommit',
+      'packedArtifactSha256',
+    ]) {
+      const mutation = clone(candidate)
+      mutation.publicArtifact[field] =
+        field === 'packageVersion'
+          ? '0.0.1'
+          : field === 'gitCommit'
+            ? 'c'.repeat(40)
+            : 'd'.repeat(64)
+      expectInvalid(
+        mutation,
+        'holdout-authorization-mismatch',
+        context(categoryPopulations(), authorization.authorization),
+        frozenAcceptance,
+      )
+    }
   })
 })

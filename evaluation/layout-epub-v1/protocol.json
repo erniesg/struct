@@ -40,6 +40,7 @@
     "rateDecimalPlaces": 6,
     "rateRounding": "half-up",
     "rateInputPolicy": "trusted-aggregator-derived-only",
+    "gateInputPolicy": "exact-counter-ratio-before-rounding",
     "suppressedFields": [
       "numerator",
       "denominator",
@@ -67,6 +68,26 @@
       "maximumQualifyingTransactions": 1,
       "retryPolicy": "infrastructure-only-without-semantic-counters"
     }
+  },
+  "ownerPrivateHoldoutState": {
+    "storage": "outside-struct",
+    "freezeTiming": "before-holdout-input-open",
+    "authorizationOperation": "atomic-consult-and-consume",
+    "authorizationTiming": "before-holdout-input-open",
+    "authorizationEvidenceInReport": "forbidden",
+    "requiredBindings": [
+      "exactFrozenProtocolArtifact",
+      "protocolState",
+      "protocolVersion",
+      "aggregateReportSchemaVersion",
+      "fixtureVersion",
+      "rendererVersion",
+      "profileVersion",
+      "bridgeVersion",
+      "cohortVersion",
+      "publicArtifact",
+      "maximumQualifyingTransactions"
+    ]
   },
   "metrics": {
     "overall": {

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Struct source-neutral EPUB aggregate report",
   "type": "object",
   "additionalProperties": false,
@@ -46,8 +47,8 @@
     "semanticVersion": {
       "type": "string",
       "minLength": 5,
-      "maxLength": 32,
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      "maxLength": 64,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
     },
     "nonNegativeCount": {
       "type": "integer",
@@ -128,58 +129,17 @@
         }
       }
     },
-    "developmentEvaluation": {
+    "evaluation": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "gate",
-        "protocolState",
-        "qualifyingTransactionCount"
+        "gate"
       ],
       "properties": {
         "gate": {
           "const": "development"
-        },
-        "protocolState": {
-          "enum": [
-            "development-open",
-            "frozen"
-          ]
-        },
-        "qualifyingTransactionCount": {
-          "$ref": "#/$defs/positiveCount"
         }
       }
-    },
-    "holdoutEvaluation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "gate",
-        "protocolState",
-        "qualifyingTransactionCount"
-      ],
-      "properties": {
-        "gate": {
-          "const": "holdout"
-        },
-        "protocolState": {
-          "const": "frozen"
-        },
-        "qualifyingTransactionCount": {
-          "const": 1
-        }
-      }
-    },
-    "evaluation": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/developmentEvaluation"
-        },
-        {
-          "$ref": "#/$defs/holdoutEvaluation"
-        }
-      ]
     },
     "outcomes": {
       "type": "object",
