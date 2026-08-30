@@ -554,7 +554,7 @@ export function createAggregateAcceptance(
 
 export async function loadAggregateAcceptance(): Promise<AggregateAcceptance> {
   const evaluationDirectory = new URL(
-    '../../evaluation/layout-epub-v1/',
+    '../../evaluation/layout-epub-v2/',
     import.meta.url,
   )
   const [protocolSource, schemaSource] = await Promise.all([

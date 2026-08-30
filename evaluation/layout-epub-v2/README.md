@@ -1,4 +1,4 @@
-# Source-neutral EPUB layout evaluation protocol v1
+# Source-neutral EPUB layout evaluation protocol v2
 
 This directory defines the Stage 0.1 public protocol boundary. It does not
 contain a corpus, fixtures, rendered publications, per-document results, or a
@@ -14,6 +14,16 @@ Ajv 2020 validator in `tests/layout-eval/aggregate-acceptance.ts`. Every object
 is closed with `additionalProperties: false`. That test-boundary module is the
 required executable acceptance rule; it is not a package export or shipped
 package file.
+
+## Contract identity and legacy validation
+
+This directory is the versioned `2.0.0` protocol and aggregate-report schema
+contract. It supersedes an incompatible aggregate contract that identified
+itself as `1.0.0`; an old `1.0.0` payload is never interpreted as a `2.0.0`
+payload. Legacy payload validation is deliberately unavailable at this
+test-boundary stage: Struct ships no legacy `1.0.0` schema or validator here.
+Consumers that need to validate historical reports must explicitly select and
+retain the legacy contract outside this current-contract boundary.
 
 ## Source-neutral boundary
 

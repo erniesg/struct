@@ -62,9 +62,9 @@ beforeAll(async () => {
 
 function syntheticReport(): JsonObject {
   return {
-    schemaVersion: '1.0.0',
+    schemaVersion: '2.0.0',
     versions: {
-      protocolVersion: '1.0.0',
+      protocolVersion: '2.0.0',
       fixtureVersion: '1.0.0',
       rendererVersion: '1.0.0',
       profileVersion: '1.0.0',
@@ -134,6 +134,18 @@ function syntheticReport(): JsonObject {
   }
 }
 
+function legacyV1Report(): JsonObject {
+  const candidate = clone(syntheticReport())
+  candidate.schemaVersion = '1.0.0'
+  candidate.versions.protocolVersion = '1.0.0'
+  candidate.evaluation = {
+    gate: 'development',
+    protocolState: 'development-open',
+    qualifyingTransactionCount: 1,
+  }
+  return candidate
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value)
 }
@@ -195,11 +207,11 @@ function contractIdentity(report: JsonObject): AggregateContractIdentity {
 
 function futureFrozenAcceptance(): AggregateAcceptance {
   const frozenProtocol = clone(protocol)
-  frozenProtocol.protocolVersion = '1.1.0'
+  frozenProtocol.protocolVersion = '2.1.0'
   frozenProtocol.protocolState = 'frozen'
-  frozenProtocol.aggregateReportSchemaVersion = '1.1.0'
+  frozenProtocol.aggregateReportSchemaVersion = '2.1.0'
   const frozenSchema = clone(reportSchema)
-  frozenSchema.properties.schemaVersion.const = '1.1.0'
+  frozenSchema.properties.schemaVersion.const = '2.1.0'
   frozenSchema.$defs.evaluation.properties.gate = {
     enum: ['development', 'holdout'],
   }
@@ -208,8 +220,8 @@ function futureFrozenAcceptance(): AggregateAcceptance {
 
 function futureHoldoutReport(): JsonObject {
   const candidate = clone(syntheticReport())
-  candidate.schemaVersion = '1.1.0'
-  candidate.versions.protocolVersion = '1.1.0'
+  candidate.schemaVersion = '2.1.0'
+  candidate.versions.protocolVersion = '2.1.0'
   candidate.evaluation = { gate: 'holdout' }
   return candidate
 }
@@ -243,6 +255,14 @@ describe('layout EPUB evaluation protocol', () => {
     expectValid(syntheticReport())
   })
 
+  it('distinguishes the current 2.0.0 contract from an incompatible legacy 1.0.0 report', () => {
+    expect(protocol.protocolVersion).toBe('2.0.0')
+    expect(protocol.aggregateReportSchemaVersion).toBe('2.0.0')
+    expect(reportSchema.properties.schemaVersion).toEqual({ const: '2.0.0' })
+    expectValid(syntheticReport())
+    expectInvalid(legacyV1Report(), 'schema-invalid')
+  })
+
   it('freezes the exact categories, outcomes, versions, formulas, and gates', () => {
     expect(protocol.categories).toEqual(categories)
     expect(protocol.outcomes).toEqual(outcomes)
@@ -255,9 +275,9 @@ describe('layout EPUB evaluation protocol', () => {
       const: 'development',
     })
     expect(protocol).toMatchObject({
-      protocolVersion: '1.0.0',
+      protocolVersion: '2.0.0',
       protocolState: 'development-open',
-      aggregateReportSchemaVersion: '1.0.0',
+      aggregateReportSchemaVersion: '2.0.0',
       reporting: {
         minimumPopulation: 5,
         maximumCount: 1_000_000,
@@ -722,7 +742,7 @@ describe('required aggregate acceptance algorithm', () => {
 
   it('rejects report protocol-version mismatch', () => {
     const candidate = clone(syntheticReport())
-    candidate.versions.protocolVersion = '2.0.0'
+    candidate.versions.protocolVersion = '3.0.0'
     expectInvalid(candidate, 'report-version-mismatch')
   })
 })
