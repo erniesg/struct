@@ -1,5 +1,11 @@
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
+import {
+  decodeStructDocument,
+  StructCodecError,
+} from '../../src/document/index'
+import { verifyStructReceipt } from '../../src/receipt'
 import {
   createAggregateAcceptance,
   loadAggregateAcceptance,
@@ -11,6 +17,21 @@ import {
   type TrustedHoldoutClaim,
   type TrustedHoldoutState,
 } from './aggregate-acceptance'
+import {
+  assertSyntheticFixtureCatalog,
+  buildSealedSyntheticFixture,
+  buildSyntheticFixture,
+  getSyntheticBoundsProbe,
+  listSyntheticFixtureCases,
+  mutateSyntheticFixtureAfterSeal,
+  REQUIRED_SYNTHETIC_GOLDEN_ENTRIES,
+  SYNTHETIC_PROVENANCE,
+  syntheticAsset,
+  syntheticBlock,
+  syntheticDiagnostic,
+  syntheticRelationship,
+  syntheticTableCell,
+} from './fixture-builder'
 
 const categories = [
   'paragraph',
@@ -49,6 +70,12 @@ const versionAxes = [
 
 type Category = (typeof categories)[number]
 type JsonObject = Record<string, any>
+
+const fixtureManifestPath =
+  'evaluation/layout-epub-v2/fixtures/manifest.json'
+const fixtureProvenancePath =
+  'evaluation/layout-epub-v2/fixtures/provenance.json'
+const fixtureGoldenRoot = 'evaluation/layout-epub-v2/goldens'
 
 let acceptance: AggregateAcceptance
 let protocol: JsonObject
@@ -148,6 +175,31 @@ function legacyV1Report(): JsonObject {
 
 function clone<T>(value: T): T {
   return structuredClone(value)
+}
+
+async function trackedGoldenPaths(
+  root = fixtureGoldenRoot,
+): Promise<string[]> {
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    )
+      return []
+    throw error
+  }
+  const paths: string[] = []
+  for (const entry of entries) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) paths.push(...(await trackedGoldenPaths(path)))
+    else paths.push(relative(fixtureGoldenRoot, path).replaceAll('\\', '/'))
+  }
+  return paths.sort()
 }
 
 function categoryPopulations(population = 5): Record<Category, number> {
@@ -381,6 +433,304 @@ describe('layout EPUB evaluation protocol', () => {
     expect(reportSchema.$defs.zeroTolerance.required).toEqual(
       zeroToleranceCounters,
     )
+  })
+})
+
+describe('canonical synthetic layout fixture corpus', () => {
+  let manifest: JsonObject
+  let provenance: JsonObject
+
+  beforeAll(async () => {
+    ;[manifest, provenance] = await Promise.all(
+      [fixtureManifestPath, fixtureProvenancePath].map(async (path) =>
+        JSON.parse(await readFile(path, 'utf8')),
+      ),
+    )
+  })
+
+  it('closes and exactly links the builder catalog, manifest, provenance, and declared textual goldens', async () => {
+    const fixtures = listSyntheticFixtureCases()
+    const goldenPaths = await trackedGoldenPaths()
+
+    expect(() =>
+      assertSyntheticFixtureCatalog(manifest, provenance, goldenPaths),
+    ).not.toThrow()
+    expect(Object.keys(manifest)).toEqual(['cases'])
+    expect(Object.keys(provenance)).toEqual(['records'])
+    expect(manifest.cases).toHaveLength(fixtures.length)
+    expect(provenance.records).toHaveLength(fixtures.length)
+    expect(new Set(fixtures.map(({ caseId }) => caseId)).size).toBe(
+      fixtures.length,
+    )
+    expect(new Set(fixtures.map(({ provenanceKey }) => provenanceKey)).size).toBe(
+      fixtures.length,
+    )
+
+    for (const fixture of fixtures) {
+      expect(
+        manifest.cases.find(
+          (candidate: JsonObject) => candidate.caseId === fixture.caseId,
+        ),
+      ).toEqual({
+        caseId: fixture.caseId,
+        requiredCategories: fixture.requiredCategories,
+        expectedDisposition: fixture.expectedDisposition,
+        goldenEntries: fixture.goldenEntries,
+        provenanceKey: fixture.provenanceKey,
+      })
+      expect(
+        provenance.records.find(
+          (candidate: JsonObject) =>
+            candidate.provenanceKey === fixture.provenanceKey,
+        ),
+      ).toEqual({
+        provenanceKey: fixture.provenanceKey,
+        ...SYNTHETIC_PROVENANCE,
+      })
+      expect(Object.keys(manifest.cases.find(
+        (candidate: JsonObject) => candidate.caseId === fixture.caseId,
+      )!).sort()).toEqual([
+        'caseId',
+        'expectedDisposition',
+        'goldenEntries',
+        'provenanceKey',
+        'requiredCategories',
+      ])
+      expect(Object.keys(provenance.records.find(
+        (candidate: JsonObject) =>
+          candidate.provenanceKey === fixture.provenanceKey,
+      )!).sort()).toEqual([
+        'authoredOn',
+        'license',
+        'origin',
+        'provenanceKey',
+      ])
+      expect(fixture.goldenEntries).toEqual(
+        fixture.expectedDisposition === 'render'
+          ? REQUIRED_SYNTHETIC_GOLDEN_ENTRIES
+          : [],
+      )
+    }
+    expect(goldenPaths).toEqual([])
+  })
+
+  it('requires positive and negative or safe-ambiguity coverage for all fourteen frozen categories', () => {
+    const fixtures = listSyntheticFixtureCases()
+    expect(categories).toHaveLength(14)
+    for (const category of categories) {
+      const coverage = fixtures.filter(({ requiredCategories }) =>
+        requiredCategories.includes(category),
+      )
+      expect(
+        coverage.some(({ scenario }) => scenario === 'positive'),
+        `${category} positive coverage`,
+      ).toBe(true)
+      expect(
+        coverage.some(
+          ({ scenario }) =>
+            scenario === 'negative' || scenario === 'safe-ambiguity',
+        ),
+        `${category} negative or safe-ambiguity coverage`,
+      ).toBe(true)
+    }
+  })
+
+  it('rejects missing or undeclared cases, golden declarations, golden files, and provenance drift', () => {
+    const missingCase = clone(manifest)
+    missingCase.cases.pop()
+    expect(() =>
+      assertSyntheticFixtureCatalog(missingCase, provenance, []),
+    ).toThrow(/fixture catalog/i)
+
+    const undeclaredCase = clone(manifest)
+    undeclaredCase.cases.push({ ...undeclaredCase.cases[0], caseId: 'extra-case' })
+    expect(() =>
+      assertSyntheticFixtureCatalog(undeclaredCase, provenance, []),
+    ).toThrow(/fixture catalog/i)
+
+    const goldenDrift = clone(manifest)
+    goldenDrift.cases.find(
+      (candidate: JsonObject) => candidate.expectedDisposition === 'render',
+    ).goldenEntries = ['content.xhtml']
+    expect(() =>
+      assertSyntheticFixtureCatalog(goldenDrift, provenance, []),
+    ).toThrow(/golden/i)
+
+    expect(() =>
+      assertSyntheticFixtureCatalog(
+        manifest,
+        provenance,
+        ['undeclared-case/content.xhtml'],
+      ),
+    ).toThrow(/golden/i)
+
+    for (const field of ['origin', 'authoredOn', 'license'] as const) {
+      const drift = clone(provenance)
+      drift.records[0][field] = 'changed-public-value'
+      expect(() =>
+        assertSyntheticFixtureCatalog(manifest, drift, []),
+      ).toThrow(/provenance/i)
+    }
+  })
+
+  it('builds every pre-mutation value as a valid, receipt-bound current-schema document', () => {
+    for (const fixture of listSyntheticFixtureCases()) {
+      const document = buildSealedSyntheticFixture(fixture.caseId)
+      expect(document.schemaVersion).toBe('0.2.0')
+      expect(document.receipt.schemaVersion).toBe('0.2.0')
+      expect(document.documentId).toBe(document.receipt.documentId)
+      expect(document.source).toMatchObject({
+        format: 'unknown',
+        fileName: 'synthetic-input.struct',
+        localOnly: true,
+      })
+      expect(document.metadata).toMatchObject({
+        title: 'Synthetic Layout Publication',
+        authors: ['Example Writer'],
+        language: expect.any(String),
+      })
+      expect(document.pages.length).toBeGreaterThan(0)
+      expect(document.blocks.every(({ evidence }) => evidence.pages.length > 0)).toBe(
+        true,
+      )
+      expect(verifyStructReceipt(document), fixture.caseId).toBe(true)
+      expect(() => decodeStructDocument(document), fixture.caseId).not.toThrow()
+    }
+  })
+
+  it('applies intentional codec-invalid mutations only after the final valid seal', () => {
+    const invalidFixtures = listSyntheticFixtureCases().filter(
+      ({ expectedDisposition }) => expectedDisposition === 'codec-rejection',
+    )
+    expect(invalidFixtures.length).toBeGreaterThan(0)
+    for (const fixture of invalidFixtures) {
+      const sealed = buildSealedSyntheticFixture(fixture.caseId)
+      const invalid = buildSyntheticFixture(fixture.caseId)
+      expect(verifyStructReceipt(sealed), fixture.caseId).toBe(true)
+      expect(invalid.receipt.generatedSha256).toBe(
+        sealed.receipt.generatedSha256,
+      )
+      try {
+        decodeStructDocument(invalid)
+        throw new Error(`expected ${fixture.caseId} to be rejected`)
+      } catch (error) {
+        expect(error, fixture.caseId).toBeInstanceOf(StructCodecError)
+        expect((error as StructCodecError).code, fixture.caseId).toBe(
+          fixture.expectedCodecError,
+        )
+      }
+    }
+
+    const document = buildSealedSyntheticFixture('paragraph-negative')
+    const digest = document.receipt.generatedSha256
+    mutateSyntheticFixtureAfterSeal(document, (candidate) => {
+      candidate.blocks[0]!.inline[0]!.end = candidate.blocks[0]!.text.length + 1
+    })
+    expect(document.receipt.generatedSha256).toBe(digest)
+    expect(() => decodeStructDocument(document)).toThrow(StructCodecError)
+    expect(() =>
+      mutateSyntheticFixtureAfterSeal(
+        buildSealedSyntheticFixture('paragraph-negative'),
+        (candidate) => {
+          candidate.receipt.generatedSha256 = 'f'.repeat(64)
+        },
+      ),
+    ).toThrow(/final seal/i)
+  })
+
+  it('returns fresh deep documents and helper values without caller or cross-case aliases', () => {
+    const firstCatalog = listSyntheticFixtureCases()
+    const secondCatalog = listSyntheticFixtureCases()
+    firstCatalog[0]!.requiredCategories.length = 0
+    firstCatalog[0]!.goldenEntries.length = 0
+    expect(secondCatalog[0]!.requiredCategories).toEqual(['paragraph'])
+    expect(secondCatalog[0]!.goldenEntries).toEqual(
+      REQUIRED_SYNTHETIC_GOLDEN_ENTRIES,
+    )
+
+    const left = buildSealedSyntheticFixture('assets-positive')
+    const right = buildSealedSyntheticFixture('assets-positive')
+    expect(left).toEqual(right)
+    expect(left).not.toBe(right)
+    expect(left.metadata).not.toBe(right.metadata)
+    expect(left.metadata.authors).not.toBe(right.metadata.authors)
+    expect(left.blocks).not.toBe(right.blocks)
+    expect(left.blocks[0]).not.toBe(right.blocks[0])
+    expect(left.blocks[0]!.evidence).not.toBe(right.blocks[0]!.evidence)
+    expect(left.pages[0]!.columns).not.toBe(right.pages[0]!.columns)
+    expect(left.assets[0]!.bytes).not.toBe(right.assets[0]!.bytes)
+
+    left.metadata.authors[0] = 'Mutated Example'
+    left.blocks[0]!.evidence.pages.push(2)
+    left.pages[0]!.blocks.length = 0
+    left.assets[0]!.bytes![0] = 0
+    expect(right.metadata.authors).toEqual(['Example Writer'])
+    expect(right.blocks[0]!.evidence.pages).toEqual([1])
+    expect(right.pages[0]!.blocks.length).toBeGreaterThan(0)
+    expect(right.assets[0]!.bytes![0]).not.toBe(0)
+
+    const blocks = [syntheticBlock('fresh-values'), syntheticBlock('fresh-values')]
+    const cells = [
+      syntheticTableCell('fresh-values'),
+      syntheticTableCell('fresh-values'),
+    ]
+    const assets = [syntheticAsset('fresh-values'), syntheticAsset('fresh-values')]
+    const relationships = [
+      syntheticRelationship('fresh-values'),
+      syntheticRelationship('fresh-values'),
+    ]
+    const diagnostics = [
+      syntheticDiagnostic('fresh-values'),
+      syntheticDiagnostic('fresh-values'),
+    ]
+    expect(blocks[0]).not.toBe(blocks[1])
+    expect(blocks[0]!.evidence).not.toBe(blocks[1]!.evidence)
+    expect(cells[0]).not.toBe(cells[1])
+    expect(cells[0]!.evidence).not.toBe(cells[1]!.evidence)
+    expect(assets[0]).not.toBe(assets[1])
+    expect(assets[0]!.evidence).not.toBe(assets[1]!.evidence)
+    expect(relationships[0]).not.toBe(relationships[1])
+    expect(relationships[0]!.evidence).not.toBe(relationships[1]!.evidence)
+    expect(diagnostics[0]).not.toBe(diagnostics[1])
+    expect(diagnostics[0]!.pages).not.toBe(diagnostics[1]!.pages)
+    expect(assets[0]!.bytes).not.toBe(assets[1]!.bytes)
+  })
+
+  it('uses sparse valid bounds and rejects an oversized table before touching proxy cell storage', () => {
+    const sparse = buildSyntheticFixture('bounds-positive')
+    const sparseTable = sparse.blocks[0]!.table!
+    expect(sparseTable.rows * sparseTable.columns).toBeGreaterThan(
+      sparseTable.cells.length,
+    )
+    expect(() => decodeStructDocument(sparse)).not.toThrow()
+
+    const oversized = buildSyntheticFixture('bounds-negative')
+    const probe = getSyntheticBoundsProbe(oversized)
+    expect(probe).toEqual({ cellStorageReads: 0 })
+    try {
+      decodeStructDocument(oversized)
+      throw new Error('expected bounds rejection')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('TABLE_BOUNDS')
+    }
+    expect(getSyntheticBoundsProbe(oversized)).toEqual({ cellStorageReads: 0 })
+  })
+
+  it('generates only small runtime text assets and has no filesystem or ambient-environment dependency', async () => {
+    const asset = syntheticAsset('runtime-asset')
+    expect(asset.mediaType).toBe('text/plain')
+    expect(asset.href.endsWith('.txt')).toBe(true)
+    expect(asset.bytes).toBeInstanceOf(Uint8Array)
+    expect(asset.bytes!.byteLength).toBeGreaterThan(0)
+    expect(asset.bytes!.byteLength).toBeLessThanOrEqual(256)
+
+    const builderSource = await readFile(
+      'tests/layout-eval/fixture-builder.ts',
+      'utf8',
+    )
+    expect(builderSource).not.toMatch(/node:fs|process\.env|import\.meta\.env/u)
+    expect(builderSource).not.toMatch(/readFile|writeFile|readdir|opendir/u)
   })
 })
 
