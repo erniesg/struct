@@ -757,8 +757,10 @@ describe('closed semantic assertion helper self-tests', () => {
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
   <a href="#reference" epub:type="biblioref" role="doc-biblioref">[1]</a>
   <a href="#note" epub:type="noteref" role="doc-noteref">a</a>
+  <a href="#endnote" epub:type="noteref" role="doc-noteref">b</a>
   <aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>
   <aside id="note" epub:type="footnote" role="doc-footnote">Note</aside>
+  <aside id="endnote" epub:type="endnote" role="doc-endnote">Endnote</aside>
 </body></html>`)
     assertSemanticLinks('citations-positive', valid)
 
@@ -788,6 +790,39 @@ describe('closed semantic assertion helper self-tests', () => {
       'two',
     )
   })
+
+  it.each([
+    [
+      'citations-mixed-reference-kinds-negative',
+      '<a href="#link-destination" epub:type="biblioref noteref" role="doc-biblioref doc-noteref">Link</a>',
+      '<aside id="link-destination" epub:type="bibliography footnote" role="doc-bibliography doc-footnote">Target</aside>',
+    ],
+    [
+      'citations-mixed-bibliography-footnote-target-negative',
+      '<a href="#link-destination" epub:type="biblioref" role="doc-biblioref">Link</a>',
+      '<aside id="link-destination" epub:type="bibliography footnote" role="doc-bibliography doc-footnote">Target</aside>',
+    ],
+    [
+      'citations-mixed-bibliography-endnote-target-negative',
+      '<a href="#link-destination" epub:type="biblioref" role="doc-biblioref">Link</a>',
+      '<aside id="link-destination" epub:type="bibliography endnote" role="doc-bibliography doc-endnote">Target</aside>',
+    ],
+  ])(
+    'rejects mixed semantic kinds for %s',
+    (caseId, referenceMarkup, targetMarkup) => {
+      const xhtml = inspectXhtml(`
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+  ${referenceMarkup}
+  ${targetMarkup}
+</body></html>`)
+      expectClosedFailure(
+        () => assertSemanticLinks(caseId, xhtml),
+        caseId,
+        'semantic-links',
+        'link-destination',
+      )
+    },
+  )
 
   it.each([
     [

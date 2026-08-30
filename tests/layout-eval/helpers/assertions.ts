@@ -146,16 +146,47 @@ function pairedSemanticToken(
   return roles.includes(role) === types.includes(type)
 }
 
-function hasSemanticPair(
-  element: XmlElement,
-  role: string,
-  type: string,
-): boolean {
-  const roles = attributeTokens(xmlAttribute(element, 'role'))
-  const types = attributeTokens(
-    xmlAttribute(element, 'type', XML_NAMESPACES.epub),
+interface SemanticPair {
+  readonly role: string
+  readonly type: string
+}
+
+interface SemanticReferenceKind extends SemanticPair {
+  readonly targetTypes: readonly string[]
+}
+
+const SEMANTIC_REFERENCE_KINDS: readonly SemanticReferenceKind[] = [
+  {
+    role: 'doc-biblioref',
+    type: 'biblioref',
+    targetTypes: ['bibliography'],
+  },
+  {
+    role: 'doc-noteref',
+    type: 'noteref',
+    targetTypes: ['footnote', 'endnote'],
+  },
+]
+
+const SEMANTIC_TARGET_KINDS: readonly SemanticPair[] = [
+  { role: 'doc-bibliography', type: 'bibliography' },
+  { role: 'doc-footnote', type: 'footnote' },
+  { role: 'doc-endnote', type: 'endnote' },
+]
+
+const SEMANTIC_PAIRS: readonly SemanticPair[] = [
+  ...SEMANTIC_REFERENCE_KINDS,
+  ...SEMANTIC_TARGET_KINDS,
+]
+
+function matchingSemanticKinds<T extends SemanticPair>(
+  roles: readonly string[],
+  types: readonly string[],
+  kinds: readonly T[],
+): T[] {
+  return kinds.filter(
+    (kind) => roles.includes(kind.role) && types.includes(kind.type),
   )
-  return roles.includes(role) && types.includes(type)
 }
 
 export function assertSemanticLinks(
@@ -181,26 +212,18 @@ export function assertSemanticLinks(
         xmlAttribute(element, 'type', XML_NAMESPACES.epub),
       )
       if (
-        !pairedSemanticToken(
-          roles,
-          types,
-          'doc-biblioref',
-          'biblioref',
-        ) ||
-        !pairedSemanticToken(roles, types, 'doc-noteref', 'noteref') ||
-        !pairedSemanticToken(
-          roles,
-          types,
-          'doc-bibliography',
-          'bibliography',
-        ) ||
-        !pairedSemanticToken(roles, types, 'doc-footnote', 'footnote') ||
-        !pairedSemanticToken(roles, types, 'doc-endnote', 'endnote')
+        !SEMANTIC_PAIRS.every((kind) =>
+          pairedSemanticToken(roles, types, kind.role, kind.type),
+        )
       )
         return false
-      const isReference =
-        types.includes('biblioref') || types.includes('noteref')
-      if (!isReference) continue
+      const referenceKinds = matchingSemanticKinds(
+        roles,
+        types,
+        SEMANTIC_REFERENCE_KINDS,
+      )
+      if (referenceKinds.length === 0) continue
+      if (referenceKinds.length !== 1) return false
       const href = xmlAttribute(element, 'href')
       if (
         !href ||
@@ -211,19 +234,18 @@ export function assertSemanticLinks(
         return false
       const target = elementsById.get(href.slice(1))
       if (!target) return false
-      if (
-        types.includes('biblioref') &&
-        !hasSemanticPair(
-          target,
-          'doc-bibliography',
-          'bibliography',
-        )
+      const targetRoles = attributeTokens(xmlAttribute(target, 'role'))
+      const targetTypes = attributeTokens(
+        xmlAttribute(target, 'type', XML_NAMESPACES.epub),
       )
-        return false
+      const targetKinds = matchingSemanticKinds(
+        targetRoles,
+        targetTypes,
+        SEMANTIC_TARGET_KINDS,
+      )
       if (
-        types.includes('noteref') &&
-        !hasSemanticPair(target, 'doc-footnote', 'footnote') &&
-        !hasSemanticPair(target, 'doc-endnote', 'endnote')
+        targetKinds.length !== 1 ||
+        !referenceKinds[0].targetTypes.includes(targetKinds[0].type)
       )
         return false
     }
