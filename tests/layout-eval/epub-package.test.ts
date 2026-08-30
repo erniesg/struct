@@ -774,6 +774,21 @@ describe('closed semantic assertion helper self-tests', () => {
     )
   })
 
+  it('rejects semantic targets duplicated across id and xml:id', () => {
+    const ambiguous = inspectXhtml(`
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+  <a href="#two" epub:type="biblioref" role="doc-biblioref">[2]</a>
+  <aside id="one" xml:id="two" epub:type="bibliography" role="doc-bibliography">Reference one</aside>
+  <aside id="two" epub:type="bibliography" role="doc-bibliography">Reference two</aside>
+</body></html>`)
+    expectClosedFailure(
+      () => assertSemanticLinks('citations-mixed-id-duplicate-negative', ambiguous),
+      'citations-mixed-id-duplicate-negative',
+      'semantic-links',
+      'two',
+    )
+  })
+
   it.each([
     [
       'citations-external-negative',

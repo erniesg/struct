@@ -166,12 +166,14 @@ export function assertSemanticLinks(
     const elements = xmlElements(xhtml.document.root)
     const elementsById = new Map<string, XmlElement>()
     for (const element of elements) {
-      const id =
-        xmlAttribute(element, 'id') ??
-        xmlAttribute(element, 'id', XML_NAMESPACES.xml)
-      if (id === undefined) continue
-      if (elementsById.has(id)) return false
-      elementsById.set(id, element)
+      for (const id of [
+        xmlAttribute(element, 'id'),
+        xmlAttribute(element, 'id', XML_NAMESPACES.xml),
+      ]) {
+        if (id === undefined) continue
+        if (elementsById.has(id)) return false
+        elementsById.set(id, element)
+      }
     }
     for (const element of elements) {
       const roles = attributeTokens(xmlAttribute(element, 'role'))
