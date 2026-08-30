@@ -90,6 +90,9 @@ type RawAttribute = {
   value: string
 }
 
+const xmlDeclarationPattern =
+  /^<\?xml[\t\n\r ]+version[\t\n\r ]*=[\t\n\r ]*(?:"1\.0"|'1\.0')(?:[\t\n\r ]+encoding[\t\n\r ]*=[\t\n\r ]*(?:"[A-Za-z][A-Za-z0-9._-]*"|'[A-Za-z][A-Za-z0-9._-]*'))?(?:[\t\n\r ]+standalone[\t\n\r ]*=[\t\n\r ]*(?:"(?:yes|no)"|'(?:yes|no)'))?[\t\n\r ]*\?>$/u
+
 function checkedLimits(
   overrides: Partial<XmlTraversalLimits> | undefined,
 ): XmlTraversalLimits {
@@ -234,20 +237,18 @@ class BoundedXmlParser {
   private parseProcessingInstruction(): void {
     const end = this.xml.indexOf('?>', this.index + 2)
     if (end === -1) this.fail('XML_INVALID_SYNTAX')
-    const targetStart = this.index + 2
-    let targetEnd = targetStart
-    while (
-      targetEnd < end &&
-      !/[\t\n\r ?]/u.test(this.xml[targetEnd]!)
+    const instruction = this.xml.slice(this.index + 2, end)
+    const instructionMatch = instruction.match(
+      /^([A-Za-z_:][A-Za-z0-9_.:-]*)(?:[\t\n\r ]+[\s\S]*)?$/u,
     )
-      targetEnd += 1
-    const target = this.xml.slice(targetStart, targetEnd)
-    if (!target) this.fail('XML_INVALID_SYNTAX')
+    if (!instructionMatch) this.fail('XML_INVALID_SYNTAX')
+    const target = instructionMatch[1]!
     if (target.toLowerCase() === 'xml') {
       if (
         target !== 'xml' ||
         this.index !== this.documentStartIndex ||
-        this.xmlDeclarationSeen
+        this.xmlDeclarationSeen ||
+        !xmlDeclarationPattern.test(this.xml.slice(this.index, end + 2))
       )
         this.fail('XML_INVALID_SYNTAX')
       this.xmlDeclarationSeen = true

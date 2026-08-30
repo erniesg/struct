@@ -293,6 +293,34 @@ describe('bounded XML helper self-tests', () => {
     }
   })
 
+  it('rejects malformed XML declarations with closed syntax errors', () => {
+    expect(
+      parseXmlDocument(
+        `<?xml version = '1.0' encoding="UTF-8" standalone = 'yes'?><root />`,
+      ).root.qualifiedName,
+    ).toBe('root')
+
+    for (const xml of [
+      '<?xml arbitrary?><root />',
+      '<?xml?><root />',
+      '<?xml encoding="UTF-8" version="1.0"?><root />',
+      '<?xml version="1.0" invented="detail"?><root />',
+      '<?xml version="2.0"?><root />',
+      '<?xml version="1.0" encoding="8UTF"?><root />',
+      '<?xml version="1.0" standalone="sometimes"?><root />',
+    ]) {
+      try {
+        parseXmlDocument(xml)
+        throw new Error('expected malformed declaration rejection')
+      } catch (error) {
+        expect(error).toBeInstanceOf(XmlHelperError)
+        expect((error as XmlHelperError).code).toBe('XML_INVALID_SYNTAX')
+        expect((error as Error).message).toBe('XML_INVALID_SYNTAX')
+        expect((error as Error).message).not.toContain(xml)
+      }
+    }
+  })
+
   it('fails closed on malformed XML and namespace misuse', () => {
     for (const xml of [
       '<root><child></root>',
@@ -650,6 +678,25 @@ describe('independent ZIP and package-path helper self-tests', () => {
       expect((error as Error).message).not.toContain(reference)
     }
   })
+
+  it.each([
+    ['base-nbsp', 'EPUB/nav\u00a0.xhtml', 'content.xhtml'],
+    ['segment-em-space', 'EPUB/nav.xhtml', 'chapters/content\u2003.xhtml'],
+    ['fragment-line-separator', 'EPUB/nav.xhtml', '#heading\u2028a'],
+  ])(
+    'rejects Unicode whitespace in package reference case %s',
+    (_caseId, base, reference) => {
+      try {
+        resolvePackageReference(base, reference)
+        throw new Error('expected Unicode whitespace rejection')
+      } catch (error) {
+        expect(error).toBeInstanceOf(PackagePathError)
+        expect((error as Error).message).toBe('PACKAGE_PATH')
+        expect((error as Error).message).not.toContain(base)
+        expect((error as Error).message).not.toContain(reference)
+      }
+    },
+  )
 })
 
 describe('closed semantic assertion helper self-tests', () => {
@@ -726,6 +773,80 @@ describe('closed semantic assertion helper self-tests', () => {
       'tempting-private-target',
     )
   })
+
+  it.each([
+    [
+      'citations-external-negative',
+      'biblioref',
+      'doc-biblioref',
+      'https://example.test/reference#reference',
+      '<aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>',
+    ],
+    [
+      'citations-relative-negative',
+      'biblioref',
+      'doc-biblioref',
+      'other.xhtml#reference',
+      '<aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>',
+    ],
+    [
+      'citations-fragmentless-negative',
+      'biblioref',
+      'doc-biblioref',
+      'reference',
+      '<aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>',
+    ],
+    [
+      'citations-empty-fragment-negative',
+      'biblioref',
+      'doc-biblioref',
+      '#',
+      '<aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>',
+    ],
+    [
+      'citations-dangling-negative',
+      'biblioref',
+      'doc-biblioref',
+      '#missing-reference',
+      '<aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>',
+    ],
+    [
+      'citations-generic-target-negative',
+      'biblioref',
+      'doc-biblioref',
+      '#generic-target',
+      '<span id="generic-target">Generic target</span>',
+    ],
+    [
+      'citations-wrong-kind-negative',
+      'biblioref',
+      'doc-biblioref',
+      '#note',
+      '<aside id="note" epub:type="footnote" role="doc-footnote">Note</aside>',
+    ],
+    [
+      'notes-wrong-kind-negative',
+      'noteref',
+      'doc-noteref',
+      '#reference',
+      '<aside id="reference" epub:type="bibliography" role="doc-bibliography">Reference</aside>',
+    ],
+  ])(
+    'rejects unproven semantic link case %s',
+    (caseId, referenceType, referenceRole, href, targetMarkup) => {
+      const xhtml = inspectXhtml(`
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+  <a href="${href}" epub:type="${referenceType}" role="${referenceRole}">Link</a>
+  ${targetMarkup}
+</body></html>`)
+      expectClosedFailure(
+        () => assertSemanticLinks(caseId, xhtml),
+        caseId,
+        'semantic-links',
+        href,
+      )
+    },
+  )
 
   it('checks ARIA and table header references plus accessible table names', () => {
     const valid = inspectXhtml(`

@@ -11,6 +11,7 @@ import {
   type NavigationItem,
   type NavigationSemantics,
   type OpfSemantics,
+  type XmlElement,
   type XhtmlSemantics,
 } from './xml'
 
@@ -145,13 +146,34 @@ function pairedSemanticToken(
   return roles.includes(role) === types.includes(type)
 }
 
+function hasSemanticPair(
+  element: XmlElement,
+  role: string,
+  type: string,
+): boolean {
+  const roles = attributeTokens(xmlAttribute(element, 'role'))
+  const types = attributeTokens(
+    xmlAttribute(element, 'type', XML_NAMESPACES.epub),
+  )
+  return roles.includes(role) && types.includes(type)
+}
+
 export function assertSemanticLinks(
   caseId: string,
   xhtml: XhtmlSemantics,
 ): void {
   assertClosed(caseId, 'semantic-links', () => {
-    const ids = new Set(xhtml.ids)
-    for (const element of xmlElements(xhtml.document.root)) {
+    const elements = xmlElements(xhtml.document.root)
+    const elementsById = new Map<string, XmlElement>()
+    for (const element of elements) {
+      const id =
+        xmlAttribute(element, 'id') ??
+        xmlAttribute(element, 'id', XML_NAMESPACES.xml)
+      if (id === undefined) continue
+      if (elementsById.has(id)) return false
+      elementsById.set(id, element)
+    }
+    for (const element of elements) {
       const roles = attributeTokens(xmlAttribute(element, 'role'))
       const types = attributeTokens(
         xmlAttribute(element, 'type', XML_NAMESPACES.epub),
@@ -178,11 +200,30 @@ export function assertSemanticLinks(
         types.includes('biblioref') || types.includes('noteref')
       if (!isReference) continue
       const href = xmlAttribute(element, 'href')
-      if (!href) return false
-      if (href.startsWith('#')) {
-        const target = href.slice(1)
-        if (!target || !ids.has(target)) return false
-      }
+      if (
+        !href ||
+        !href.startsWith('#') ||
+        href.length === 1 ||
+        href.indexOf('#', 1) !== -1
+      )
+        return false
+      const target = elementsById.get(href.slice(1))
+      if (!target) return false
+      if (
+        types.includes('biblioref') &&
+        !hasSemanticPair(
+          target,
+          'doc-bibliography',
+          'bibliography',
+        )
+      )
+        return false
+      if (
+        types.includes('noteref') &&
+        !hasSemanticPair(target, 'doc-footnote', 'footnote') &&
+        !hasSemanticPair(target, 'doc-endnote', 'endnote')
+      )
+        return false
     }
     return true
   })

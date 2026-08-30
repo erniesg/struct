@@ -532,6 +532,13 @@ export function createArchiveManifest(
   }
 }
 
+function hasUnsafePackageCharacters(value: string): boolean {
+  return (
+    /[\u0000-\u001f\u007f]/u.test(value) ||
+    /\p{White_Space}/u.test(value)
+  )
+}
+
 function safeCanonicalPackagePath(path: string): boolean {
   if (
     !path ||
@@ -542,7 +549,7 @@ function safeCanonicalPackagePath(path: string): boolean {
     path.includes('%') ||
     path.includes('?') ||
     path.includes('#') ||
-    /[\u0000-\u0020\u007f]/u.test(path) ||
+    hasUnsafePackageCharacters(path) ||
     /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path)
   )
     return false
@@ -575,7 +582,7 @@ export function resolvePackageReference(
     !reference ||
     reference !== reference.trim() ||
     reference.includes('\\') ||
-    /[\u0000-\u001f\u007f]/u.test(reference)
+    hasUnsafePackageCharacters(reference)
   )
     throw new PackagePathError()
   const schemeMatch = reference.match(/^([A-Za-z][A-Za-z0-9+.-]*):/u)
@@ -608,8 +615,7 @@ export function resolvePackageReference(
     reference.startsWith('/') ||
     reference.startsWith('//') ||
     reference.includes('?') ||
-    reference.includes('%') ||
-    /[\t\n\r ]/u.test(reference)
+    reference.includes('%')
   )
     throw new PackagePathError()
   const firstHash = reference.indexOf('#')
@@ -618,13 +624,17 @@ export function resolvePackageReference(
   const pathReference =
     firstHash === -1 ? reference : reference.slice(0, firstHash)
   const fragment = firstHash === -1 ? null : reference.slice(firstHash + 1)
-  if (fragment !== null && (!fragment || /[\t\n\r ]/u.test(fragment)))
+  if (
+    fragment !== null &&
+    (!fragment || hasUnsafePackageCharacters(fragment))
+  )
     throw new PackagePathError()
   const resolved = currentDocument.split('/')
   resolved.pop()
   if (pathReference) {
     for (const segment of pathReference.split('/')) {
-      if (!segment) throw new PackagePathError()
+      if (!segment || hasUnsafePackageCharacters(segment))
+        throw new PackagePathError()
       if (segment === '.') continue
       if (segment === '..') {
         if (resolved.length === 0) throw new PackagePathError()
