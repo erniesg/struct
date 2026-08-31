@@ -1299,17 +1299,9 @@ function parseSchemaVersion(value: unknown, path: string) {
     fail(
       'SCHEMA_VERSION',
       path,
-      `unsupported schema version ${schemaVersionDescription(value)}`,
+      'unsupported schema version',
     )
   return value
-}
-
-function schemaVersionDescription(value: unknown) {
-  if (typeof value === 'string') return JSON.stringify(value)
-  if (value === null) return 'null'
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value)
-  return `<${typeof value}>`
 }
 
 function parseDocument(value: unknown): StructDocument {
@@ -1538,10 +1530,7 @@ function snapshotPublicationValue(
     return chargePublicationString(value, path, state)
   }
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) fail('NUMBER', path, 'number must be finite')
-    if (Object.is(value, -0))
-      fail('NUMBER', path, 'negative zero is not canonical')
-    return value
+    return finiteNumber(value, path)
   }
   if (!value || typeof value !== 'object') return value
   if (state.active.has(value))

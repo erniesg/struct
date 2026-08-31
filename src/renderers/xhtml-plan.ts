@@ -2,6 +2,8 @@ import type { StructDocument, StructInline } from '../document/types'
 
 const EPUB_RESERVED_IDS = new Set([
   'publication-id',
+  'publication-title',
+  'publication-subtitle',
   'nav',
   'content',
   'styles',
@@ -44,18 +46,18 @@ export function resolveStructTarget(
   const asset = document.assets.find((entry) => entry.id === id)
   if (asset) {
     if (!isPackagedAssetId(asset.id))
-      throw new Error(`STRUCT target asset is not packageable: ${asset.id}`)
+      throw new Error('STRUCT target asset is not packageable')
     return { id: asset.id, href: asset.href, kind: 'asset' }
   }
   const block = document.blocks.find((entry) => entry.id === id)
   if (block) {
     if (block.kind === 'furniture')
-      throw new Error(`STRUCT target block is not rendered: ${block.id}`)
+      throw new Error('STRUCT target block is not rendered')
     return { id: block.id, href: `#${block.id}`, kind: 'block' }
   }
   if (/^(?:https?|mailto):/iu.test(value))
     return { id: value, href: value, kind: 'external' }
-  throw new Error(`STRUCT target is not renderable: ${value}`)
+  throw new Error('STRUCT target is not renderable')
 }
 
 type PlanningTargetIndex = ReadonlyMap<
@@ -92,16 +94,16 @@ function resolvePlanningTarget(
   if (target) {
     if (target.kind === 'asset') {
       if (!isPackagedAssetId(target.id))
-        throw new Error(`STRUCT target asset is not packageable: ${target.id}`)
+        throw new Error('STRUCT target asset is not packageable')
       return { id: target.id, href: target.href, kind: target.kind }
     }
     if (target.furniture)
-      throw new Error(`STRUCT target block is not rendered: ${target.id}`)
+      throw new Error('STRUCT target block is not rendered')
     return { id: target.id, href: target.href, kind: target.kind }
   }
   if (/^(?:https?|mailto):/iu.test(value))
     return { id: value, href: value, kind: 'external' }
-  throw new Error(`STRUCT target is not renderable: ${value}`)
+  throw new Error('STRUCT target is not renderable')
 }
 
 function resolvePlanningTargetLazily(
@@ -852,7 +854,7 @@ export function buildRenderedPublicationPlan(
       throw new RenderedPublicationPlanError(
         'DUPLICATE_IDENTIFIER',
         `$.metadata.authors[${index}]`,
-        `duplicate metadata author ${author} is ambiguous without a stable identity`,
+        'duplicate metadata author is ambiguous without a stable identity',
       )
     seenAuthors.add(author)
   }

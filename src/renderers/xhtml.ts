@@ -21,6 +21,10 @@ import {
   selectPublicationAccessibleText,
 } from './ingress'
 import { verifyStructReceipt } from '../receipt'
+import {
+  isStructCodecError,
+  stringValue,
+} from '../document/codec/primitives'
 
 export type StructXhtmlOptions = {
   embedStyles?: boolean
@@ -33,6 +37,51 @@ table { border-collapse: collapse; width: 100%; }
 td, th { border: 1px solid currentColor; padding: 0.25rem; }
 figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
+
+const XHTML_OPTION_KEYS = new Set(['embedStyles', 'styles'])
+
+function snapshotXhtmlOptions(value: unknown): StructXhtmlOptions {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error()
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null)
+      throw new Error()
+    const keys = Reflect.ownKeys(value)
+    if (
+      keys.some(
+        (key) => typeof key !== 'string' || !XHTML_OPTION_KEYS.has(key),
+      )
+    )
+      throw new Error()
+    const snapshot: StructXhtmlOptions = {}
+    for (const key of keys as Array<keyof StructXhtmlOptions>) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        throw new Error()
+      if (key === 'embedStyles') {
+        if (typeof descriptor.value !== 'boolean') throw new Error()
+        snapshot.embedStyles = descriptor.value
+      } else {
+        try {
+          snapshot.styles = stringValue(descriptor.value, '$.options.styles')
+        } catch (error) {
+          if (isStructCodecError(error) && error.code === 'BUDGET')
+            throw new Error('STRUCT_XHTML_STYLES_RESOURCE_LIMIT')
+          throw error
+        }
+      }
+    }
+    return snapshot
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'STRUCT_XHTML_STYLES_RESOURCE_LIMIT'
+    )
+      throw error
+    throw new Error('STRUCT_XHTML_OPTIONS_INVALID')
+  }
+}
 
 function text(value: string) {
   return value
@@ -438,7 +487,7 @@ function assertUniqueEmittedIds(entries: readonly EmittedXhtmlId[]) {
       throw new RenderedPublicationPlanError(
         'DUPLICATE_IDENTIFIER',
         path,
-        `emitted XHTML identifier ${id} is also used by ${previous}`,
+        'duplicate emitted XHTML identifier',
       )
     seen.set(id, path)
   }
@@ -449,6 +498,7 @@ export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
+  options = snapshotXhtmlOptions(options)
   document = normalizeStructDocumentForRenderer(document)
   const publicationPlan = buildRenderedPublicationPlan(document)
   const blockRenderingPlan = buildBlockRenderingPlan(document)

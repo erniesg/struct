@@ -4,6 +4,7 @@ import { assertStructEpubArchiveByteLength, buildStructEpub } from '../src/rende
 import { MAX_STRUCT_STRING_BYTES } from '../src/document/codec/primitives'
 import { structDigest } from '../src/identity'
 import { legacyStructDigest } from '../src/legacy-digest'
+import { verifyStructReceipt } from '../src/receipt'
 import { sha256HexSync } from '../src/sha256'
 import { StructCodecError } from '../src/document/index'
 import type { StructDocument } from '../src/document/types'
@@ -373,7 +374,7 @@ describe('STRUCT EPUB href integrity', () => {
     ).rejects.toThrow('STRUCT_EPUB_PROFILE_INVALID')
   })
 
-  it('snapshots a valid profile before EPUB packaging reads it again', async () => {
+  it('snapshots a valid profile from data descriptors without invoking proxy reads', async () => {
     const css = 'body { color: black; }'
     let cssReads = 0
     const profile = new Proxy(
@@ -397,7 +398,7 @@ describe('STRUCT EPUB href integrity', () => {
     const epub = await buildStructEpub(documentWithHref('#target'), { profile })
 
     expect(strFromU8(unzipSync(epub.bytes)['EPUB/styles.css']!)).toBe(css)
-    expect(cssReads).toBe(1)
+    expect(cssReads).toBe(0)
   })
 
   it.each([
@@ -419,17 +420,27 @@ describe('STRUCT EPUB href integrity', () => {
     ['packaged document', 'nav.xhtml'],
   ])('rejects a semantically undeclared %s', async (_label, href) => {
     await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
-      /unsafe href/i,
+      'STRUCT_EPUB_UNSAFE_HREF',
     )
   })
 
   it('accepts serialized legacy 0.1.0 documents without document bindings', async () => {
-    await expect(
-      buildStructEpub(legacyDocumentWithHref('#target')),
-    ).resolves.toMatchObject({
+    const document = legacyDocumentWithHref('#target', 'lt')
+    const artifact = await buildStructEpub(document)
+    expect(artifact).toMatchObject({
       mediaType: 'application/epub+zip',
       mode: 'publication',
     })
+    const packaged = JSON.parse(
+      strFromU8(unzipSync(artifact.bytes)['EPUB/struct.json']!),
+    ) as Pick<StructDocument, 'schemaVersion' | 'source' | 'receipt'>
+    expect(
+      verifyStructReceipt({
+        ...document,
+        source: packaged.source,
+        receipt: packaged.receipt,
+      }),
+    ).toBe(true)
   })
 
   it('accepts a legacy digest created under a different ICU collation', async () => {
@@ -520,7 +531,7 @@ describe('STRUCT EPUB href integrity', () => {
   it('rejects a missing fragment', async () => {
     const href = '#missing'
     await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
-      /dangling internal reference/i,
+      'STRUCT_EPUB_DANGLING_INTERNAL_REFERENCE',
     )
   })
 
@@ -529,7 +540,7 @@ describe('STRUCT EPUB href integrity', () => {
     ['missing fragment in a packaged document', 'content.xhtml#missing'],
   ])('rejects a semantically undeclared %s', async (_label, href) => {
     await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
-      /unsafe href/i,
+      'STRUCT_EPUB_UNSAFE_HREF',
     )
   })
 
@@ -567,7 +578,7 @@ describe('STRUCT EPUB href integrity', () => {
       })
 
       await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
-        /unsafe href/i,
+        'STRUCT_EPUB_UNSAFE_HREF',
       )
     },
   )
@@ -578,7 +589,7 @@ describe('STRUCT EPUB href integrity', () => {
     ['protocol-relative URL', '//example.test/reference'],
   ])('rejects an unsafe %s', async (_label, href) => {
     await expect(buildStructEpub(documentWithHref(href))).rejects.toThrow(
-      /unsafe href/i,
+      'STRUCT_EPUB_UNSAFE_HREF',
     )
   })
 
@@ -631,7 +642,7 @@ describe('STRUCT EPUB href integrity', () => {
       fallback: 'asset',
     })
     await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
-      /well-formed XHTML/i,
+      'STRUCT_EPUB_XHTML_NOT_WELL_FORMED',
     )
   })
 
@@ -659,7 +670,7 @@ describe('STRUCT EPUB href integrity', () => {
       fallback: 'asset',
     })
     await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
-      /dangling internal reference/i,
+      'STRUCT_EPUB_XHTML_DANGLING_INTERNAL_REFERENCE',
     )
   })
 
@@ -688,7 +699,7 @@ describe('STRUCT EPUB href integrity', () => {
     })
 
     await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
-      /dangling internal reference/i,
+      'STRUCT_EPUB_XHTML_DANGLING_INTERNAL_REFERENCE',
     )
   })
 })

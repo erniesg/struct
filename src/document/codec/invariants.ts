@@ -74,7 +74,7 @@ function addCategoryIds(
       fail(
         'DUPLICATE_IDENTIFIER',
         `$.${category}`,
-        `identifier ${id} is also used by ${previous}`,
+        'identifier is also used by another category',
       )
     seen.set(id, category)
   }
@@ -87,7 +87,7 @@ function assertLocalTarget(
 ) {
   const id = value.startsWith('#') ? value.slice(1) : value
   if (SAFE_ID.test(id) && !nodeIds.has(id))
-    fail('REFERENCE', path, `dangling local reference ${value}`)
+    fail('REFERENCE', path, 'dangling local reference')
 }
 
 function assertInlineTargets(
@@ -103,14 +103,14 @@ function assertInlineTargets(
       fail(
         'REFERENCE',
         `${path}.targetIds[${index}]`,
-        `dangling target ${target}`,
+        'dangling target',
       )
   }
   if (inline.relationshipId && !relationshipIds.has(inline.relationshipId))
     fail(
       'REFERENCE',
       `${path}.relationshipId`,
-      `dangling relationship ${inline.relationshipId}`,
+      'dangling relationship',
     )
 }
 
@@ -337,7 +337,7 @@ function validateReferences(document: StructDocument) {
       fail(
         'REFERENCE',
         `$.metadata.authorNotes[${index}].author`,
-        `author note author ${note.author} must be listed in metadata.authors`,
+        'author note author must be listed in metadata.authors',
       )
     const previous = ids.get(note.id)
     if (!previous) {
@@ -356,7 +356,7 @@ function validateReferences(document: StructDocument) {
       fail(
         'DUPLICATE_IDENTIFIER',
         `$.metadata.authorNotes[${index}].id`,
-        `identifier ${note.id} is also used by ${previous}`,
+        'identifier is also used by another category',
       )
   }
   addCategoryIds(
@@ -368,7 +368,7 @@ function validateReferences(document: StructDocument) {
     fail(
       'DUPLICATE_IDENTIFIER',
       '$.documentId',
-      `document identifier ${document.documentId} is also used by ${ids.get(document.documentId)}`,
+      'document identifier is also used by another category',
     )
 
   const nodeIds = new Set(
@@ -385,7 +385,7 @@ function validateReferences(document: StructDocument) {
       fail(
         'REFERENCE',
         `$.relationships[${index}].from`,
-        `dangling local reference ${relationship.from}`,
+        'dangling local reference',
       )
     for (const [targetIndex, target] of relationship.to.entries())
       assertLocalTarget(
@@ -410,7 +410,7 @@ function validateReferences(document: StructDocument) {
         fail(
           'REFERENCE',
           `$.blocks[${blockIndex}].fallbackAssetIds[${fallbackIndex}]`,
-          `dangling asset ${assetId}`,
+          'dangling asset',
         )
     }
     for (const [inlineIndex, inline] of block.inline.entries())
@@ -438,7 +438,7 @@ function validateReferences(document: StructDocument) {
         fail(
           'REFERENCE',
           `$.pages[${pageIndex}].blocks[${blockIndex}]`,
-          `dangling block ${blockId}`,
+          'dangling block',
         )
     }
     for (const [columnIndex, column] of page.columns.entries()) {
@@ -447,7 +447,7 @@ function validateReferences(document: StructDocument) {
           fail(
             'REFERENCE',
             `$.pages[${pageIndex}].columns[${columnIndex}].blockIds[${blockIndex}]`,
-            `dangling block ${blockId}`,
+            'dangling block',
           )
       }
     }
@@ -457,7 +457,7 @@ function validateReferences(document: StructDocument) {
       fail(
         'REFERENCE',
         `$.metadata.authorNotes[${index}].target`,
-        `dangling target ${note.target}`,
+        'dangling target',
       )
   }
 }
@@ -493,7 +493,7 @@ function validatePages(document: StructDocument) {
         fail(
           'PAGE_BINDING',
           `$.pages[${index}].columns[${columnIndex}].side`,
-          `duplicate ${column.side} column sides are not permitted`,
+          'duplicate column sides are not permitted',
         )
       seenColumnSides.add(column.side)
       for (const [blockIndex, blockId] of column.blockIds.entries()) {

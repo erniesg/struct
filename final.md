@@ -1,26 +1,31 @@
-# Stage 5 citation, note, and ambiguity renderer final
+# Stage 6 metadata, malformed-input, and bounds final
 
-The Stage 5 local slice is complete on the accepted Stage 4 head
-`abb8a0d4912a8afdb6d75f61e9d7608d3e38d0ed`.
+The Stage 6 local slice is complete on the accepted Stage 5 head
+`c1ab3cad272c1e158487172883a8843b682a4ea0`.
 
-Matched citations now pair with accepted bibliography target semantics,
-mapped grouped markers retain exact visible links, and opaque grouped markers
-retain only explicit target metadata without hidden focusable links or
-renderer-authored labels. Endnotes use the compatible target role, while
-footnote/endnote references, author-note occurrences, and backlinks remain
-nonempty, stable, and locally closed.
+EPUB metadata now preserves the exact neutral title/subtitle policy, ordered
+authors, language, abstract/description, publication date, and canonical UTC
+modified time. Identifier linkage, navigation naming, language propagation,
+ID/ARIA closure, image alternatives, and omission of unsupported accessibility
+claims are explicit synthetic invariants.
 
-Ambiguous, unresolved, source-preserved, and relationship-absent semantic runs
-preserve their exact visible markers and neutral graph facts without candidate
-links, semantic wrappers, inferred targets, occurrence IDs, or backlinks.
-Matched relationships and explicit plain hyperlinks continue to use their
-existing safe paths. Heading and navigation behavior is unchanged.
+Publication identity and default output naming no longer depend on the raw
+source filename. The embedded source token and receipt are sanitized and
+verifiable, and filename-only input changes produce identical EPUB bytes while
+semantic changes still alter identity.
 
-Red-first, focused, semantic/package boundary, type, source-boundary, privacy,
-full-suite, build, packed-package, diff, and content evidence is recorded in
-`stage-5-handoff.md`. No schema/table/golden/public-export or private/source
-artifact changed.
+Malformed options, document values, packaged XHTML/XML, links, IDs, receipts,
+and fixed-resource collisions now fail closed with stable content-free
+classes. Shared byte, table, XML element/depth, stylesheet, and archive limits
+have synthetic N-1/N/N+1 coverage, including hostile preflight controls. No
+partial publication is returned after failure.
 
-Fresh independent review of the clean local Stage 5 commit is requested. No
-remote, PR, issue, push, publish, other-checkout, or private-corpus action was
-taken.
+Red-first, focused, boundary, type, source-boundary, privacy, full-suite,
+build, packed-package, diff, receipt, and content evidence is recorded in
+`stage-6-handoff.md`. No schema field, package API, dependency, protocol,
+golden, or private/source artifact changed.
+
+Fresh independent review of the clean local Stage 6 commit is requested. One
+mistyped `npx vititest` verification attempted an npm-registry lookup, failed
+with 404, installed nothing, and changed no repository file. No Git remote,
+PR, issue, push, publish, other-checkout, or private-corpus action was taken.

@@ -13,9 +13,17 @@ import {
   rfc3339Date,
   rfc3339DateTime,
 } from '../document/codec/standards'
+import {
+  MAX_STRUCT_STRING_BYTES,
+  stringValue,
+} from '../document/codec/primitives'
+import { structDigest } from '../identity'
 import { sha256HexSync } from '../sha256'
 import { verifyStructReceipt } from '../receipt'
-import { isPackagedAssetId } from './xhtml-plan'
+import {
+  isPackagedAssetId,
+  MAX_RENDERED_INLINE_SEGMENTS,
+} from './xhtml-plan'
 import { renderPublicationXhtml } from './xhtml'
 import {
   buildPublicationNavigationPlan,
@@ -35,9 +43,22 @@ table { border-collapse: collapse; width: 100%; }
 td, th { border: 1px solid currentColor; padding: 0.25rem; }
 figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
-const MAX_STRUCT_EPUB_PROFILE_CSS_BYTES = 4 * 1024 * 1024
 const MAX_STRUCT_EPUB_ARCHIVE_BYTES = 256 * 1024 * 1024
 const ZIP_ARCHIVE_OVERHEAD_RESERVE = 64 * 1024
+const MAX_STRUCT_EPUB_XHTML_BYTES = MAX_STRUCT_STRING_BYTES
+const MAX_STRUCT_EPUB_XHTML_DEPTH = 128
+const MAX_STRUCT_EPUB_XHTML_ELEMENTS = MAX_RENDERED_INLINE_SEGMENTS
+const PUBLICATION_SOURCE_FILE_NAME = 'source'
+const PROFILE_KEYS = [
+  'id',
+  'version',
+  'fileName',
+  'pageProgressionDirection',
+  'renditionFlow',
+  'configurationSha256',
+  'css',
+] as const
+const PROFILE_KEY_SET = new Set<string>(PROFILE_KEYS)
 
 /** Reject post-compression archives that exceed the package resource ceiling. */
 export function assertStructEpubArchiveByteLength(
@@ -87,18 +108,35 @@ function snapshotProfile(
   try {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       return undefined
-    const record = value as Record<string, unknown>
-    return {
-      id: record.id,
-      version: record.version,
-      fileName: record.fileName,
-      pageProgressionDirection: record.pageProgressionDirection,
-      renditionFlow: record.renditionFlow,
-      configurationSha256: record.configurationSha256,
-      css: record.css,
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return undefined
+    const keys = Reflect.ownKeys(value)
+    if (
+      keys.length !== PROFILE_KEYS.length ||
+      keys.some(
+        (key) => typeof key !== 'string' || !PROFILE_KEY_SET.has(key),
+      )
+    )
+      return undefined
+    const snapshot = Object.create(null) as StructEpubProfileSnapshot
+    for (const key of PROFILE_KEYS) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        return undefined
+      snapshot[key] = descriptor.value
     }
+    return snapshot
   } catch {
     return undefined
+  }
+}
+
+function validProfileCss(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false
+  try {
+    return stringValue(value, '$.options.profile.css') === value
+  } catch {
+    return false
   }
 }
 
@@ -118,10 +156,7 @@ function validProfile(
       profile.renditionFlow === 'scrolled-continuous') &&
     typeof profile.configurationSha256 === 'string' &&
     /^[a-f0-9]{64}$/u.test(profile.configurationSha256) &&
-    typeof profile.css === 'string' &&
-    profile.css.length > 0 &&
-    utf8ByteLength(profile.css) <= MAX_STRUCT_EPUB_PROFILE_CSS_BYTES &&
-    !/[\u0000]/u.test(profile.css)
+    validProfileCss(profile.css)
   )
 }
 
@@ -135,6 +170,38 @@ function profileReceipt(profile: StructEpubProfile) {
     renditionFlow: profile.renditionFlow,
     configurationSha256: profile.configurationSha256,
     cssSha256: sha256HexSync(profile.css),
+  }
+}
+
+function snapshotEpubProfileOption(value: unknown): StructEpubProfile | undefined {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error()
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null)
+      throw new Error()
+    const keys = Reflect.ownKeys(value)
+    if (
+      keys.some((key) => typeof key !== 'string' || key !== 'profile') ||
+      keys.length > 1
+    )
+      throw new Error()
+    if (keys.length === 0) return undefined
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'profile')
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+      throw new Error()
+    if (descriptor.value === undefined) return undefined
+    const snapshot = snapshotProfile(descriptor.value)
+    if (!snapshot || !validProfile(snapshot))
+      throw new Error('STRUCT_EPUB_PROFILE_INVALID')
+    return snapshot
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'STRUCT_EPUB_PROFILE_INVALID'
+    )
+      throw error
+    throw new Error('STRUCT_EPUB_OPTIONS_INVALID')
   }
 }
 
@@ -183,8 +250,25 @@ function utf8ByteLength(value: string) {
   return length
 }
 
-function artifactFileName(value: string) {
-  return value.split(/[\\/]/u).at(-1) || 'source'
+function publicationDigest(document: StructDocument) {
+  const { receipt, source, ...withoutReceiptAndSource } = document
+  return structDigest({
+    ...withoutReceiptAndSource,
+    source: { ...source, fileName: PUBLICATION_SOURCE_FILE_NAME },
+    conservation: receipt.conservation,
+    ...(receipt.modelConsultations
+      ? { modelConsultations: receipt.modelConsultations }
+      : {}),
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+}
+
+function canonicalModifiedTime(document: StructDocument) {
+  if (document.metadata.artifactModifiedAt !== undefined)
+    return new Date(document.metadata.artifactModifiedAt)
+      .toISOString()
+      .replace(/\.\d{3}Z$/u, 'Z')
+  return `${document.metadata.updated ?? '1970-01-01'}T00:00:00Z`
 }
 
 function assertBuilderScalars(document: StructDocument) {
@@ -199,7 +283,7 @@ function assertBuilderScalars(document: StructDocument) {
   for (const asset of document.assets) {
     mediaType(asset.mediaType, '$.assets.mediaType')
     if (asset.href.includes('%'))
-      throw new Error(`STRUCT EPUB asset ${asset.id} has an ambiguous href`)
+      throw new Error('STRUCT_EPUB_ASSET_HREF_INVALID')
   }
 }
 
@@ -252,13 +336,113 @@ function slug(value: string) {
   )
 }
 
+function xmlMarkupEnd(value: string, start: number) {
+  let quote: '"' | "'" | undefined
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index]
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined
+      continue
+    }
+    if (character === '"' || character === "'") quote = character
+    else if (character === '>') return index
+  }
+  return -1
+}
+
+function assertXhtmlLexicalBounds(value: string) {
+  let cursor = 0
+  let depth = 0
+  let elements = 0
+  while (cursor < value.length) {
+    const opening = value.indexOf('<', cursor)
+    if (opening === -1) break
+    if (value.startsWith('<!--', opening)) {
+      const closing = value.indexOf('-->', opening + 4)
+      if (closing === -1) throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+      cursor = closing + 3
+      continue
+    }
+    if (value.startsWith('<![CDATA[', opening)) {
+      const closing = value.indexOf(']]>', opening + 9)
+      if (closing === -1) throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+      cursor = closing + 3
+      continue
+    }
+    if (value.startsWith('<?', opening)) {
+      const closing = value.indexOf('?>', opening + 2)
+      if (closing === -1) throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+      cursor = closing + 2
+      continue
+    }
+    const closing = xmlMarkupEnd(value, opening + 1)
+    if (closing === -1) throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+    const markup = value.slice(opening, closing + 1)
+    if (/^<!DOCTYPE\b/iu.test(markup)) {
+      if (!/^<!DOCTYPE\s+html\s*>$/iu.test(markup))
+        throw new Error('STRUCT_EPUB_XHTML_FORBIDDEN_DECLARATION')
+      cursor = closing + 1
+      continue
+    }
+    if (markup.startsWith('<!'))
+      throw new Error('STRUCT_EPUB_XHTML_FORBIDDEN_DECLARATION')
+    if (/^<\//u.test(markup)) {
+      depth -= 1
+      if (depth < 0) throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+    } else {
+      elements += 1
+      if (elements > MAX_STRUCT_EPUB_XHTML_ELEMENTS)
+        throw new Error('STRUCT_EPUB_XHTML_RESOURCE_LIMIT')
+      if (!/\/\s*>$/u.test(markup)) {
+        depth += 1
+        if (depth > MAX_STRUCT_EPUB_XHTML_DEPTH)
+          throw new Error('STRUCT_EPUB_XHTML_RESOURCE_LIMIT')
+      }
+    }
+    cursor = closing + 1
+  }
+}
+
+function assertXhtmlDocumentSyntax(value: string, maximumBytes?: number) {
+  if (
+    maximumBytes !== undefined &&
+    utf8ByteLength(value) > maximumBytes
+  )
+    throw new Error('STRUCT_EPUB_XHTML_RESOURCE_LIMIT')
+  assertXhtmlLexicalBounds(value)
+  if (XMLValidator.validate(value) !== true)
+    throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+  const ids = xhtmlAttributeValues(value, 'id')
+  if (new Set(ids).size !== ids.length)
+    throw new Error('STRUCT_EPUB_XHTML_DUPLICATE_IDS')
+}
+
+function decodePackagedXhtml(bytes: Uint8Array) {
+  if (bytes.byteLength > MAX_STRUCT_EPUB_XHTML_BYTES)
+    throw new Error('STRUCT_EPUB_XHTML_RESOURCE_LIMIT')
+  let value: string
+  try {
+    value = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+  }
+  assertXhtmlDocumentSyntax(value, MAX_STRUCT_EPUB_XHTML_BYTES)
+  return value
+}
+
 function xhtmlAttributeValues(value: string, name: string) {
   const values: string[] = []
-  const parsed = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    processEntities: false,
-  }).parse(value)
+  let parsed: unknown
+  try {
+    parsed = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+      processEntities: false,
+      maxNestedTags: MAX_STRUCT_EPUB_XHTML_DEPTH,
+    }).parse(value)
+  } catch {
+    throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+  }
   const visit = (node: unknown) => {
     if (Array.isArray(node)) {
       node.forEach(visit)
@@ -307,13 +491,8 @@ function assertXhtmlHrefIntegrity(
 ) {
   const idsByDocument = new Map(
     [...documents].map(([href, value]) => {
-      if (XMLValidator.validate(value) !== true) {
-        throw new Error(`STRUCT EPUB ${href} is not well-formed XHTML`)
-      }
+      assertXhtmlDocumentSyntax(value)
       const ids = xhtmlAttributeValues(value, 'id')
-      if (new Set(ids).size !== ids.length) {
-        throw new Error(`STRUCT EPUB ${href} contains duplicate ids`)
-      }
       return [href, new Set(ids)]
     }),
   )
@@ -328,19 +507,27 @@ function assertXhtmlHrefIntegrity(
         href.includes('\\') ||
         /[\u0000-\u001f\u007f]/u.test(href)
       ) {
-        throw new Error(`STRUCT EPUB ${documentHref} has unsafe href ${href}`)
+        throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
       }
       const scheme = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1]
       if (scheme) {
         if (!['http', 'https', 'mailto'].includes(scheme.toLowerCase())) {
-          throw new Error(
-            `STRUCT EPUB ${documentHref} has unsafe href scheme in ${href}`,
-          )
+          throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
         }
+        let url: URL
+        try {
+          url = new URL(href)
+        } catch {
+          throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
+        }
+        if (url.username || url.password || url.href !== href)
+          throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
         continue
       }
+      if (/[?%\p{White_Space}]/u.test(href))
+        throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
       if (href.startsWith('//') || href.startsWith('/')) {
-        throw new Error(`STRUCT EPUB ${documentHref} has unsafe href ${href}`)
+        throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
       }
       const hashIndex = href.indexOf('#')
       const documentReference =
@@ -350,20 +537,16 @@ function assertXhtmlHrefIntegrity(
         ? resolvedPackageHref(documentHref, documentReference)
         : documentHref
       if (!targetDocument) {
-        throw new Error(`STRUCT EPUB ${documentHref} has unsafe href ${href}`)
+        throw new Error('STRUCT_EPUB_XHTML_UNSAFE_HREF')
       }
       if (!packagedHrefs.has(targetDocument)) {
-        throw new Error(
-          `STRUCT EPUB ${documentHref} has dangling internal reference ${href}`,
-        )
+        throw new Error('STRUCT_EPUB_XHTML_DANGLING_INTERNAL_REFERENCE')
       }
       if (
         fragment !== null &&
         (!fragment || !idsByDocument.get(targetDocument)?.has(fragment))
       ) {
-        throw new Error(
-          `STRUCT EPUB ${documentHref} has dangling internal reference ${href}`,
-        )
+        throw new Error('STRUCT_EPUB_XHTML_DANGLING_INTERNAL_REFERENCE')
       }
     }
   }
@@ -381,6 +564,7 @@ export async function buildStructEpub(
   document: StructDocument,
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
+  const profile = snapshotEpubProfileOption(options)
   try {
     document = normalizeStructDocumentForRenderer(document)
   } catch (error) {
@@ -410,11 +594,11 @@ export async function buildStructEpub(
     if (isRendererIngressCodecError(error) && error.code === 'DIGEST')
       throw new Error('STRUCT_RECEIPT_DIGEST_MISMATCH', { cause: error })
     if (isRendererIngressCodecError(error) && error.code === 'REFERENCE')
-      throw new Error('STRUCT EPUB has a dangling internal reference', {
+      throw new Error('STRUCT_EPUB_DANGLING_INTERNAL_REFERENCE', {
         cause: error,
       })
     if (isRendererIngressCodecError(error) && error.code === 'URL')
-      throw new Error('STRUCT EPUB has an unsafe href', { cause: error })
+      throw new Error('STRUCT_EPUB_UNSAFE_HREF', { cause: error })
     throw error
   }
   assertBuilderScalars(document)
@@ -424,15 +608,6 @@ export async function buildStructEpub(
   if (document.recovery.status !== 'ready')
     throw new Error('STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED')
   assertNoNegativeZero(document)
-  const requestedProfile = options.profile
-  let profile: StructEpubProfile | undefined
-  if (requestedProfile !== undefined) {
-    const snapshot = snapshotProfile(requestedProfile)
-    if (!snapshot || !validProfile(snapshot)) {
-      throw new Error('STRUCT_EPUB_PROFILE_INVALID')
-    }
-    profile = snapshot
-  }
   const documentDirection =
     document.metadata.baseDirection === 'ltr' ||
     document.metadata.baseDirection === 'rtl'
@@ -445,12 +620,10 @@ export async function buildStructEpub(
   )
     throw new Error('STRUCT_EPUB_PROFILE_DIRECTION_MISMATCH')
   const retainedProfile = profile ? profileReceipt(profile) : undefined
-  const identifier = `urn:sha256:${document.receipt.generatedSha256}${retainedProfile ? `:${retainedProfile.id}:${retainedProfile.version}:${retainedProfile.configurationSha256.slice(0, 16)}` : ''}`
+  const publicationSha256 = publicationDigest(document)
+  const identifier = `urn:sha256:${publicationSha256}${retainedProfile ? `:${retainedProfile.id}:${retainedProfile.version}:${retainedProfile.configurationSha256.slice(0, 16)}` : ''}`
   const language = document.metadata.language ?? 'und'
-  const modified = (
-    document.metadata.artifactModifiedAt ??
-    `${document.metadata.updated ?? '1970-01-01'}T00:00:00Z`
-  ).replace(/\.\d{3}Z$/, 'Z')
+  const modified = canonicalModifiedTime(document)
   const assets = document.assets.map((asset) => {
     if (!asset.bytes) {
       throw new Error('STRUCT_EPUB_ASSET_BYTES_MISSING')
@@ -473,9 +646,7 @@ export async function buildStructEpub(
   const assetHrefs = new Set<string>()
   for (const asset of assets) {
     if (assetIds.has(asset.id) || !isPackagedAssetId(asset.id)) {
-      throw new Error(
-        `STRUCT EPUB asset id is duplicate or reserved: ${asset.id}`,
-      )
+      throw new Error('STRUCT_EPUB_ASSET_ID_INVALID')
     }
     if (
       reservedHrefs.has(asset.href) ||
@@ -484,28 +655,52 @@ export async function buildStructEpub(
       /[\s#:]/u.test(asset.href) ||
       resolvedPackageHref('content.xhtml', asset.href) !== asset.href
     ) {
-      throw new Error(
-        `STRUCT EPUB asset href is duplicate, reserved, or unsafe: ${asset.href}`,
-      )
+      throw new Error('STRUCT_EPUB_ASSET_HREF_INVALID')
     }
     assetIds.add(asset.id)
     assetHrefs.add(asset.href)
   }
+  const packagedXhtmlAssets = new Map<string, string>()
+  for (const asset of assets)
+    if (asset.mediaType.toLowerCase() === 'application/xhtml+xml')
+      packagedXhtmlAssets.set(asset.href, decodePackagedXhtml(asset.bytes))
   const assetItems = assets
     .map(
       (asset) =>
         `<item id="${attribute(asset.id)}" href="${attribute(asset.href)}" media-type="${attribute(asset.mediaType)}" />`,
     )
     .join('\n    ')
+  const metadataEntries = [
+    `<dc:identifier id="publication-id">${text(identifier)}</dc:identifier>`,
+    `<dc:title id="publication-title">${text(document.metadata.title)}</dc:title>`,
+    '<meta refines="#publication-title" property="title-type">main</meta>',
+    ...(document.metadata.subtitle.length > 0
+      ? [
+          `<dc:title id="publication-subtitle">${text(document.metadata.subtitle)}</dc:title>`,
+          '<meta refines="#publication-subtitle" property="title-type">subtitle</meta>',
+        ]
+      : []),
+    `<dc:language>${text(language)}</dc:language>`,
+    ...document.metadata.authors.map(
+      (author) => `<dc:creator>${text(author)}</dc:creator>`,
+    ),
+    ...(document.metadata.abstract.length > 0
+      ? [`<dc:description>${text(document.metadata.abstract)}</dc:description>`]
+      : []),
+    ...(document.metadata.publicationDate === undefined
+      ? []
+      : [`<dc:date>${text(document.metadata.publicationDate)}</dc:date>`]),
+    `<meta property="dcterms:modified">${text(modified)}</meta>`,
+    ...(retainedProfile
+      ? [
+          `<meta property="rendition:flow">${retainedProfile.renditionFlow}</meta>`,
+        ]
+      : []),
+  ].join('\n    ')
   const packageDocument = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="publication-id" xml:lang="${attribute(language)}">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="publication-id">${identifier}</dc:identifier>
-    <dc:title>${text(document.metadata.title)}</dc:title>
-    <dc:language>${text(language)}</dc:language>
-    ${document.metadata.authors.map((author) => `<dc:creator>${text(author)}</dc:creator>`).join('\n    ')}
-    <meta property="dcterms:modified">${text(modified)}</meta>
-    ${retainedProfile ? `<meta property="rendition:flow">${retainedProfile.renditionFlow}</meta>` : ''}
+    ${metadataEntries}
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
@@ -531,9 +726,12 @@ export async function buildStructEpub(
     schemaVersion: document.schemaVersion,
     source: {
       ...document.source,
-      fileName: artifactFileName(document.source.fileName),
+      fileName: PUBLICATION_SOURCE_FILE_NAME,
     },
-    receipt: document.receipt,
+    receipt: {
+      ...document.receipt,
+      generatedSha256: publicationSha256,
+    },
   }
   const serializedStructArtifact = `${JSON.stringify(structArtifact)}\n`
   const serializedProfile = retainedProfile
@@ -541,6 +739,11 @@ export async function buildStructEpub(
     : undefined
   const container =
     '<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>'
+  if (
+    XMLValidator.validate(container) !== true ||
+    XMLValidator.validate(packageDocument) !== true
+  )
+    throw new Error('STRUCT_EPUB_PACKAGE_XML_INVALID')
   const archiveBytes =
     utf8ByteLength(EPUB_MIMETYPE) +
     utf8ByteLength(container) +
@@ -576,12 +779,8 @@ export async function buildStructEpub(
   const xhtmlDocuments = new Map<string, string>([
     ['nav.xhtml', nav],
     ['content.xhtml', content],
+    ...packagedXhtmlAssets,
   ])
-  for (const asset of assets) {
-    if (asset.mediaType === 'application/xhtml+xml') {
-      xhtmlDocuments.set(asset.href, strFromU8(asset.bytes))
-    }
-  }
   assertXhtmlHrefIntegrity(
     xhtmlDocuments,
     new Set(
@@ -609,7 +808,7 @@ export async function buildStructEpub(
     bytes,
     fileName:
       retainedProfile?.fileName ??
-      `${slug(document.metadata.title)}-${document.receipt.generatedSha256.slice(0, 12)}.epub`,
+      `${slug(document.metadata.title)}-${publicationSha256.slice(0, 12)}.epub`,
     mediaType: EPUB_MIMETYPE,
     sha256: sha256HexSync(bytes),
     identifier,

@@ -270,7 +270,7 @@ export function enumValue<T extends readonly string[]>(
 ): EnumValue<T> {
   const parsed = stringValue(value, path)
   if (!allowed.includes(parsed))
-    fail('ENUM', path, `unexpected value ${JSON.stringify(parsed)}`)
+    fail('ENUM', path, 'unexpected enum value')
   return parsed as EnumValue<T>
 }
 
@@ -335,7 +335,7 @@ export function unique(values: readonly string[], path: string, label: string) {
   const seen = new Set<string>()
   for (const value of values) {
     if (seen.has(value))
-      fail('DUPLICATE_IDENTIFIER', path, `duplicate ${label} ${value}`)
+      fail('DUPLICATE_IDENTIFIER', path, `duplicate ${label}`)
     seen.add(value)
   }
 }
