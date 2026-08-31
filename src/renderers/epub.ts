@@ -318,7 +318,11 @@ function assertXhtmlHrefIntegrity(
     }),
   )
   for (const [documentHref, value] of documents) {
-    for (const href of xhtmlAttributeValues(value, 'href')) {
+    const references = [
+      ...xhtmlAttributeValues(value, 'href'),
+      ...xhtmlAttributeValues(value, 'src'),
+    ]
+    for (const href of references) {
       if (
         href !== href.trim() ||
         href.includes('\\') ||
@@ -449,7 +453,7 @@ export async function buildStructEpub(
   ).replace(/\.\d{3}Z$/, 'Z')
   const assets = document.assets.map((asset) => {
     if (!asset.bytes) {
-      throw new Error(`STRUCT asset ${asset.id} has no packaged bytes.`)
+      throw new Error('STRUCT_EPUB_ASSET_BYTES_MISSING')
     }
     return asset as typeof asset & { bytes: Uint8Array }
   })

@@ -277,6 +277,30 @@ export function syntheticAsset(
   }
 }
 
+/** A tiny hand-authored SVG for explicit runtime-only image asset cases. */
+export function syntheticSvgAsset(
+  caseId: string,
+  role = 'svg-asset',
+): StructAsset {
+  const bytes = textEncoder.encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="currentColor"/></svg>',
+  )
+  if (bytes.byteLength > SYNTHETIC_ASSET_BYTE_LIMIT)
+    throw new RangeError('synthetic runtime asset exceeds its fixed bound')
+  return {
+    ...syntheticAsset(caseId, {
+      role,
+      kind: 'figure',
+      href: `assets/${caseId}-${role}.svg`,
+      mediaType: 'image/svg+xml',
+      includeBytes: false,
+      fallback: 'asset',
+    }),
+    sha256: sha256HexSync(bytes),
+    bytes,
+  }
+}
+
 export function syntheticRelationship(
   caseId: string,
   options: SyntheticRelationshipOptions = {},
@@ -774,7 +798,7 @@ function navigationCase(document: StructDocument, caseId: string): void {
 }
 
 function assetCase(document: StructDocument, caseId: string): void {
-  const asset = syntheticAsset(caseId, { role: 'runtime-asset' })
+  const asset = syntheticSvgAsset(caseId, 'runtime-asset')
   document.assets = [asset]
   setSinglePage(document, caseId, [
     syntheticBlock(caseId, {

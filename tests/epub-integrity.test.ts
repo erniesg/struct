@@ -662,4 +662,33 @@ describe('STRUCT EPUB href integrity', () => {
       /dangling internal reference/i,
     )
   })
+
+  it('rejects dangling srcs in packaged XHTML assets', async () => {
+    const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="missing.svg" alt="Invented missing asset" /></body></html>',
+    )
+    document.assets.push({
+      id: 'src-supplement',
+      kind: 'figure',
+      href: 'src-supplement.xhtml',
+      mediaType: 'application/xhtml+xml',
+      sha256: sha256HexSync(assetBytes),
+      width: 1,
+      height: 1,
+      bytes: assetBytes,
+      sourceObjectIds: ['fixture-src-supplement'],
+      evidence: {
+        confidence: 1,
+        pages: [1],
+        boxes: [],
+        sourceIds: ['fixture-src-supplement'],
+      },
+      fallback: 'asset',
+    })
+
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      /dangling internal reference/i,
+    )
+  })
 })

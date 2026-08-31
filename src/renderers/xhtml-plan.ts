@@ -407,13 +407,14 @@ function* renderedInlineSources(
   for (const [blockIndex, block] of document.blocks.entries()) {
     if (block.kind === 'furniture') continue
     if (block.kind === 'table' && block.table) {
-      for (const [cellIndex, cell] of block.table.cells.entries())
-        yield {
-          key: `table:${blockIndex}:${cellIndex}`,
-          value: cell.text,
-          runs: cell.inline,
-          pathPrefix: `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline`,
-        }
+      if (block.table.semantic === 'verified')
+        for (const [cellIndex, cell] of block.table.cells.entries())
+          yield {
+            key: `table:${blockIndex}:${cellIndex}`,
+            value: cell.text,
+            runs: cell.inline,
+            pathPrefix: `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline`,
+          }
       continue
     }
     yield {
@@ -974,7 +975,10 @@ export function emittedXhtmlIds(
         path: `$.blocks[${blockIndex}].sourceObservationAnchorIds[${anchorIndex}]`,
       })
     }
-    if (block.kind === 'table' && block.table) {
+    if (
+      block.kind === 'table' &&
+      block.table?.semantic === 'verified'
+    ) {
       for (const [cellIndex, cell] of block.table.cells.entries()) {
         entries.push({
           id: `${block.id}-${cell.id}`,

@@ -16,7 +16,10 @@ import {
   type RenderedInlineSourcePlan,
   type RenderedPublicationPlan,
 } from './xhtml-plan'
-import { normalizeStructDocumentForRenderer } from './ingress'
+import {
+  normalizeStructDocumentForRenderer,
+  selectPublicationAccessibleText,
+} from './ingress'
 import { verifyStructReceipt } from '../receipt'
 
 export type StructXhtmlOptions = {
@@ -128,6 +131,7 @@ function renderInline(
 function renderTable(
   document: StructDocument,
   table: StructTable,
+  caption: string,
   tableBlockId: string,
   blockIndex: number,
   emittedRelationshipIds: Set<string>,
@@ -177,7 +181,7 @@ function renderTable(
           occupied.add(`${occupiedRow}:${occupiedColumn}`)
     }
   }
-  return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
+  return `<table><caption>${text(caption)}</caption>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
 }
 
 function renderAuthors(
@@ -228,20 +232,134 @@ function renderSourceObservationAnchors(block: StructBlock) {
     .join('')
 }
 
+type CaptionBlock = { block: StructBlock; blockIndex: number }
+
+type BlockRenderingPlan = {
+  assetsById: ReadonlyMap<string, StructDocument['assets'][number]>
+  describedByByFigure: ReadonlyMap<string, readonly string[]>
+  nestedCaptionIds: ReadonlySet<string>
+  nestedCaptionsByFigure: ReadonlyMap<string, readonly CaptionBlock[]>
+}
+
+function isRenderedFigureBlock(block: StructBlock): boolean {
+  return (
+    block.kind === 'figure' ||
+    block.kind === 'equation' ||
+    (block.kind === 'table' && block.table === undefined)
+  )
+}
+
+function buildBlockRenderingPlan(document: StructDocument): BlockRenderingPlan {
+  const blocksById = new Map(
+    document.blocks.map((block, blockIndex) => [
+      block.id,
+      { block, blockIndex },
+    ]),
+  )
+  const figureTargetsByCaption = new Map<string, Set<string>>()
+  for (const relationship of document.relationships) {
+    if (relationship.kind !== 'caption' || relationship.status !== 'matched')
+      continue
+    const caption = blocksById.get(relationship.from)?.block
+    if (caption?.kind !== 'caption') continue
+    const targets = figureTargetsByCaption.get(caption.id) ?? new Set<string>()
+    for (const value of relationship.to) {
+      const targetId = value.startsWith('#') ? value.slice(1) : value
+      const target = blocksById.get(targetId)?.block
+      if (target && isRenderedFigureBlock(target)) targets.add(target.id)
+    }
+    if (targets.size > 0) figureTargetsByCaption.set(caption.id, targets)
+  }
+
+  const nestedCaptionIds = new Set<string>()
+  const nestedCaptionsByFigure = new Map<string, CaptionBlock[]>()
+  const describedByByFigure = new Map<string, string[]>()
+  for (const [blockIndex, block] of document.blocks.entries()) {
+    if (block.kind !== 'caption') continue
+    const targetIds = [...(figureTargetsByCaption.get(block.id) ?? [])]
+    const singleTarget =
+      targetIds.length === 1 ? blocksById.get(targetIds[0]!) : undefined
+    if (singleTarget && singleTarget.blockIndex + 1 === blockIndex) {
+      const captions = nestedCaptionsByFigure.get(targetIds[0]!) ?? []
+      captions.push({ block, blockIndex })
+      nestedCaptionsByFigure.set(targetIds[0]!, captions)
+      nestedCaptionIds.add(block.id)
+      continue
+    }
+    for (const targetId of targetIds) {
+      const captionIds = describedByByFigure.get(targetId) ?? []
+      captionIds.push(block.id)
+      describedByByFigure.set(targetId, captionIds)
+    }
+  }
+
+  return {
+    assetsById: new Map(document.assets.map((asset) => [asset.id, asset])),
+    describedByByFigure,
+    nestedCaptionIds,
+    nestedCaptionsByFigure,
+  }
+}
+
+function renderNestedFigureCaptions(
+  document: StructDocument,
+  captions: readonly CaptionBlock[],
+  emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
+): string {
+  if (captions.length === 0) return ''
+  if (captions.length === 1) {
+    const { block, blockIndex } = captions[0]!
+    const id = attribute(block.id)
+    return `<figcaption id="${id}" data-struct-id="${id}">${renderSourceObservationAnchors(block)}${renderInline(
+      document,
+      publicationPlan.sourceByKey.get(`block:${blockIndex}`)!,
+      emittedRelationshipIds,
+      publicationPlan,
+    )}</figcaption>`
+  }
+  return `<figcaption>${captions
+    .map(({ block, blockIndex }) => {
+      const id = attribute(block.id)
+      return `<p id="${id}" data-struct-id="${id}" class="caption">${renderSourceObservationAnchors(block)}${renderInline(
+        document,
+        publicationPlan.sourceByKey.get(`block:${blockIndex}`)!,
+        emittedRelationshipIds,
+        publicationPlan,
+      )}</p>`
+    })
+    .join('')}</figcaption>`
+}
+
 function renderBlock(
   document: StructDocument,
   block: StructBlock,
   blockIndex: number,
   emittedRelationshipIds: Set<string>,
   publicationPlan: RenderedPublicationPlan,
+  blockRenderingPlan: BlockRenderingPlan,
 ) {
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
+  if (
+    block.kind === 'caption' &&
+    blockRenderingPlan.nestedCaptionIds.has(block.id)
+  )
+    return ''
   const id = attribute(block.id)
   const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'table' && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`
+    if (block.table.semantic === 'source-preserved') {
+      const fallback = block.table.accessibleFallback!
+      const accessibleName =
+        fallback.accessibleNameSource === 'block-label'
+          ? block.label!
+          : block.text
+      return `<div id="${id}" data-struct-id="${id}" data-table-fallback="source-preserved" role="group" aria-label="${attribute(accessibleName)}">${sourceAnchors}<p>${text(block.text)}</p></div>`
+    }
+    const caption = selectPublicationAccessibleText(block.label, block.text)!
+    return `<div id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, caption, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</div>`
   }
   const content = renderInline(
     document,
@@ -262,15 +380,32 @@ function renderBlock(
     block.kind === 'table'
   ) {
     const assets = (block.fallbackAssetIds ?? [])
-      .map((assetId) => document.assets.find((asset) => asset.id === assetId))
-      .filter((asset) => asset !== undefined)
+      .flatMap((assetId) => {
+        const asset = blockRenderingPlan.assetsById.get(assetId)
+        return asset ? [asset] : []
+      })
+    const alternativeText = selectPublicationAccessibleText(
+      block.label,
+      block.text,
+    )
     const artwork = assets
       .map(
         (asset) =>
-          `<img src="${attribute(asset.href)}" alt="${attribute(block.label ?? block.text)}" />`,
+          `<img src="${attribute(asset.href)}" alt="${attribute(alternativeText!)}" />`,
       )
       .join('')
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${artwork}<figcaption>${content || text(block.label ?? '')}</figcaption></figure>`
+    const describedBy = blockRenderingPlan.describedByByFigure.get(block.id)
+    const description = describedBy?.length
+      ? ` aria-describedby="${attribute(describedBy.join(' '))}"`
+      : ''
+    const nestedCaptions =
+      blockRenderingPlan.nestedCaptionsByFigure.get(block.id) ?? []
+    if (nestedCaptions.length > 0) {
+      const fallbackContent =
+        content || (assets.length === 0 ? text(block.label ?? '') : '')
+      return `<figure id="${id}" data-struct-id="${id}"${description}>${sourceAnchors}${artwork}${fallbackContent ? `<p class="figure-fallback">${fallbackContent}</p>` : ''}${renderNestedFigureCaptions(document, nestedCaptions, emittedRelationshipIds, publicationPlan)}</figure>`
+    }
+    return `<figure id="${id}" data-struct-id="${id}"${description}>${sourceAnchors}${artwork}<figcaption>${content || text(block.label ?? '')}</figcaption></figure>`
   }
   if (block.kind === 'caption') {
     return `<p id="${id}" data-struct-id="${id}" class="caption">${sourceAnchors}${content}</p>`
@@ -314,6 +449,7 @@ export function renderPublicationXhtml(
 ) {
   document = normalizeStructDocumentForRenderer(document)
   const publicationPlan = buildRenderedPublicationPlan(document)
+  const blockRenderingPlan = buildBlockRenderingPlan(document)
   assertUniqueEmittedIds(emittedXhtmlIds(document, publicationPlan))
   if (!verifyStructReceipt(document))
     throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH')
@@ -335,7 +471,7 @@ export function renderPublicationXhtml(
 </head>
 <body>
   <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document, emittedRelationshipIds, publicationPlan)}</header>
-  ${document.blocks.map((block, blockIndex) => renderBlock(document, block, blockIndex, emittedRelationshipIds, publicationPlan)).join('\n  ')}
+  ${document.blocks.map((block, blockIndex) => renderBlock(document, block, blockIndex, emittedRelationshipIds, publicationPlan, blockRenderingPlan)).join('\n  ')}
 </body>
 </html>
 `
