@@ -29,6 +29,8 @@ import {
 
 const textEncoder = new TextEncoder()
 const MAX_SYNTHETIC_XHTML_DEPTH = 128
+const CANONICAL_XML_DECLARATION =
+  '<?xml version="1.0" encoding="UTF-8"?>'
 
 function capture(run: () => unknown): unknown {
   try {
@@ -272,6 +274,54 @@ describe('Stage 6 malformed renderer and validation enforcement', () => {
     )
     await expect(buildStructEpub(externalDeclaration)).rejects.toMatchObject({
       message: 'STRUCT_EPUB_XHTML_FORBIDDEN_DECLARATION',
+    })
+  })
+
+  it.each([
+    [
+      'external stylesheet',
+      '<?xml-stylesheet type="text/css" href="https://example.test/invented-private.css"?>',
+    ],
+    [
+      'external stylesheet after the XML declaration',
+      `${CANONICAL_XML_DECLARATION}<?xml-stylesheet type="text/css" href="https://example.test/invented-private.css"?>`,
+    ],
+    ['generic instruction', '<?invented processing="instruction"?>'],
+    ['noncanonical XML declaration', '<?xml version="1.0"?>'],
+  ])(
+    'rejects a packaged XHTML %s processing instruction before returning an archive',
+    async (_label, instruction) => {
+      const document = withPackagedXhtml(
+        buildSealedSyntheticFixture('malformed-positive'),
+        'assets/invented-processing-instruction.xhtml',
+        textEncoder.encode(
+          `${instruction}<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Invented.</p></body></html>`,
+        ),
+      )
+      let archive: unknown
+      const error = await captureRejection(async () => {
+        archive = await buildStructEpub(document)
+      })
+
+      expect(archive).toBeUndefined()
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toBe(
+        'STRUCT_EPUB_XHTML_FORBIDDEN_DECLARATION',
+      )
+    },
+  )
+
+  it('accepts the exact canonical XML declaration in packaged XHTML', async () => {
+    const document = withPackagedXhtml(
+      buildSealedSyntheticFixture('malformed-positive'),
+      'assets/invented-canonical-declaration.xhtml',
+      textEncoder.encode(
+        `${CANONICAL_XML_DECLARATION}<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Invented.</p></body></html>`,
+      ),
+    )
+
+    await expect(buildStructEpub(document)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
     })
   })
 

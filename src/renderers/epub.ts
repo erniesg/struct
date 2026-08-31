@@ -372,6 +372,12 @@ function assertXhtmlLexicalBounds(value: string) {
     if (value.startsWith('<?', opening)) {
       const closing = value.indexOf('?>', opening + 2)
       if (closing === -1) throw new Error('STRUCT_EPUB_XHTML_NOT_WELL_FORMED')
+      if (
+        opening !== 0 ||
+        value.slice(opening, closing + 2) !==
+          '<?xml version="1.0" encoding="UTF-8"?>'
+      )
+        throw new Error('STRUCT_EPUB_XHTML_FORBIDDEN_DECLARATION')
       cursor = closing + 2
       continue
     }
