@@ -93,8 +93,8 @@ describe('Stage 2.1 paragraph baseline characterization', () => {
   })
 })
 
-describe('Stage 2.1 hierarchy baseline characterization', () => {
-  it('preserves heading levels but currently reopens them as a flat EPUB navigation list', async () => {
+describe('Stage 3 hierarchy contract (HIER-01)', () => {
+  it('nests EPUB navigation with the heading stack', async () => {
     const publication = await characterizeRenderedCase('hierarchy-positive')
     const content = inspectXhtml(publication.xhtml)
     const headingBlocks = publication.decoded.blocks
@@ -115,22 +115,28 @@ describe('Stage 2.1 hierarchy baseline characterization', () => {
     const navigation = inspectNavigation(
       reopenedText(publication, 'EPUB/nav.xhtml'),
     )
-    const currentFlatItems = [
-      {
-        href: 'content.xhtml',
-        label: publication.decoded.metadata.title,
-        children: [],
-      },
-      ...headingBlocks.map(({ id, text }) => ({
-        href: `content.xhtml#${id}`,
-        label: text,
-        children: [],
-      })),
-    ]
+    const [root, nestedTopic, siblingTopic] = headingBlocks
     assertNavigationHierarchy(
       'hierarchy-positive',
       navigation,
-      currentFlatItems,
+      [
+        {
+          href: `content.xhtml#${root!.id}`,
+          label: root!.text,
+          children: [
+            {
+              href: `content.xhtml#${nestedTopic!.id}`,
+              label: nestedTopic!.text,
+              children: [],
+            },
+            {
+              href: `content.xhtml#${siblingTopic!.id}`,
+              label: siblingTopic!.text,
+              children: [],
+            },
+          ],
+        },
+      ],
     )
     assertNavigationTargets(
       'hierarchy-positive',

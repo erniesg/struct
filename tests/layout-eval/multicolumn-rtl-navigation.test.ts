@@ -19,6 +19,7 @@ import {
   characterizeReviewRefusal,
   reopenedText,
 } from './baseline-characterization'
+import { buildSealedSyntheticFixture } from './fixture-builder'
 
 const contradictoryLtrProfile: StructEpubProfile = {
   id: 'synthetic-ltr-profile',
@@ -61,8 +62,8 @@ describe('Stage 2.1 multicolumn baseline characterization', () => {
   })
 })
 
-describe('Stage 2.1 RTL baseline characterization', () => {
-  it('sets content direction and language deterministically but currently omits them from nav and unprofiled spine direction', async () => {
+describe('Stage 3 RTL contract', () => {
+  it('propagates RTL through nav and spine (RTL-01)', async () => {
     const publication = await characterizeRenderedCase('rtl-positive')
     const content = inspectXhtml(publication.xhtml)
     const navigation = inspectNavigation(
@@ -73,23 +74,25 @@ describe('Stage 2.1 RTL baseline characterization', () => {
 
     expect(content.rootLanguage).toEqual({ xml: 'ar', html: 'ar' })
     expect(content.rootDirection).toBe('rtl')
-    expect(navigation.document.rootLanguage).toEqual({ xml: 'ar' })
-    expect(navigation.document.rootDirection).toBeUndefined()
+    expect(navigation.document.rootLanguage).toEqual({
+      xml: 'ar',
+      html: 'ar',
+    })
+    expect(navigation.document.rootDirection).toBe('rtl')
     expect(opf.language).toBe('ar')
-    expect(opf.spine.pageProgressionDirection).toBeUndefined()
+    expect(opf.spine.pageProgressionDirection).toBe('rtl')
     expect(second.bytes).toEqual(publication.epub.bytes)
     expect(second.sha256).toBe(publication.epub.sha256)
   })
 
-  it('currently accepts an explicit LTR profile for an RTL document and packages the contradiction', async () => {
+  it('rejects a contradictory RTL profile (RTL-02)', async () => {
     const profileBefore = structuredClone(contradictoryLtrProfile)
-    const publication = await characterizeRenderedCase('rtl-positive', {
-      profile: contradictoryLtrProfile,
-    })
-    const opf = inspectOpf(reopenedText(publication, 'EPUB/package.opf'))
 
-    expect(opf.spine.pageProgressionDirection).toBe('ltr')
-    expect(publication.epub.profile?.pageProgressionDirection).toBe('ltr')
+    await expect(
+      buildStructEpub(buildSealedSyntheticFixture('rtl-positive'), {
+        profile: contradictoryLtrProfile,
+      }),
+    ).rejects.toThrow('STRUCT_EPUB_PROFILE_DIRECTION_MISMATCH')
     expect(contradictoryLtrProfile).toEqual(profileBefore)
   })
 
@@ -102,8 +105,8 @@ describe('Stage 2.1 RTL baseline characterization', () => {
   })
 })
 
-describe('Stage 2.1 navigation baseline characterization', () => {
-  it('emits one unnamed flat toc with a current publication-title item before headings', async () => {
+describe('Stage 3 navigation contract (NAV-01)', () => {
+  it('uses one named heading-only toc', async () => {
     const publication = await characterizeRenderedCase('navigation-positive')
     const content = inspectXhtml(publication.xhtml)
     const navigation = inspectNavigation(
@@ -113,25 +116,28 @@ describe('Stage 2.1 navigation baseline characterization', () => {
     const headings = publication.decoded.blocks.filter(
       ({ kind }) => kind === 'heading',
     )
-    const currentItems = [
+    const expectedItems = [
       {
-        href: 'content.xhtml',
-        label: publication.decoded.metadata.title,
-        children: [],
+        href: `content.xhtml#${headings[0]!.id}`,
+        label: headings[0]!.text,
+        children: [
+          {
+            href: `content.xhtml#${headings[1]!.id}`,
+            label: headings[1]!.text,
+            children: [],
+          },
+        ],
       },
-      ...headings.map(({ id, text }) => ({
-        href: `content.xhtml#${id}`,
-        label: text,
-        children: [],
-      })),
     ]
 
     expect(navigation.tocs).toHaveLength(1)
-    expect(navigation.tocs[0]!.ariaLabel).toBeUndefined()
+    expect(navigation.tocs[0]!.ariaLabel).toBe(
+      publication.decoded.metadata.title,
+    )
     assertNavigationHierarchy(
       'navigation-positive',
       navigation,
-      currentItems,
+      expectedItems,
     )
     assertNavigationTargets(
       'navigation-positive',
@@ -140,33 +146,30 @@ describe('Stage 2.1 navigation baseline characterization', () => {
       new Map([['EPUB/content.xhtml', new Set(content.ids)]]),
     )
     assertOpfSpineLinks('navigation-positive', opf)
-    expect(navigation.document.visibleTextTokens).toContain('Contents')
-  })
+    expect(navigation.document.headings).toEqual([])
 
-  it('omits furniture from content and nav but currently keeps the publication-title toc item when no headings exist', async () => {
-    const publication = await characterizeRenderedCase(
+    const furniturePublication = await characterizeRenderedCase(
       'navigation-safe-ambiguity',
     )
-    const content = inspectXhtml(publication.xhtml)
-    const navigation = inspectNavigation(
-      reopenedText(publication, 'EPUB/nav.xhtml'),
+    const furnitureContent = inspectXhtml(furniturePublication.xhtml)
+    const furnitureNavigation = inspectNavigation(
+      reopenedText(furniturePublication, 'EPUB/nav.xhtml'),
     )
-    const furniture = publication.decoded.blocks.find(
+    const furniture = furniturePublication.decoded.blocks.find(
       ({ kind }) => kind === 'furniture',
     )!
 
-    expect(content.ids).not.toContain(furniture.id)
-    expect(content.visibleTextSegments.join('')).not.toContain(furniture.text)
+    expect(furnitureContent.ids).not.toContain(furniture.id)
+    expect(furnitureContent.visibleTextSegments.join('')).not.toContain(
+      furniture.text,
+    )
+    expect(furnitureNavigation.tocs[0]!.ariaLabel).toBe(
+      furniturePublication.decoded.metadata.title,
+    )
     assertNavigationHierarchy(
       'navigation-safe-ambiguity',
-      navigation,
-      [
-        {
-          href: 'content.xhtml',
-          label: publication.decoded.metadata.title,
-          children: [],
-        },
-      ],
+      furnitureNavigation,
+      [],
     )
   })
 })

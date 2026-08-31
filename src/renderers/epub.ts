@@ -17,6 +17,10 @@ import { sha256HexSync } from '../sha256'
 import { verifyStructReceipt } from '../receipt'
 import { isPackagedAssetId } from './xhtml-plan'
 import { renderPublicationXhtml } from './xhtml'
+import {
+  buildPublicationNavigationPlan,
+  type PublicationNavigationItem,
+} from './navigation-plan'
 import type { StructDocument } from '../document/types'
 import {
   isRendererIngressCodecError,
@@ -143,6 +147,17 @@ function text(value: string) {
 
 function attribute(value: string) {
   return text(value).replace(/"/g, '&quot;')
+}
+
+function renderNavigationItems(
+  items: readonly PublicationNavigationItem[],
+): string {
+  return items
+    .map(
+      (item) =>
+        `<li><a href="content.xhtml#${attribute(item.id)}">${text(item.label)}</a>${item.children.length > 0 ? `<ol>${renderNavigationItems(item.children)}</ol>` : ''}</li>`,
+    )
+    .join('')
 }
 
 function entry(value: string, level: 0 | 6 = 6): [Uint8Array, ZipOptions] {
@@ -414,6 +429,17 @@ export async function buildStructEpub(
     }
     profile = snapshot
   }
+  const documentDirection =
+    document.metadata.baseDirection === 'ltr' ||
+    document.metadata.baseDirection === 'rtl'
+      ? document.metadata.baseDirection
+      : undefined
+  if (
+    profile &&
+    documentDirection &&
+    profile.pageProgressionDirection !== documentDirection
+  )
+    throw new Error('STRUCT_EPUB_PROFILE_DIRECTION_MISMATCH')
   const retainedProfile = profile ? profileReceipt(profile) : undefined
   const identifier = `urn:sha256:${document.receipt.generatedSha256}${retainedProfile ? `:${retainedProfile.id}:${retainedProfile.version}:${retainedProfile.configurationSha256.slice(0, 16)}` : ''}`
   const language = document.metadata.language ?? 'und'
@@ -485,13 +511,16 @@ export async function buildStructEpub(
     ${retainedProfile ? '<item id="profile" href="profile.json" media-type="application/json" />' : ''}
     ${assetItems}
   </manifest>
-  <spine${retainedProfile ? ` page-progression-direction="${retainedProfile.pageProgressionDirection}"` : ''}><itemref idref="content" /></spine>
+  <spine${retainedProfile ? ` page-progression-direction="${retainedProfile.pageProgressionDirection}"` : documentDirection === 'rtl' ? ' page-progression-direction="rtl"' : ''}><itemref idref="content" /></spine>
 </package>
 `
-  const headings = document.blocks.filter((block) => block.kind === 'heading')
+  const navigationItems = buildPublicationNavigationPlan(document.blocks)
+  const navigationDirection = documentDirection
+    ? ` dir="${documentDirection}"`
+    : ''
   const nav = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>Contents</h1><ol><li><a href="content.xhtml">${text(document.metadata.title)}</a></li>${headings.map((block) => `<li><a href="content.xhtml#${attribute(block.id)}">${text(block.text)}</a></li>`).join('')}</ol></nav></body></html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}" lang="${attribute(language)}"${navigationDirection}><head><title>${text(document.metadata.title)}</title></head><body><nav epub:type="toc" aria-label="${attribute(document.metadata.title)}"><ol>${renderNavigationItems(navigationItems)}</ol></nav></body></html>
 `
   const content = renderPublicationXhtml(document)
   const structArtifact = {
