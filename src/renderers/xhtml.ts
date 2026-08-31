@@ -411,19 +411,21 @@ function renderBlock(
     return `<p id="${id}" data-struct-id="${id}" class="caption">${sourceAnchors}${content}</p>`
   }
   if (block.kind === 'footnote' || block.kind === 'endnote') {
+    const noteRole =
+      block.kind === 'endnote' ? 'doc-endnote' : 'doc-footnote'
     const backlinks = (publicationPlan.backlinksByTarget.get(block.id) ?? [])
       .map(
         (relationship) =>
           `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
       )
       .join(' ')
-    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`
+    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="${noteRole}" data-note-kind="${block.kind}">${sourceAnchors}<p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`
   }
   if (block.kind === 'code') {
     return `<pre id="${id}" data-struct-id="${id}">${sourceAnchors}<code>${content}</code></pre>`
   }
   const bibliographyEntry = block.attributes?.bibliographyEntry
-    ? ' role="doc-biblioentry" data-semantic-role="bibliography-entry"'
+    ? ' epub:type="bibliography" role="doc-bibliography" data-semantic-role="bibliography-entry"'
     : ''
   return `<p id="${id}" data-struct-id="${id}"${bibliographyEntry}>${sourceAnchors}${content}</p>`
 }

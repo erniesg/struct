@@ -467,8 +467,8 @@ function semanticPlanForRun(
 ): RenderedSemanticPlan | undefined {
   if (!run.semanticRole || !run.relationshipId) return undefined
   const relationship = relationships.get(run.relationshipId)
-  const rawTargets =
-    relationship?.status === 'matched' ? relationship.to : (run.targetIds ?? [])
+  if (relationship?.status !== 'matched') return undefined
+  const rawTargets = relationship.to
   const rawLabel = relationship?.label ?? ''
   const labels = boundedRelationshipLabels(rawLabel)
   let targets = targetCache.get(rawTargets)
@@ -522,7 +522,7 @@ function semanticPlanForRun(
       : null
   const visibleTargets = new Set((ranges ?? []).map((range) => range.target))
   const additionalTargets =
-    targets.length > 1
+    targets.length > 1 && run.semanticRole !== 'citation'
       ? targets
           .map((target, targetIndex) => ({ target, targetIndex }))
           .filter(({ target }) => !visibleTargets.has(target.id))
@@ -569,7 +569,8 @@ function hyperlinkPlanForRun(
   run: StructInline,
   getTargetIndex: () => PlanningTargetIndex,
 ): RenderedHyperlinkPlan | undefined {
-  if (!run.href && !run.targetIds?.length) return undefined
+  if (run.semanticRole || (!run.href && !run.targetIds?.length))
+    return undefined
   const internalTarget = run.targetIds?.[0]
   const rawHref = run.href
   const href = rawHref?.startsWith('#')
@@ -695,7 +696,10 @@ function draftInlinePlan(
     if (semanticIndex < 0)
       for (const runIndex of active) {
         const hyperlinkRun = runs[runIndex]!
-        if (hyperlinkRun.run.href || hyperlinkRun.run.targetIds?.length) {
+        if (
+          !hyperlinkRun.run.semanticRole &&
+          (hyperlinkRun.run.href || hyperlinkRun.run.targetIds?.length)
+        ) {
           hyperlinkIndex = runIndex
           break
         }
@@ -1012,8 +1016,12 @@ export function emittedXhtmlIds(
         (owner) => owner.relationshipId && owner.semanticRole,
       )
       const run = ownerIndex >= 0 ? segment.owners[ownerIndex] : undefined
+      const ownerKey =
+        ownerIndex >= 0 ? segment.ownerKeys[ownerIndex] : undefined
       if (
         !run?.relationshipId ||
+        !ownerKey ||
+        !publicationPlan.semanticByOwnerKey.has(ownerKey) ||
         relationshipIds.has(run.relationshipId) ||
         authorNoteAliasIds.has(run.relationshipId)
       )
