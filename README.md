@@ -15,10 +15,10 @@ remains generic orchestration and owns none of these domain models.
 
 ## State and evidence
 
-**Current** at base `6ecb78d1753b847ec7295bf45f43237225663728`: this is a
-private `0.0.0` package with source-neutral document/codecs/IDs/recovery/XHTML/
-EPUB code. It has no runtime `StructBundle`, bundle decoder or verifier,
-exact-pinned external consumer, registry release, or publish workflow.
+**Current**: this is a private `0.0.0` package with source-neutral document/
+codecs/IDs/recovery/XHTML/EPUB code. It has no runtime `StructBundle`, bundle
+decoder or verifier, exact-pinned external consumer, registry release, or
+publish workflow.
 
 **Documented target** is the ADR-0001 contract in [CONTRACT.md](./CONTRACT.md):
 a source-neutral package with a fail-closed verified `StructBundle` boundary.
@@ -29,6 +29,25 @@ a package or application release. **Released** requires an exact registry
 version, immutable artifact digest, install proof, and release record. A
 configuration change, branch, documentation change, or passing local test is
 not release evidence.
+
+## Source-neutral EPUB evaluation
+
+The local evaluation under
+[`evaluation/layout-epub-v2`](./evaluation/layout-epub-v2/README.md) uses only
+declared synthetic fixtures. It checks the fourteen documented layout
+categories, strict and bounded failures, structural accessibility, the
+XHTML/ZIP/package graph, exact text goldens, and same-process/fresh-process
+reproducibility. It tracks no EPUB binary and is not private corpus evidence.
+
+`npm test` runs the evaluation privacy boundary and self-tests, the complete
+layout suite, and the remaining package tests. `npm run test:layout` is the
+focused layout lane; `npm run test:layout-goldens` is read-only verification of
+the tracked synthetic goldens. Golden updates remain an explicit, clean-tree,
+single-case operation documented in the evaluation README.
+
+These local structural checks do not claim a private development or holdout
+pass, EPUBCheck/Ace or reader/browser approval, package release, publication,
+or deployment.
 
 ## Current usage
 

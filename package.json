@@ -54,7 +54,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts src/document/index.ts src/identity.ts src/ordering.ts src/receipt.ts src/recovery.ts src/renderers/xhtml.ts src/renderers/epub.ts --format esm --dts --clean",
-    "test": "npm run test:layout-boundary && vitest run --exclude tests/layout-eval/layout-eval-boundary.test.ts",
+    "test": "npm run test:layout-boundary && npm run test:layout && vitest run --exclude \"tests/layout-eval/**\"",
     "test:layout": "vitest run tests/layout-eval --exclude tests/layout-eval/layout-eval-boundary.test.ts",
     "test:layout-boundary": "node scripts/check-layout-eval-boundary.mjs && vitest run tests/layout-eval/layout-eval-boundary.test.ts",
     "test:layout-goldens": "node scripts/verify-layout-goldens.mjs",
