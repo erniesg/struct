@@ -72,6 +72,89 @@ const invalidXhtmlSemanticDocuments: InvalidSemanticDocumentCase[] = [
 ]
 
 describe('STRUCT publication rendering', () => {
+  it.each([
+    {
+      errorLabel: 'STRUCT_PUBLICATION_TITLE_EMPTY',
+      label: 'empty title',
+      mutate(value: any) {
+        value.metadata.title = ''
+      },
+    },
+    {
+      errorLabel: 'STRUCT_PUBLICATION_TITLE_EMPTY',
+      label: 'Unicode-whitespace title',
+      mutate(value: any) {
+        value.metadata.title = '\u00a0\u2003\u2028\u2029\u3000'
+      },
+    },
+    {
+      errorLabel: 'STRUCT_PUBLICATION_HEADING_LABEL_EMPTY',
+      label: 'empty heading label',
+      mutate(value: any) {
+        value.blocks[0].kind = 'heading'
+        value.blocks[0].text = ''
+        value.blocks[0].inline = []
+        value.receipt.textCharacterCount = 0
+        value.receipt.conservation.sourceTextCharacterCount = 0
+        value.receipt.conservation.structTextCharacterCount = 0
+      },
+    },
+    {
+      errorLabel: 'STRUCT_PUBLICATION_HEADING_LABEL_EMPTY',
+      label: 'Unicode-whitespace heading label',
+      mutate(value: any) {
+        value.blocks[0].kind = 'heading'
+        value.blocks[0].text = '\u00a0\u2003\u2028\u2029\u3000'
+      },
+    },
+  ])(
+    'rejects a receipt-sealed $label before direct XHTML and EPUB output',
+    async ({ errorLabel, mutate }) => {
+      const value = validDocument() as any
+      mutate(value)
+      seal(value)
+
+      try {
+        renderPublicationXhtml(value)
+        throw new Error('expected publication label preflight rejection')
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toBe(errorLabel)
+      }
+      await expect(buildStructEpub(value)).rejects.toMatchObject({
+        message: errorLabel,
+      })
+    },
+  )
+
+  it('preserves nonempty multilingual RTL publication labels at both entry paths', async () => {
+    const value = validDocument() as any
+    const title = 'العربية 日本語'
+    const heading = 'مَرْحَبًا'
+    value.metadata.title = title
+    value.metadata.language = 'ar'
+    value.metadata.baseDirection = 'rtl'
+    value.blocks[0].kind = 'heading'
+    value.blocks[0].text = heading
+    value.blocks[0].inline[0].end = heading.length
+    value.receipt.textCharacterCount = heading.length
+    value.receipt.conservation.sourceTextCharacterCount = heading.length
+    value.receipt.conservation.structTextCharacterCount = heading.length
+    seal(value)
+
+    const xhtml = renderPublicationXhtml(value)
+    expect(xhtml).toContain(`<title>${title}</title>`)
+    expect(xhtml).toContain(heading)
+
+    const epub = await buildStructEpub(value)
+    const reopened = unzipSync(epub.bytes)
+    expect(strFromU8(reopened['EPUB/content.xhtml']!)).toContain(title)
+    expect(strFromU8(reopened['EPUB/nav.xhtml']!)).toContain(
+      `aria-label="${title}"`,
+    )
+    expect(strFromU8(reopened['EPUB/nav.xhtml']!)).toContain(heading)
+  })
+
   it('rejects an invalid semantic receipt through the direct XHTML boundary', () => {
     const value = validDocument() as any
     value.receipt.generatedSha256 = '0'.repeat(64)
