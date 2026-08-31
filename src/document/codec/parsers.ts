@@ -16,8 +16,10 @@ import {
   type StructRecovery,
   type StructRelationship,
   type StructRelationshipCandidate,
+  type StructSchemaVersion,
   type StructSource,
   type StructTable,
+  type StructTableAccessibleFallback,
   type StructTableCell,
 } from '../types'
 import {
@@ -106,6 +108,10 @@ const SEMANTIC_ROLES = [
 const BASE_DIRECTIONS = ['ltr', 'rtl', 'unknown'] as const
 const HEADER_SCOPES = ['column', 'row', 'colgroup', 'rowgroup'] as const
 const TABLE_SEMANTICS = ['verified', 'source-preserved', 'unresolved'] as const
+const TABLE_ACCESSIBLE_FALLBACK_KINDS = ['block-text'] as const
+const TABLE_ACCESSIBLE_FALLBACK_COMPLETENESS = ['complete'] as const
+const TABLE_ACCESSIBLE_NAME_SOURCES = ['block-label', 'block-text'] as const
+const PREVIOUS_STRUCT_SCHEMA_VERSION = '0.2.0' as const
 const ASSET_KINDS = [
   'figure',
   'diagram',
@@ -608,8 +614,17 @@ function parseTableCell(value: unknown, path: string): StructTableCell {
   }
 }
 
-export function validateStructTableBounds(value: unknown, path: string) {
-  const parsed = object(value, path, ['rows', 'columns', 'cells', 'semantic'])
+export function validateStructTableBounds(
+  value: unknown,
+  path: string,
+  allowAccessibleFallback = false,
+) {
+  const parsed = object(
+    value,
+    path,
+    ['rows', 'columns', 'cells', 'semantic'],
+    allowAccessibleFallback ? ['accessibleFallback'] : [],
+  )
   const rows = nonNegativeInteger(parsed.rows, `${path}.rows`)
   const columns = nonNegativeInteger(parsed.columns, `${path}.columns`)
   if (
@@ -639,7 +654,14 @@ export function validateStructTableBounds(value: unknown, path: string) {
       )
     throw error
   }
-  return { rows, columns, cells, semantic: parsed.semantic }
+  return {
+    rows,
+    columns,
+    cells,
+    semantic: parsed.semantic,
+    accessibleFallback: parsed.accessibleFallback,
+    hasAccessibleFallback: has(parsed, 'accessibleFallback'),
+  }
 }
 
 /** Enforce renderer allocation bounds on direct STRUCT documents. */
@@ -648,16 +670,58 @@ export function validateStructDocumentTableBounds(value: unknown) {
   if (!has(document, 'blocks'))
     fail('REQUIRED', '$.blocks', 'field is required')
   const blocks = array(document.blocks, '$.blocks', MAX_STRUCT_DOCUMENT_ITEMS)
+  const allowAccessibleFallback =
+    document.schemaVersion === STRUCT_SCHEMA_VERSION
   for (const [index, block] of blocks.entries()) {
     const path = `$.blocks[${index}]`
     const parsed = copyRecord(dataEntries(block, path))
     if (parsed.kind === 'table' && has(parsed, 'table'))
-      validateStructTableBounds(parsed.table, `${path}.table`)
+      validateStructTableBounds(
+        parsed.table,
+        `${path}.table`,
+        allowAccessibleFallback,
+      )
   }
 }
 
-function parseTable(value: unknown, path: string): StructTable {
-  const parsed = validateStructTableBounds(value, path)
+function parseTableAccessibleFallback(
+  value: unknown,
+  path: string,
+): StructTableAccessibleFallback {
+  const parsed = object(value, path, [
+    'kind',
+    'completeness',
+    'accessibleNameSource',
+  ])
+  return {
+    kind: enumValue(
+      parsed.kind,
+      `${path}.kind`,
+      TABLE_ACCESSIBLE_FALLBACK_KINDS,
+    ),
+    completeness: enumValue(
+      parsed.completeness,
+      `${path}.completeness`,
+      TABLE_ACCESSIBLE_FALLBACK_COMPLETENESS,
+    ),
+    accessibleNameSource: enumValue(
+      parsed.accessibleNameSource,
+      `${path}.accessibleNameSource`,
+      TABLE_ACCESSIBLE_NAME_SOURCES,
+    ),
+  }
+}
+
+function parseTable(
+  value: unknown,
+  path: string,
+  schemaVersion: StructSchemaVersion,
+): StructTable {
+  const parsed = validateStructTableBounds(
+    value,
+    path,
+    schemaVersion === STRUCT_SCHEMA_VERSION,
+  )
   const { rows, columns } = parsed
   const rawCells = parsed.cells
   const cells = rawCells.map((cell, index) =>
@@ -706,10 +770,22 @@ function parseTable(value: unknown, path: string): StructTable {
     columns,
     cells,
     semantic: enumValue(parsed.semantic, `${path}.semantic`, TABLE_SEMANTICS),
+    ...(parsed.hasAccessibleFallback
+      ? {
+          accessibleFallback: parseTableAccessibleFallback(
+            parsed.accessibleFallback,
+            `${path}.accessibleFallback`,
+          ),
+        }
+      : {}),
   }
 }
 
-function parseBlock(value: unknown, path: string): StructBlock {
+function parseBlock(
+  value: unknown,
+  path: string,
+  schemaVersion: StructSchemaVersion,
+): StructBlock {
   const parsed = object(
     value,
     path,
@@ -768,7 +844,7 @@ function parseBlock(value: unknown, path: string): StructBlock {
         }
       : {}),
     ...(has(parsed, 'table')
-      ? { table: parseTable(parsed.table, `${path}.table`) }
+      ? { table: parseTable(parsed.table, `${path}.table`, schemaVersion) }
       : {}),
     ...(has(parsed, 'fallbackAssetIds')
       ? {
@@ -1215,7 +1291,11 @@ function parseSource(value: unknown, path: string): StructSource {
 }
 
 function parseSchemaVersion(value: unknown, path: string) {
-  if (value !== LEGACY_STRUCT_SCHEMA_VERSION && value !== STRUCT_SCHEMA_VERSION)
+  if (
+    value !== LEGACY_STRUCT_SCHEMA_VERSION &&
+    value !== PREVIOUS_STRUCT_SCHEMA_VERSION &&
+    value !== STRUCT_SCHEMA_VERSION
+  )
     fail(
       'SCHEMA_VERSION',
       path,
@@ -1258,7 +1338,9 @@ function parseDocument(value: unknown): StructDocument {
     parsed.blocks,
     '$.blocks',
     MAX_STRUCT_DOCUMENT_ITEMS,
-  ).map((block, index) => parseBlock(block, `$.blocks[${index}]`))
+  ).map((block, index) =>
+    parseBlock(block, `$.blocks[${index}]`, schemaVersion),
+  )
   const assets = parseStructAssets(parsed.assets)
   const relationships = array(
     parsed.relationships,

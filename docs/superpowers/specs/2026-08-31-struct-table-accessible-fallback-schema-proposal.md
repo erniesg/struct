@@ -1,9 +1,11 @@
 # Struct table accessible-fallback schema proposal
 
-- Status: review required; schema stop; no implementation
+- Status: schema/codec implementation complete locally; fresh review required;
+  renderer stop remains
 - Date: 2026-08-31
 - Trigger: Stage 2.1 source-neutral EPUB baseline characterization
-- Compatibility target: a new schema version after `0.2.0`
+- Compatibility target: schema `0.3.0`, retaining strict `0.1.0` and `0.2.0`
+  decoding
 
 ## Problem
 
@@ -22,8 +24,7 @@ state.
 
 ## Proposed neutral field
 
-If approved, add this closed optional field to `StructTable` in a new document
-schema version:
+Add this closed optional field to `StructTable` in document schema `0.3.0`:
 
 ```ts
 type StructTableAccessibleFallback = {
@@ -60,17 +61,17 @@ fallback.
 
 ## Versioning and migration
 
-This is a wire-semantic addition, so it must not be added silently to schema
+This is a wire-semantic addition, so it is not added silently to schema
 `0.2.0`. Existing `0.1.0` and `0.2.0` decoding remains unchanged. No automatic
 migration may claim that an older non-verified table has a complete fallback;
-an approved producer must emit the new version and declaration explicitly.
+an approved producer must emit `0.3.0` and the declaration explicitly.
 
-Until this proposal is accepted, non-verified table publication is a schema
-stop. Renderer work may add accessible naming for already verified tables from
+Non-verified table rendering remains a renderer stop after this schema change.
+Renderer work may add accessible naming for already verified tables from
 existing nonempty neutral labels, but it must not implement the fallback rule
-described here.
+without its separately reviewed renderer change and tests.
 
-## Intended implementation files after approval
+## Implementation files
 
 - `src/document/types.ts`
 - `src/document/codec/parsers.ts`

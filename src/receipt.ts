@@ -18,6 +18,7 @@ import {
 export type { StructConsultationReceipt } from './document/types'
 
 const HASH = /^[a-f0-9]{64}$/u
+const PREVIOUS_STRUCT_SCHEMA_VERSION = '0.2.0' as const
 const STRUCT_CONSULTATION_RECEIPT_SCHEMA_VERSION = '1.0.0'
 const MAX_DEPTH = 128
 const MAX_NODES = 100_000
@@ -269,13 +270,16 @@ export function structReceiptDigest(document: StructDocument) {
 function verifyStructReceiptUnsafe(document: StructDocument) {
   const receipt = document.receipt
   const legacy = document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
+  const boundSchema =
+    document.schemaVersion === PREVIOUS_STRUCT_SCHEMA_VERSION ||
+    document.schemaVersion === STRUCT_SCHEMA_VERSION
   const bindingMatches = legacy
     ? document.documentId === undefined &&
       receipt.documentId === undefined &&
       receipt.modelConsultations === undefined &&
       receipt.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
-    : document.schemaVersion === STRUCT_SCHEMA_VERSION &&
-      receipt.schemaVersion === STRUCT_SCHEMA_VERSION &&
+    : boundSchema &&
+      receipt.schemaVersion === document.schemaVersion &&
       typeof document.documentId === 'string' &&
       document.documentId.length > 0 &&
       receipt.documentId === document.documentId

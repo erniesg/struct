@@ -4,6 +4,7 @@ import {
   encodeStructDocument,
   migrateStructDocument,
   type StructDocument,
+  type StructTableAccessibleFallback,
 } from '@erniesg/struct'
 import { STRUCT_SCHEMA_VERSION } from '@erniesg/struct/document'
 import { structDigest, structId } from '@erniesg/struct/identity'
@@ -26,7 +27,13 @@ decodeCompatibleStructDocument(input)
 decodeStructDocument(input)
 encodeStructDocument(document)
 migrateStructDocument(input)
-STRUCT_SCHEMA_VERSION satisfies '0.2.0'
+STRUCT_SCHEMA_VERSION satisfies '0.3.0'
+const tableFallback = {
+  kind: 'block-text',
+  completeness: 'complete',
+  accessibleNameSource: 'block-label',
+} satisfies StructTableAccessibleFallback
+void tableFallback
 structDigest(document)
 structId('document', 'fixture')
 void legacyStructDigest

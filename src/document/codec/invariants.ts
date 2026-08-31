@@ -1,5 +1,6 @@
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
+  STRUCT_SCHEMA_VERSION,
   type StructDocument,
   type StructInline,
   type StructReceipt,
@@ -18,6 +19,48 @@ function validateDigest(document: StructDocument) {
       '$.receipt.generatedSha256',
       `generatedSha256 does not match the canonical ${document.schemaVersion} digest`,
     )
+}
+
+function validateTableAccessibleFallbacks(document: StructDocument) {
+  for (const [blockIndex, block] of document.blocks.entries()) {
+    const fallback = block.table?.accessibleFallback
+    if (!fallback) continue
+    const fallbackPath = `$.blocks[${blockIndex}].table.accessibleFallback`
+    if (document.schemaVersion !== STRUCT_SCHEMA_VERSION)
+      fail(
+        'SCHEMA_VERSION',
+        fallbackPath,
+        `accessible table fallbacks require schema ${STRUCT_SCHEMA_VERSION}`,
+      )
+    if (block.kind !== 'table' || block.table?.semantic !== 'source-preserved')
+      fail(
+        'TABLE_ACCESSIBLE_FALLBACK',
+        fallbackPath,
+        'accessible table fallbacks require source-preserved table semantics',
+      )
+    if (document.recovery.status !== 'ready')
+      fail(
+        'TABLE_ACCESSIBLE_FALLBACK',
+        '$.recovery.status',
+        'accessible table fallbacks require ready recovery',
+      )
+    if (block.text.length === 0)
+      fail(
+        'TABLE_ACCESSIBLE_FALLBACK',
+        `$.blocks[${blockIndex}].text`,
+        'accessible table fallbacks require nonempty block text',
+      )
+    const accessibleName =
+      fallback.accessibleNameSource === 'block-label'
+        ? block.label
+        : block.text
+    if (!accessibleName)
+      fail(
+        'TABLE_ACCESSIBLE_FALLBACK',
+        `$.blocks[${blockIndex}].${fallback.accessibleNameSource === 'block-label' ? 'label' : 'text'}`,
+        'the selected accessible-name source must be nonempty',
+      )
+  }
 }
 
 function addCategoryIds(
@@ -613,6 +656,7 @@ export function validateStructDocument(
       'current documents require matching document bindings',
     )
   }
+  validateTableAccessibleFallbacks(document)
   validateConservation(document)
   validateReferences(document)
   validatePages(document)

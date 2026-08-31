@@ -33,6 +33,16 @@ The old package paths `./core`, `./schema`, and `./ids` are removed in favor of
 the explicit paths in [API.md](./API.md). `./bundle` remains unavailable until
 S-03.
 
+## Document schema 0.3.0
+
+Schema `0.3.0` adds the optional closed
+`StructTable.accessibleFallback` declaration. It does not infer fallback
+completeness from older block text, labels, assets, or recovery state. Existing
+`0.1.0` and `0.2.0` records remain strict decode targets at their declared
+versions; decode compatibility never upgrades or rewrites them. A producer
+that has established the complete source-neutral fallback invariants must emit
+and receipt-bind `0.3.0` explicitly.
+
 ## Staged migration contract
 
 The canonical owner of the portable document boundary is Struct. Ernie.SG owns
@@ -48,8 +58,8 @@ Migration follows **expand, switch, contract**:
    surface, Bundle implementation and adversarial tests, declarations, packed
    tarball, and a clean consumer with no repository source-path access.
 3. Expand Ernie.SG readers first using an exact package version and exact packed
-   artifact pin. Retain legacy `0.1.0` and current `0.2.0` reads and compare
-   frozen application behavior with package behavior.
+   artifact pin. Retain legacy `0.1.0`, prior `0.2.0`, and current `0.3.0`
+   reads and compare frozen application behavior with package behavior.
 4. Move consumer families without changing the writer: types/codecs, then
    IDs/ordering/recovery, then XHTML/EPUB. Keep source-specific adapters in
    Ernie.SG and run parity after each seam.
@@ -62,9 +72,9 @@ Migration follows **expand, switch, contract**:
 
 Do not combine writer switching, duplicate deletion, and package rollback in
 one change. The compatibility horizon is through the last production consumer
-of legacy `0.1.0` and current `0.2.0` records, plus the API alias window in
-[API.md](./API.md). A package downgrade is refused whenever it cannot read
-already-written durable records.
+of legacy `0.1.0`, prior `0.2.0`, and current `0.3.0` records, plus the API alias
+window in [API.md](./API.md). A package downgrade is refused whenever it cannot
+read already-written durable records.
 
 Rollback before activation is to retain the current application writer and
 expanded readers; no source deletion occurs. After an authorized writer switch,

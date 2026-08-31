@@ -587,7 +587,7 @@ describe('STRUCT runtime codec', () => {
     expect(migrated.receipt).not.toHaveProperty('documentId')
   })
 
-  it('canonically decodes the declared current 0.2.0 binding without migration', () => {
+  it('canonically decodes the declared prior 0.2.0 binding without migration', () => {
     const value = validDocument() as any
     value.schemaVersion = '0.2.0'
     value.documentId = 'fixture-document'
@@ -703,7 +703,7 @@ describe('STRUCT runtime codec', () => {
     )
   })
 
-  it.each(['0.3.0', '9.9.9', '', null, 1])(
+  it.each(['0.4.0', '9.9.9', '', null, 1])(
     'fails closed on unknown schema version %s',
     (schemaVersion) => {
       const value = validDocument()
@@ -724,22 +724,24 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(bigint)).toThrow(StructCodecError)
   })
 
-  it('verifies the canonical generated digest for both supported versions', () => {
+  it('verifies canonical generated digests across supported schema generations', () => {
     expect(() => decodeStructDocument(validDocument())).not.toThrow()
 
     const legacy = validDocument()
     legacy.receipt.generatedSha256 = hash
     expect(() => decodeStructDocument(legacy)).toThrow(/digest|sha256/i)
 
-    const current = validDocument() as any
-    current.schemaVersion = '0.2.0'
-    current.documentId = 'fixture-document'
-    current.receipt.schemaVersion = '0.2.0'
-    current.receipt.documentId = 'fixture-document'
-    seal(current)
-    expect(() => decodeStructDocument(current)).not.toThrow()
-    current.receipt.generatedSha256 = hash
-    expect(() => decodeStructDocument(current)).toThrow(/digest|sha256/i)
+    for (const schemaVersion of ['0.2.0', '0.3.0']) {
+      const bound = validDocument() as any
+      bound.schemaVersion = schemaVersion
+      bound.documentId = 'fixture-document'
+      bound.receipt.schemaVersion = schemaVersion
+      bound.receipt.documentId = 'fixture-document'
+      seal(bound)
+      expect(() => decodeStructDocument(bound)).not.toThrow()
+      bound.receipt.generatedSha256 = hash
+      expect(() => decodeStructDocument(bound)).toThrow(/digest|sha256/i)
+    }
   })
 
   it.each([

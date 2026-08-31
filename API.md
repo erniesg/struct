@@ -21,8 +21,10 @@ modules are not consumer APIs.
 ## Decode compatibility and deprecated alias
 
 `decodeCompatibleStructDocument(input)` is the truthful public compatibility
-operation. It strictly decodes supported `0.1.0` and `0.2.0` documents at their
-declared versions; it does not transform or migrate either version.
+operation. It strictly decodes supported `0.1.0`, `0.2.0`, and `0.3.0`
+documents at their declared versions; it does not transform or migrate any
+version. Only `0.3.0` accepts the optional closed
+`StructTable.accessibleFallback` declaration.
 
 `migrateStructDocument(input)` remains a deprecated prerelease alias with the
 same decode-compatibility behavior for unindexed prerelease consumers. Use

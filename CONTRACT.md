@@ -70,9 +70,9 @@ in a bundle. A document asset's `href` remains a digest-bound logical
 EPUB-relative path, never a URL, filesystem locator, or storage key. External
 payloads carry only the non-secret content address
 `resourceId: "sha256:" + asset.sha256`; resource IDs never contain a URL, path,
-storage key, credential, or caller-selected locator. For schema `0.2.0`,
-`byteLength` is envelope-only and must be checked against bytes, not invented as
-document metadata.
+storage key, credential, or caller-selected locator. For schemas `0.2.0` and
+`0.3.0`, `byteLength` is envelope-only and must be checked against bytes, not
+invented as document metadata.
 
 Embedded asset payloads use strict canonical base64. Noncanonical alphabet,
 padding, whitespace, decoded-length, or digest mismatch is rejected.

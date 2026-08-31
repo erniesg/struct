@@ -8,9 +8,11 @@
  */
 
 export const LEGACY_STRUCT_SCHEMA_VERSION = '0.1.0' as const
-export const STRUCT_SCHEMA_VERSION = '0.2.0' as const
+export const STRUCT_SCHEMA_VERSION = '0.3.0' as const
 export type StructSchemaVersion =
-  typeof LEGACY_STRUCT_SCHEMA_VERSION | typeof STRUCT_SCHEMA_VERSION
+  | typeof LEGACY_STRUCT_SCHEMA_VERSION
+  | '0.2.0'
+  | typeof STRUCT_SCHEMA_VERSION
 
 export type StructConsultationReceipt = {
   schemaVersion: string
@@ -141,11 +143,18 @@ export type StructTableCell = {
   evidence: StructEvidence
 }
 
+export type StructTableAccessibleFallback = {
+  kind: 'block-text'
+  completeness: 'complete'
+  accessibleNameSource: 'block-label' | 'block-text'
+}
+
 export type StructTable = {
   rows: number
   columns: number
   cells: StructTableCell[]
   semantic: 'verified' | 'source-preserved' | 'unresolved'
+  accessibleFallback?: StructTableAccessibleFallback
 }
 
 export type StructBlock = {

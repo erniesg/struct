@@ -576,8 +576,8 @@ describe('canonical synthetic layout fixture corpus', () => {
   it('builds every pre-mutation value as a valid, receipt-bound current-schema document', () => {
     for (const fixture of listSyntheticFixtureCases()) {
       const document = buildSealedSyntheticFixture(fixture.caseId)
-      expect(document.schemaVersion).toBe('0.2.0')
-      expect(document.receipt.schemaVersion).toBe('0.2.0')
+      expect(document.schemaVersion).toBe('0.3.0')
+      expect(document.receipt.schemaVersion).toBe('0.3.0')
       expect(document.documentId).toBe(document.receipt.documentId)
       expect(document.source).toMatchObject({
         format: 'unknown',
