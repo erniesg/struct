@@ -1,9 +1,10 @@
 # Source-neutral EPUB layout evaluation protocol v2
 
-This directory defines the Stage 0.1 public protocol boundary. It does not
-contain a corpus, fixtures, rendered publications, per-document results, or a
-private aggregate report, and it does not establish that the full evaluation
-has passed.
+This directory defines the public protocol boundary and the tracked neutral
+golden evidence for its declared synthetic fixtures. It does not contain a
+source corpus, source-derived fixture, binary publication, per-document private
+result, or private aggregate report, and it does not establish that the full
+private evaluation has passed.
 
 `protocol.json` freezes the category and outcome enums, independent version
 axes, formulas, initial gates, reporting bounds, two-run determinism rule, and
@@ -109,3 +110,25 @@ no semantic counters. After any holdout result is observed, the owner-private
 protocol/cohort record is closed. Result-informed changes require a new
 development epoch and a newly frozen, untouched holdout version; the observed
 holdout is not queried again.
+
+## Synthetic goldens and reproducibility
+
+Each declared `render` case owns exactly six text files under `goldens/`:
+content XHTML, navigation XHTML, OPF, container XML, CSS, and a source-neutral
+archive manifest. The archive manifest records the full synthetic EPUB digest
+and bounded metadata/digests for every reopened entry; no `.epub` file is
+tracked. All fixture prose, IDs, metadata, geometry, and runtime-created asset
+bytes are independently synthetic and linked to the closed provenance ledger.
+
+`npm run test:layout-goldens` compares the tracked files with three builds in
+one process and one build in a fresh process, including exact EPUB bytes,
+entry text, order, compression metadata, and digests. It also runs the
+independent XML, ZIP, package-graph, navigation, and structural-accessibility
+assertions. Ordinary verification is read-only.
+
+Golden updates are deliberately separate from verification. From an exact
+clean worktree, run `npm run test:layout-goldens -- --update --case <case-id>`
+for one declared synthetic render case. The command accepts no root or output
+path, runs the privacy boundary before and after writing, rejects undeclared or
+non-synthetic cases, and never writes a binary EPUB. Review exact semantic and
+textual/archive diffs before committing; bulk implicit updates are unsupported.

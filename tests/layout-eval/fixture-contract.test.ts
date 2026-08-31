@@ -511,7 +511,13 @@ describe('canonical synthetic layout fixture corpus', () => {
           : [],
       )
     }
-    expect(goldenPaths).toEqual([])
+    expect(goldenPaths).toEqual(
+      fixtures
+        .flatMap(({ caseId, goldenEntries }) =>
+          goldenEntries.map((entry) => `${caseId}/${entry}`),
+        )
+        .sort(),
+    )
   })
 
   it('requires positive and negative or safe-ambiguity coverage for all fourteen frozen categories', () => {

@@ -1,0 +1,2 @@
+# Byte-exact synthetic goldens may preserve renderer indentation-only lines.
+evaluation/layout-epub-v2/goldens/** -whitespace

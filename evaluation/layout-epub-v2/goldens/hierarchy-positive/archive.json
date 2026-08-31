@@ -1,0 +1,61 @@
+{
+  "epubSha256": "bab8ddaf4cb3517bd9ff139c7c84c64182e3fb532955a8910e6260d10091a216",
+  "entries": [
+    {
+      "name": "mimetype",
+      "method": 0,
+      "uncompressedLength": 20,
+      "crc32": "2cab616f",
+      "sha256": "e468e350d1143eb648f60c7b0bd6031101ec0544a361ca74ecef256ac901f48b",
+      "order": 0
+    },
+    {
+      "name": "META-INF/container.xml",
+      "method": 8,
+      "uncompressedLength": 238,
+      "crc32": "f099ef6f",
+      "sha256": "eb284afd303d7b3de499746d27b3c04e6c8b8c5a4fd788bdb240b985cf38e031",
+      "order": 1
+    },
+    {
+      "name": "EPUB/package.opf",
+      "method": 8,
+      "uncompressedLength": 1332,
+      "crc32": "0cdd64c7",
+      "sha256": "42858234a25e96dd2c2223ec45642ff6f109ce101cb418fcf4c18b753a1425e3",
+      "order": 2
+    },
+    {
+      "name": "EPUB/nav.xhtml",
+      "method": 8,
+      "uncompressedLength": 646,
+      "crc32": "9d2615df",
+      "sha256": "6b61ab5b0f14b39ad4dfb0feb28b5cb8fbfc4b1614641bc57b1fa6ad990ccd04",
+      "order": 3
+    },
+    {
+      "name": "EPUB/content.xhtml",
+      "method": 8,
+      "uncompressedLength": 910,
+      "crc32": "ab754c28",
+      "sha256": "9ed01736182692a4147ad57d814771a8c8b0dc7c05c2a80b2ed463619db8e25a",
+      "order": 4
+    },
+    {
+      "name": "EPUB/styles.css",
+      "method": 8,
+      "uncompressedLength": 455,
+      "crc32": "8b6c67fc",
+      "sha256": "2f60286229245b6a287b77049c12a83b0f56340b495420f666ad5f52beadd627",
+      "order": 5
+    },
+    {
+      "name": "EPUB/struct.json",
+      "method": 8,
+      "uncompressedLength": 1073,
+      "crc32": "0a2850f1",
+      "sha256": "2dc7b115634c498efd3056a2a9a8f994674a62313523c594ae72ecdea8056172",
+      "order": 6
+    }
+  ]
+}
