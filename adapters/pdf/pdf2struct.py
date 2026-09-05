@@ -342,6 +342,7 @@ class AdapterReport:
     table_notes_split: int = 0
     caption_cross_references_kept: int = 0
     figure_foot_lines_absorbed: int = 0
+    captions_adopted_across_pages: int = 0
     tables_from_open_rule_box: int = 0
     description_items: int = 0
     tables_as_entry_lists: int = 0
@@ -547,7 +548,7 @@ class StructAdapter:
                 self.report.table_cell_links += 1
         return mapped
 
-    def _runs_for(self, item: TextItem, text: str) -> list[dict]:
+    def _runs_for(self, item: TextItem, text: str, styles: bool = True) -> list[dict]:
         runs: list[dict] = []
         spans: list[tuple[int, int]] = []
         hyperlink = getattr(item, "hyperlink", None)
@@ -563,7 +564,8 @@ class StructAdapter:
                 continue
             spans.append(span)
             runs.append({"start": span[0], "end": span[1], "href": href})
-        runs.extend(self._style_runs(item, text))
+        if styles:
+            runs.extend(self._style_runs(item, text))
         return runs
 
     def _style_runs(self, item, text: str) -> list[dict]:
@@ -1226,6 +1228,9 @@ class StructAdapter:
         if NUMBERED_HEADING_RE.match(text) or APPENDIX_HEADING_RE.match(text):
             self._last_numbered_level = level
         block = self._new_block("heading", item, text, attributes={"level": min(level + 1, 6)})
+        # a heading keeps the hyperlinks under it (`S1 Data.` in a journal's
+        # supporting-information list); its face is the heading style, not a run
+        block["inline"] = self._runs_for(item, text, styles=False)
         self.blocks.append(block)
         self.report.headings += 1
 
@@ -2865,7 +2870,7 @@ class StructAdapter:
                 continue
             index += 1
 
-    def _union_figure(self, keeper: dict, group: list[dict]) -> bool:
+    def _union_figure(self, keeper: dict, group: list[dict], max_height: float = 0.8) -> bool:
         """Replace the keeper's crop with the union of the group's boxes; the
         other members and their assets go away. False when the boxes are not
         aligned neighbours or the union is not compact."""
@@ -2880,7 +2885,7 @@ class StructAdapter:
         x1 = max(b["x"] + b["width"] for b in boxes)
         y1 = max(b["y"] + b["height"] for b in boxes)
         panel_area = sum(b["width"] * b["height"] for b in boxes)
-        if not aligned or (x1 - x0) * (y1 - y0) > max(1.8 * panel_area, panel_area + 0.02) or y1 - y0 > 0.8:
+        if not aligned or (x1 - x0) * (y1 - y0) > max(1.8 * panel_area, panel_area + 0.02) or y1 - y0 > max_height:
             return False
         page = keeper["page"]
         union = {"page": page, "x": round(x0, 5), "y": round(y0, 5), "width": round(x1 - x0, 5), "height": round(y1 - y0, 5), "rotation": 0}
@@ -2983,6 +2988,73 @@ class StructAdapter:
                 self.report.caption_sides_fixed += 1
                 self._diagnostic("info", "visuals", "Caption reassigned to its figure", f"{block['label']}: the caption on the paper's caption side replaces one attached from the other side", None, block["page"])
                 break
+
+    def _adopt_captions_across_page_break(self) -> None:
+        """A figure filling the foot of a page in a captions-below paper, whose
+        `Figure N` caption the page break pushed to the head of the next page:
+        an orphan caption standing first on its page, its label held by no
+        figure, adopts the caption-less pictures that close the previous page
+        with nothing under them, merged as one figure when they are stacked
+        panels (a full-page figure may be taller than the usual union cap)."""
+        below = sum(self._figure_caption_below) >= len(self._figure_caption_below) / 2 if self._figure_caption_below else True
+        if not below:
+            return  # the paper sets captions above their figures; a page-head caption opens the next figure
+        owned = {t for r in self.relationships for t in r["to"]}
+        held = {b.get("label") for b in self.blocks if b["kind"] == "figure" and b["text"]}
+
+        def box_on(block: dict, page: int) -> dict | None:
+            return next((b for b in block["evidence"]["boxes"] if b.get("page", page) == page), None)
+
+        for orphan in list(self.blocks):
+            if orphan not in self.blocks or orphan["kind"] not in ("caption", "paragraph") or orphan["page"] is None or orphan["page"] < 2 or orphan["id"] in owned:
+                continue
+            label = FIGURE_CAPTION_RE.match(orphan["text"])
+            if not label or f"Figure {label.group(2)}" in held or (orphan["kind"] != "caption" and len(orphan["text"]) >= 1200):
+                continue
+            page = orphan["page"]
+            obox = box_on(orphan, page)
+            if obox is None or obox["y"] > 0.15:
+                continue
+            above = [b for b in self.blocks if b is not orphan and b["page"] == page and b["kind"] != "furniture" and (bb := box_on(b, page)) is not None and bb["y"] + bb["height"] <= obox["y"] + 0.005]
+            if above:
+                continue  # something stands over the caption: it is not the first thing on its page
+            previous = [b for b in self.blocks if b["page"] == page - 1 and b["kind"] != "furniture" and box_on(b, page - 1) is not None]
+            pictures = [b for b in previous if b["kind"] == "figure" and not b["text"]]
+            if not pictures or any(b["kind"] in ("caption", "paragraph") and FIGURE_CAPTION_RE.match(b["text"]) for b in previous):
+                continue  # a `Figure N` caption on the pictures' own page is theirs, not this one
+            foot = max(box_on(b, page - 1)["y"] + box_on(b, page - 1)["height"] for b in pictures)
+            if foot < 0.8 or any(box_on(b, page - 1)["y"] >= foot - 0.005 for b in previous if b not in pictures):
+                continue  # the pictures do not close their page, or text follows them
+            pictures.sort(key=lambda b: box_on(b, page - 1)["y"] + box_on(b, page - 1)["height"], reverse=True)
+            run = [pictures[0]]
+            for candidate in pictures[1:]:
+                last, cbox = box_on(run[-1], page - 1), box_on(candidate, page - 1)
+                stacked = last["y"] - (cbox["y"] + cbox["height"]) < 0.1
+                aligned = min(last["x"] + last["width"], cbox["x"] + cbox["width"]) - max(last["x"], cbox["x"]) >= 0.3 * min(last["width"], cbox["width"])
+                if not (stacked and aligned):
+                    break
+                run.append(candidate)
+            run.sort(key=self.blocks.index)
+            keeper = run[0]
+            kbox = box_on(keeper, page - 1)
+            if min(kbox["x"] + kbox["width"], obox["x"] + obox["width"]) - max(kbox["x"], obox["x"]) < 0.4 * min(kbox["width"], obox["width"]):
+                continue  # the caption is not in the pictures' column
+            if len(run) >= 2:
+                self._union_figure(keeper, run, max_height=0.95)
+            keeper["text"] = clean_caption(orphan["text"])
+            keeper["inline"] = orphan.get("inline", []) if keeper["text"] == orphan["text"] else []
+            keeper["label"] = f"Figure {label.group(2)}"
+            held.add(keeper["label"])
+            self.blocks.remove(orphan)
+            owned.add(orphan["id"])
+            self.report.figures_with_caption += 1
+            self.report.captions_adopted += 1
+            self.report.captions_adopted_across_pages += 1
+            if orphan["kind"] == "caption":
+                self.report.orphan_captions -= 1
+            else:
+                self.report.paragraphs -= 1
+            self._diagnostic("info", "visuals", "Caption adopted across a page break", f"{keeper['label']}: the caption at the head of page {page} belongs to the figure closing page {page - 1}", None, page - 1)
 
     def _adopt_captions_by_geometry(self) -> None:
         """A caption-less figure or table adopts the nearest orphan `Figure N`
@@ -4271,6 +4343,7 @@ class StructAdapter:
         self._fix_caption_sides()
         self._adopt_orphan_captions()
         self._adopt_captions_by_geometry()
+        self._adopt_captions_across_page_break()
         self._read_table_captions_from_source()
         self._fold_panels_into_captioned_figures()
         self._fold_panels_by_geometry()

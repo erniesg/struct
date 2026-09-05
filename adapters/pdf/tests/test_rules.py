@@ -858,6 +858,124 @@ class LongOrphanCaptions(unittest.TestCase):
         self.assertEqual([b["kind"] for b in adapter.blocks], ["figure", "paragraph"])
 
 
+class CaptionsAcrossPageBreaks(unittest.TestCase):
+    """`_adopt_captions_across_page_break`: in a captions-below paper, an
+    orphan `Figure N` caption standing first on its page adopts the
+    caption-less pictures that close the previous page, merged as one figure."""
+
+    CAPTION = "FIG. 3: Functional connectomics of the human brain. (Upper panel) Multi-scale fMRI neuromark template. (Lower panel) Large-scale resting-state networks."
+
+    @staticmethod
+    def _block(kind, page, box, text="", label=None, ident=None):
+        x, y, w, h = box
+        block = {"id": ident or f"{kind}-{page}-{y}", "kind": kind, "page": page, "text": text, "inline": [], "order": 0,
+                 "evidence": {"boxes": [{"page": page, "x": x, "y": y, "width": w, "height": h, "rotation": 0}], "sourceIds": [f"#/{kind}/{page}"], "signals": []}}
+        if label:
+            block["label"] = label
+        return block
+
+    def _adapter(self, blocks, caption_below=(True, True)):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.report = AdapterReport()
+        adapter.relationships, adapter._attached_caption_boxes, adapter._ids, adapter.diagnostics, adapter.assets = [], {}, set(), [], []
+        adapter._figure_caption_below = list(caption_below)
+        adapter._crop_asset = lambda *args, **kwargs: "asset-union"
+        adapter.blocks = blocks
+        return adapter
+
+    def _page_seven_and_eight(self):
+        upper = self._block("figure", 7, (0.154, 0.064, 0.699, 0.402), ident="upper")
+        lower = self._block("figure", 7, (0.088, 0.48, 0.83, 0.413), ident="lower")
+        header = self._block("furniture", 8, (0.91, 0.037, 0.008, 0.011), text="8")
+        fig4 = self._block("figure", 8, (0.088, 0.241, 0.831, 0.321), text="FIG. 4: High-order interactions.", label="Figure 4")
+        orphan = self._block("caption", 8, (0.088, 0.07, 0.831, 0.141), text=self.CAPTION, ident="orphan")
+        return [upper, lower, header, fig4, orphan]
+
+    def test_the_page_head_caption_adopts_the_panels_closing_the_previous_page(self):
+        adapter = self._adapter(self._page_seven_and_eight())
+        adapter._adopt_captions_across_page_break()
+        self.assertEqual([b["kind"] for b in adapter.blocks], ["figure", "furniture", "figure"])
+        figure = adapter.blocks[0]
+        self.assertEqual(figure["label"], "Figure 3")
+        self.assertTrue(figure["text"].startswith("FIG. 3: Functional connectomics"))
+        box = figure["evidence"]["boxes"][0]
+        self.assertAlmostEqual(box["y"], 0.064, places=3)
+        self.assertAlmostEqual(box["y"] + box["height"], 0.893, places=3)  # both panels, taller than the 0.8 union cap
+        self.assertEqual(figure["fallbackAssetIds"], ["asset-union"])
+        self.assertEqual(adapter.report.captions_adopted_across_pages, 1)
+        self.assertEqual(adapter.report.subpanel_figures_merged, 1)
+        self.assertEqual(adapter.report.orphan_captions, -1)
+
+    def test_a_captions_above_paper_keeps_the_page_head_caption_for_the_next_figure(self):
+        adapter = self._adapter(self._page_seven_and_eight(), caption_below=(False, False))
+        adapter._adopt_captions_across_page_break()
+        self.assertEqual([b["kind"] for b in adapter.blocks], ["figure", "figure", "furniture", "figure", "caption"])
+
+    def test_text_under_the_pictures_keeps_the_caption_where_it_is(self):
+        blocks = self._page_seven_and_eight()
+        blocks[1]["evidence"]["boxes"][0]["height"] = 0.3
+        blocks.insert(2, self._block("paragraph", 7, (0.088, 0.8, 0.83, 0.09), text="The figure is discussed here."))
+        adapter = self._adapter(blocks)
+        adapter._adopt_captions_across_page_break()
+        self.assertEqual(adapter.report.captions_adopted_across_pages, 0)
+        self.assertEqual(adapter.blocks[-1]["kind"], "caption")
+
+    def test_a_caption_that_is_not_first_on_its_page_stays(self):
+        blocks = self._page_seven_and_eight()
+        blocks.insert(2, self._block("paragraph", 8, (0.088, 0.04, 0.83, 0.02), text="Text above the caption."))
+        adapter = self._adapter(blocks)
+        adapter._adopt_captions_across_page_break()
+        self.assertEqual(adapter.report.captions_adopted_across_pages, 0)
+
+    def test_a_label_a_figure_already_holds_is_not_adopted(self):
+        blocks = self._page_seven_and_eight()
+        blocks[3]["label"] = "Figure 3"
+        adapter = self._adapter(blocks)
+        adapter._adopt_captions_across_page_break()
+        self.assertEqual(adapter.report.captions_adopted_across_pages, 0)
+
+
+class HeadingLinks(unittest.TestCase):
+    """`_emit_heading`: a heading keeps the hyperlink annotation under it
+    (`S1 Data.` in a journal's supporting-information list) as a link run,
+    and takes no style runs."""
+
+    URI = "http://journals.plos.org/plosone/article/asset?unique&id=info:doi/10.1371/journal.pone.0349408.s001"
+
+    def _adapter(self):
+        from types import SimpleNamespace
+        adapter = StructAdapter.__new__(StructAdapter)
+        size = SimpleNamespace(width=612.0, height=792.0)
+        adapter.doc = SimpleNamespace(pages={12: SimpleNamespace(size=size)}, iterate_items=lambda **kwargs: [])
+        adapter.blocks, adapter._pending, adapter._ids, adapter.diagnostics = [], None, set(), []
+        adapter.report = AdapterReport()
+        adapter.title_seen, adapter._has_title_item, adapter._title_candidate = True, True, None
+        adapter._in_abstract, adapter._last_numbered_level = False, 0
+        adapter._item_links = {"#/texts/300": [("S1 Data.", self.URI)]}
+        adapter._style_runs = lambda item, text: [{"start": 0, "end": len(text), "style": "bold"}]
+        return adapter
+
+    def _heading(self, text):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, SectionHeaderItem
+        return SectionHeaderItem(self_ref="#/texts/300", label=DocItemLabel.SECTION_HEADER, orig=text, text=text, level=1,
+                                 prov=[ProvenanceItem(page_no=12, charspan=(0, len(text)),
+                                                      bbox=BoundingBox(l=37, t=493, r=105, b=482, coord_origin=CoordOrigin.BOTTOMLEFT))])
+
+    def test_the_heading_keeps_its_link_and_no_style_run(self):
+        adapter = self._adapter()
+        adapter._emit_heading(self._heading("S1 Data. Data."))
+        self.assertEqual([b["kind"] for b in adapter.blocks], ["heading"])
+        runs = adapter.blocks[0]["inline"]
+        self.assertEqual([(r["start"], r["end"], r["href"]) for r in runs if "href" in r], [(0, 8, self.URI)])
+        self.assertFalse([r for r in runs if "style" in r])
+
+    def test_a_heading_without_an_annotation_has_no_runs(self):
+        adapter = self._adapter()
+        adapter._item_links = {}
+        adapter._emit_heading(self._heading("Author contributions"))
+        self.assertEqual(adapter.blocks[0]["inline"], [])
+
+
 class FusedWordAttestation(unittest.TestCase):
     """`_fuse_words`: the fused word must occur in the paper letter for
     letter. `LLMAgents` (a heading the layout model ran together) does not
