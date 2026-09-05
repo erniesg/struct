@@ -1720,9 +1720,10 @@ class StructAdapter:
         skip = FLOAT_KINDS | {"furniture", "code"}
         back = index - 1
         complete_skipped = 0
+        entries_skipped = 0
         box = block["evidence"]["boxes"][0] if block["evidence"]["boxes"] else None
         prose_between = False
-        while back >= 0 and index - back <= 16:
+        while back >= 0 and index - back <= (48 if entries_skipped else 16):
             candidate = self.blocks[back]
             if candidate["page"] is None or block["page"] is None:
                 break
@@ -1744,6 +1745,17 @@ class StructAdapter:
                 break
             if kind not in ("paragraph", "list-item"):
                 break
+            if kind == "list-item" and is_terminated(candidate["text"]):
+                # A reference list or an enumerated block between the halves is
+                # not another column's prose flow — it is a run the eye skips,
+                # like a float. It gets its own budget so a sentence broken
+                # across a bibliography can still find its first half; the join
+                # itself still has to satisfy the hyphen or attested-word test.
+                entries_skipped += 1
+                if entries_skipped > 32:
+                    break
+                back -= 1
+                continue
             if is_terminated(candidate["text"]):
                 complete_skipped += 1
                 prose_between = True

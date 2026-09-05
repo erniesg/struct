@@ -152,6 +152,44 @@ class Evaluator(unittest.TestCase):
         self.assertEqual(_number_paragraphs_in_body(None), {})
 
 
+class ContinuationAcrossEntries(unittest.TestCase):
+    """`_continuation_predecessor`: a reference list between the halves of a
+    hyphenated word is a run the eye skips, not another column's prose flow."""
+
+    @staticmethod
+    def _block(kind, text, page=9):
+        return {"kind": kind, "page": page, "text": text, "inline": [],
+                "evidence": {"boxes": [{"page": page, "x": 0.1, "y": 0.5, "width": 0.4,
+                                        "height": 0.05, "rotation": 0}], "pages": [page]}}
+
+    def _find(self, blocks):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.blocks = blocks
+        return adapter._continuation_predecessor(len(blocks) - 1)
+
+    def test_join_reaches_across_a_reference_list(self):
+        blocks = [self._block("paragraph", "We also find that the dif-")]
+        blocks += [self._block("list-item", f"A. Author, A title of paper {n}, Journal 3, 023222 (2021).")
+                   for n in range(10)]
+        blocks.append(self._block("paragraph", "ference between the PAECS and PAOCS performances decreases."))
+        found, how = self._find(blocks)
+        self.assertIs(found, blocks[0])
+        self.assertEqual(how, "paragraph")
+
+    def test_a_reference_list_longer_than_the_budget_stops_the_search(self):
+        blocks = [self._block("paragraph", "We also find that the dif-")]
+        blocks += [self._block("list-item", f"A. Author, A title of paper {n}, Journal 3, 023222 (2021).")
+                   for n in range(40)]
+        blocks.append(self._block("paragraph", "ference between the PAECS and PAOCS performances decreases."))
+        self.assertIsNone(self._find(blocks)[0])
+
+    def test_complete_prose_between_the_halves_still_stops_at_three(self):
+        blocks = [self._block("paragraph", "We also find that the dif-")]
+        blocks += [self._block("paragraph", f"A complete sentence of another column {n}.") for n in range(4)]
+        blocks.append(self._block("paragraph", "ference between the PAECS and PAOCS performances decreases."))
+        self.assertIsNone(self._find(blocks)[0])
+
+
 class GluedMarginStamps(unittest.TestCase):
     """`_strip_glued_heads`: a margin stamp the layout model put in front of a
     paragraph is cut, and anything that is not one is left alone."""
