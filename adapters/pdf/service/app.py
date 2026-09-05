@@ -52,6 +52,7 @@ MAX_PAGES = int(os.environ.get("PDF2EPUB_MAX_PAGES", 400))
 JOB_TIMEOUT = int(os.environ.get("PDF2EPUB_TIMEOUT", 3600))
 QUEUE_LIMIT = int(os.environ.get("PDF2EPUB_QUEUE_LIMIT", 20))
 RETENTION_HOURS = float(os.environ.get("PDF2EPUB_RETENTION_HOURS", 72))
+KEEP_INTERMEDIATES = os.environ.get("PDF2EPUB_KEEP_INTERMEDIATES", "").strip() in {"1", "true", "yes"}
 PYTHON = os.environ.get("PDF2EPUB_PYTHON", sys.executable)
 STRUCT_DIR = os.environ.get("PDF2EPUB_STRUCT_DIR", "").strip() or None
 VERSION = "pdf2epub-service-1"
@@ -264,6 +265,11 @@ def _run_job(job_id: str) -> None:
         ).strip()
     state["files"] = files
     state["summary"] = _summarize(report, _scorecard(paths.work / "corpus-report.json")) if report else None
+    if state["status"] == "done" and not KEEP_INTERMEDIATES:
+        # the page images Docling renders at 2x dominate a job's footprint and
+        # nothing downstream reads them once the EPUBs exist
+        shutil.rmtree(paths.work / stem / f"{stem}.docling_artifacts", ignore_errors=True)
+        (paths.work / stem / f"{stem}.docling.json").unlink(missing_ok=True)
     _write_state(paths.root, state)
 
 

@@ -31,7 +31,9 @@ service assumes the upload is hostile:
 - one job runs at a time, in a subprocess, under `PDF2EPUB_TIMEOUT`;
 - the systemd unit runs with `ProtectSystem=full`, `ProtectHome=read-only`, a
   memory ceiling and a writable path list of exactly three directories;
-- jobs and their PDFs are deleted after `PDF2EPUB_RETENTION_HOURS` (72).
+- jobs and their PDFs are deleted after `PDF2EPUB_RETENTION_HOURS` (72), and a
+  successful job drops its Docling page images immediately — they are half the
+  footprint and nothing downstream reads them once the EPUBs exist.
 
 It is still a service that parses attacker-controlled files. Keep the token
 private, and do not put it behind a hostname you would hand out.
@@ -76,6 +78,7 @@ Rebuild `dist/` as well if anything under `src/` changed.
 | `PDF2EPUB_TIMEOUT` | 3600 | wall clock for one conversion |
 | `PDF2EPUB_QUEUE_LIMIT` | 20 | queued jobs before uploads are refused |
 | `PDF2EPUB_RETENTION_HOURS` | 72 | when finished jobs are swept |
+| `PDF2EPUB_KEEP_INTERMEDIATES` | unset | keep the Docling JSON and page images after a successful job (they dominate a job's footprint) |
 | `PDF2EPUB_PYTHON` | this interpreter | the venv that has Docling |
 | `PDF2EPUB_STRUCT_DIR` | — | passed to `render.mjs` as `--struct-dir` |
 
