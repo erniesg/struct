@@ -76,6 +76,11 @@ def _tokens(text: str) -> list[str]:
     return words
 
 
+# `b) Operator Mapping Choice:`, `(c) …`, `ii. Column diameter …`: a run-in label
+# or a lettered / roman-numbered item opens lowercase by convention; the label
+# must be followed by a capitalised or numbered word, so `i. e.,` is not one
+ENUMERATED_LABEL_RE = re.compile(r"^(?:\(?[a-z]\)|\(?(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\)|(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\.)\s+[A-Z0-9]")
+
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6][^>]*>\s*(references|bibliography|works cited)\b", re.IGNORECASE)
 
 
@@ -90,7 +95,8 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
     """(previous element text, paragraph text) for every prose paragraph that
     begins with a plain lowercase word where a broken join is possible: not
     after a heading (keyword lists), not after an equation (`where …`), not
-    after a colon-terminated lead-in, and not a name such as `vec2vec`."""
+    after a colon-terminated lead-in, not a name such as `vec2vec`, not an
+    enumerated label (`b) …`, `ii. …`) and not a short row of links."""
     cut = REFERENCES_HEADING_RE.search(body_html)
     scope = body_html[: cut.start()] if cut else body_html
     scope = re.sub(r"<aside[^>]*>.*?</aside>", "", scope, flags=re.S)
@@ -118,6 +124,10 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
             continue  # inline math symbol such as "s t represents" or "a = b"
         if re.match(r"^[a-z_][\w.]*\s*(?:=|:=|←|→|:)\s", text):
             continue  # a template or assignment line such as "message = {* *} …", not a sentence fragment
+        if ENUMERATED_LABEL_RE.match(text):
+            continue  # `b) Operator Mapping Choice:`, `ii. Column diameter …`: an enumerated label opens lowercase by convention
+        if len(text.split()) <= 12 and len(re.findall(r"<a\b", inner)) >= 2:
+            continue  # `globe Project page github Code cube Model`: a row of links under the title, not prose
         found.append((before, text))
     return found
 

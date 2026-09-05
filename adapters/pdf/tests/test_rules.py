@@ -160,6 +160,25 @@ class Evaluator(unittest.TestCase):
         html = "<p>Some complete sentence about things here.</p><p>message = {* *} ... {* *} c 1 c k input: {* x *} output: the template</p>"
         self.assertEqual(lowercase_start_paragraphs(html), [])
 
+    def test_lowercase_starts_skip_enumerated_labels_and_link_rows(self):
+        # 2609.04168v1 p11: an IEEE run-in paragraph heading set in italic
+        html = "<p>Some complete sentence about things here.</p><p>b) Operator Mapping Choice: The coarse-grained method rapidly generates parallel operator mapping strategies.</p>"
+        self.assertEqual(lowercase_start_paragraphs(html), [])
+        # 2609.04195v1 p21: roman-numbered predictions inside a boxed text
+        html = "<p>Some complete sentence about things here.</p><p>ii. Column diameter scales with horizontal conduction velocity, and the two areas agree.</p>"
+        self.assertEqual(lowercase_start_paragraphs(html), [])
+        html = "<p>Some complete sentence about things here.</p><p>(c) Intra- and inter-operator parallelism partitions the graph into subgraphs of varying size.</p>"
+        self.assertEqual(lowercase_start_paragraphs(html), [])
+        # a label followed by a lowercase word is still a fragment: `i. e.,` opens no item
+        html = "<p>Some complete sentence about things here.</p><p>i. e., the continuation that the layout model cut off from the sentence before it</p>"
+        self.assertEqual(len(lowercase_start_paragraphs(html)), 1)
+        # 2609.04203v1 p2: icon-font glyph names between three project links
+        html = '<p>Some complete sentence about things here.</p><p>globe <a href="https://x.test/">Project page</a> github <a href="https://x.test/c">Code</a> cube <a href="https://x.test/m">Model</a></p>'
+        self.assertEqual(lowercase_start_paragraphs(html), [])
+        # one link inside an ordinary lowercase-opening paragraph is still a broken join
+        html = '<p>Some complete sentence about things here.</p><p>continuation that starts lowercase and cites <a href="https://x.test/">a page</a> at length</p>'
+        self.assertEqual(len(lowercase_start_paragraphs(html)), 1)
+
     def test_cjk_tokens_compare_per_character(self):
         self.assertEqual(_tokens("你瞧你瞧 gpt"), ["你", "瞧", "你", "瞧", "gpt"])
 
