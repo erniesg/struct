@@ -73,7 +73,7 @@ figure.equation { text-align: center; }
 img { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 figcaption, p.caption { font-size: 0.9em; text-align: left; margin: 0.4em 0; }
 table { border-collapse: collapse; margin: 1em 0; font-size: 0.85em; width: 100%; }
-th, td { border: 1px solid #888; padding: 0.2em 0.4em; vertical-align: top; text-align: left; }
+th, td { border: 1px solid #888; padding: 0.2em 0.4em; vertical-align: top; text-align: left; white-space: pre-line; }
 th { font-weight: bold; }
 pre { font-family: Menlo, Consolas, monospace; font-size: 0.8em; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.8em 0; }
 code { font-family: Menlo, Consolas, monospace; }

@@ -39,12 +39,17 @@ from docling_core.types.doc import (
 from docling_core.types.doc import ContentLayer
 from docling_core.types.doc.document import FormulaItem
 
-from pdf_links import SourceLink
+from pdf_links import SourceLink, group_wrapped_links, normalize_uri
 from pdf_text import SourceText, normalize_marker
 
 TERMINAL_RE = re.compile(r"[.!?:;\"”’)\]…]$")
+# a trailing citation (`[85]`, `(Smith et al., 2020)`) is not sentence punctuation
+CITATION_TAIL_RE = re.compile(r"(?:\s*(?:\[[\d,\s–\-;]+\]|\([A-Z][^()]{0,80}?\d{4}[a-z]?\)|\(\d{4}[a-z]?\)))+$")
+ABBREVIATION_END_RE = re.compile(r"(?:\bet al|\be\.g|\bi\.e|\bcf|\bvs|\bFig|\bEq|\bNo|\bSec|\bTab|\bref)\.$", re.IGNORECASE)
 FLOAT_KINDS = {"figure", "table", "caption", "equation", "footnote", "furniture"}
-TRAILING_MARKER_RE = re.compile(r"[.!?:;\"”’)\]]\s?(?:\d{1,3}|[*†‡§¶]{1,3})$")
+CAPTION_LIKE_RE = re.compile(r"^(?:Figure|Fig\.?|Table|Listing|Algorithm|Program|Example|Box)\s*\d+[A-Za-z]?\b", re.IGNORECASE)
+SUBCAPTION_RE = re.compile(r"^\(?[a-z]\)\s*\S", re.IGNORECASE)
+TRAILING_MARKER_RE = re.compile(r"(?:(?<!\d)\.|[!?:;\"”’)\]])\s?(?:\d{1,3}|[*†‡§¶]{1,3})$")
 LOWER_START_RE = re.compile(r"^[a-zß-ÿ]")
 NUMBERED_HEADING_RE = re.compile(r"^(\d+)(?:\.\d+)*\.?\s+\S")
 APPENDIX_HEADING_RE = re.compile(r"^(?:Appendix\s+)?([A-Z])(?:\.\d+)*\.?\s+\S")
@@ -69,6 +74,7 @@ REFERENCE_WORD_RE = re.compile(
     re.IGNORECASE,
 )
 XML_ILLEGAL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
+WORD_RE_ADAPTER = re.compile(r"[A-Za-z\u00c0-\u024f]{2,}")
 SAFE_HREF_RE = re.compile(r"^(https?|mailto|ftp):", re.IGNORECASE)
 VISIBLE_RE = re.compile(r"[^\s\u0300-\u036f\u00ad]")
 TICK_LABEL_RE = re.compile(r"^\s*[-+]?\d{1,4}(?:[.,]\d+)?%?\s*$")
@@ -79,13 +85,34 @@ PARATEXT_NOTE_RE = re.compile(
     re.IGNORECASE,
 )
 PARATEXT_NOTE_ANY_RE = re.compile(r"copyright held by|all rights reserved|creative commons|rights licensed to", re.IGNORECASE)
+JOURNAL_LINE_RE = re.compile(r"\b(?:vol\.?|volume|issue|journal|proceedings|conference|workshop|preprint|arxiv|issn|isbn|doi|©|pp\.|published|under review|accepted)\b", re.IGNORECASE)
 PROSE_LIKE_RE = re.compile(r"[a-z]{3,}[.!?]\s+[A-Z]|[a-z]{4,}\s+[a-z]{4,}\s+[a-z]{4,}\s+[a-z]{4,}\s+[a-z]{4,}\s+[a-z]{4,}")
-FIGURE_CAPTION_RE = re.compile(r"^(Figure|Fig\.?)\s*(\d+)\s*(?:[.:|\-–—]|(?=\s+[A-Z]))", re.IGNORECASE)
-TABLE_CAPTION_RE = re.compile(r"^(Table)\s*(\d+)\s*(?:[.:|\-–—]|(?=\s+[A-Z]))", re.IGNORECASE)
+# `Figure 15 shows …` / `Table 22 shows …` are sentences, not captions: the
+# word after the label must be capitalised
+# the label may be chapter-numbered (`Fig. 2.3`); the separator dot is never a digit's
+FIGURE_CAPTION_RE = re.compile(r"^(Figure|Fig\.?)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+TABLE_CAPTION_RE = re.compile(r"^(Table)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+EMBEDDED_CAPTION_RE = re.compile(r"(?<![A-Za-z])(Figure|Fig\.)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
 
 
 def sanitize(value: str) -> str:
     return XML_ILLEGAL_RE.sub("", value or "").replace("­", "")
+
+
+def is_terminated(text: str) -> bool:
+    """Whether a paragraph ends a sentence: terminal punctuation after any
+    trailing citation brackets, or a trailing note marker. A parenthesis
+    opened in the last words and never closed keeps the sentence open."""
+    stripped = text.rstrip()
+    if TRAILING_MARKER_RE.search(stripped):
+        return True
+    tail = stripped[-60:]
+    if tail.count("(") > tail.count(")") and re.search(r"\([^()]*$", tail):
+        return False
+    core = CITATION_TAIL_RE.sub("", stripped).rstrip()
+    if core != stripped and core and (not TERMINAL_RE.search(core) or ABBREVIATION_END_RE.search(core)):
+        return False
+    return bool(TERMINAL_RE.search(stripped))
 
 
 def heading_level(text: str, docling_level: int | None, last_numbered_level: int | None) -> int:
@@ -108,8 +135,16 @@ CAPTION_NOISE_RE = re.compile(r"^\s*(?:(?:\d{1,3}|[ivx]{1,5})\s+)+(?=(?:Figure|F
 
 
 def clean_caption(text: str) -> str:
-    """Drop stray page-number or axis tokens glued in front of `Figure N`."""
-    return CAPTION_NOISE_RE.sub("", text, count=1).strip()
+    """Drop stray page-number or axis tokens glued in front of `Figure N`, and
+    figure-internal labels (`Continuous warping Modality segmentation Fig. 10.`)
+    the layout model merged into the caption item: the caption starts at the
+    first `Figure N` when nothing before it reads as a sentence."""
+    cleaned = CAPTION_NOISE_RE.sub("", text, count=1).strip()
+    if not FIGURE_CAPTION_RE.match(cleaned):
+        embedded = EMBEDDED_CAPTION_RE.search(cleaned)
+        if embedded and 0 < embedded.start() <= 80 and not re.search(r"[.!?:;]", cleaned[: embedded.start()]):
+            cleaned = cleaned[embedded.start() :].strip()
+    return cleaned
 
 
 def footnote_parts(text: str) -> tuple[str | None, str]:
@@ -120,12 +155,69 @@ def footnote_parts(text: str) -> tuple[str | None, str]:
 
 
 def loose_pattern(needle: str) -> re.Pattern:
-    return re.compile(r"\s*".join(re.escape(ch) for ch in needle if not ch.isspace()))
+    """`needle` with any whitespace, soft hyphen or zero-width space allowed
+    between its characters (line-wrapped URLs, `http://\u200bwww.\u200b…`)."""
+    return re.compile(r"[\s\u00ad\u200b]*".join(re.escape(ch) for ch in needle if not ch.isspace() and ch not in "\u00ad\u200b"))
+
+
+QUOTE_VARIANTS = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'"})
+
+
+def link_visible_text(item_text: str, uri: str, visible: str, group_text: str = "") -> str | None:
+    """The words of `item_text` an annotation covers: the target itself in
+    any of its spellings, else the visible words (of the whole wrapped link
+    first), tolerant of a line-end hyphen and of curly quotes."""
+    candidates: list[str] = []
+    for text in (group_text, visible):
+        text = (text or "").strip().rstrip(".,;")
+        if not text:
+            continue
+        candidates.append(text)
+        dewrapped = re.sub(r"-\s+", "", text)  # `init/con- trol` wrapped at a hyphen
+        candidates.append(dewrapped)
+        for variant in (text, dewrapped):
+            if variant.endswith("-"):
+                candidates.append(variant[:-1])
+            candidates.append(variant.translate(QUOTE_VARIANTS))
+            # the extractor may map the quote glyphs to other characters: match the words alone
+            bare = variant.strip("\"'“”‘’«»").rstrip(".,;:")
+            if bare and bare != variant:
+                candidates.append(bare)
+                if bare.endswith("-"):
+                    candidates.append(bare[:-1])
+    # the target's own spellings come last: `www.x.org/` (the canonical form of a
+    # bare host) would otherwise land on a later `www.x.org/en` in the same text
+    candidates += [uri, uri.rstrip("/"), re.sub(r"^https?://", "", uri), re.sub(r"^https?://", "", uri).rstrip("/"), re.sub(r"^https?://(www\.)?", "", uri).rstrip("/")]
+    normalized_item = item_text.translate(QUOTE_VARIANTS)
+    for candidate in candidates:
+        if not candidate or len(candidate) < 3 or (len(candidate) < 4 and not candidate[0].isupper()):
+            continue
+        for haystack in (item_text, normalized_item):
+            match = loose_pattern(candidate).search(haystack)
+            if match and match.end() > match.start():
+                return item_text[match.start() : match.end()]
+    return None
+
+
+def first_free_span(visible: str, text: str, taken: list[tuple[int, int]]) -> tuple[int, int] | None:
+    """The first occurrence of `visible` in `text` that overlaps none of the
+    spans already claimed (two `here` links in one paragraph)."""
+    if not visible:
+        return None
+    for match in loose_pattern(visible).finditer(text):
+        start, end = match.span()
+        if end <= start:
+            continue
+        if any(not (end <= s or start >= e) for s, e in taken):
+            continue
+        return start, end
+    return None
 
 
 def marker_candidates(marker: str, text: str) -> list[tuple[int, int, bool]]:
     """(start, end, strong) occurrences of a footnote marker in plain text."""
     results = []
+    text = normalize_marker(text)  # `∗` in the body is the `*` of the note; offsets are preserved
     if marker.isdigit():
         pattern = re.compile(rf"(\s?)({re.escape(marker)})(?![\d.,]\d)(?=[\s.,;:)\]]|$)")
     else:
@@ -223,15 +315,37 @@ class AdapterReport:
     listings_rejoined: int = 0
     table_crops_rejected_blank: int = 0
     table_captions_read_from_source: int = 0
+    caption_continuations_joined: int = 0
+    list_item_continuations_joined: int = 0
+    numeric_fragments_dropped: int = 0
+    tables_relabelled_figure: int = 0
+    tables_single_cell_text: int = 0
+    notes_without_reference: int = 0
+    regions_recovered_from_text_layer: int = 0
+    captions_rescued_from_furniture: int = 0
+    prose_rescued_from_furniture: int = 0
+    lines_restored_from_text_layer: int = 0
+    captions_split_from_merged_items: int = 0
+    tables_from_open_rule_box: int = 0
+    description_items: int = 0
+    tables_as_entry_lists: int = 0
+    glued_tails_stripped: int = 0
+    caption_sides_fixed: int = 0
+    notes_linked_in_cells: int = 0
+    tables_from_rule_box: int = 0
+    figures_from_rule_box: int = 0
+    figures_from_panel_band: int = 0
+    panels_folded_by_geometry: int = 0
     glyph_signals_available: bool = False
     warnings: list[str] = field(default_factory=list)
 
 
 class StructAdapter:
-    def __init__(self, doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None, source_text: SourceText | None = None) -> None:
+    def __init__(self, doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None, source_text: SourceText | None = None, page_layout: list | None = None) -> None:
         self.doc = doc
         self.word_boxes = word_boxes or []
         self.page_lines = page_lines or []
+        self.page_layout = page_layout or []
         self.source_text = source_text
         self._notes: list[tuple[dict, str | None, TextItem]] = []
         self.pdf_path = pdf_path
@@ -254,6 +368,10 @@ class StructAdapter:
         self._list_counter = 0
         self._corpus_words: set[str] | None = None
         self._captions_below_tables: list[bool] = []
+        self._figure_caption_below: list[bool] = []
+        self._attached_caption_boxes: dict[str, dict] = {}
+        self._furniture_keys: dict[str, set[int]] | None = None
+        self._has_title_item = any(isinstance(item, TitleItem) for item, _ in doc.iterate_items())
         self._item_links = self._index_links()
         self.report.glyph_signals_available = bool(source_text and source_text.available)
 
@@ -279,12 +397,14 @@ class StructAdapter:
         prov = getattr(item, "prov", None)
         return prov[0].page_no if prov else None
 
-    def _box(self, item) -> dict | None:
+    def _box(self, item, index: int = 0) -> dict | None:
         prov = getattr(item, "prov", None)
-        page = self._page_of(item)
-        if not prov or page is None or page not in self.doc.pages:
+        if not prov or index >= len(prov):
             return None
-        bbox = prov[0].bbox
+        page = prov[index].page_no
+        if page is None or page not in self.doc.pages:
+            return None
+        bbox = prov[index].bbox
         size = self.doc.pages[page].size
         if not size.width or not size.height:
             return None
@@ -307,13 +427,23 @@ class StructAdapter:
             "rotation": 0,
         }
 
+    def _boxes(self, item) -> list[dict]:
+        """One normalized box per provenance entry (a paragraph that runs over
+        a column or page break has several)."""
+        boxes = []
+        for index in range(len(getattr(item, "prov", None) or [])):
+            box = self._box(item, index)
+            if box is not None:
+                boxes.append(box)
+        return boxes
+
     def _evidence(self, item, confidence: float = 1.0) -> dict:
         page = self._page_of(item)
-        box = self._box(item)
+        boxes = self._boxes(item)
         return {
             "confidence": confidence,
-            "pages": [page] if page is not None else [],
-            "boxes": [box] if box else [],
+            "pages": sorted({b["page"] for b in boxes}) if boxes else ([page] if page is not None else []),
+            "boxes": boxes,
             "sourceIds": [self._source_id(item)],
             "signals": ["docling-layout"],
         }
@@ -328,8 +458,9 @@ class StructAdapter:
         by_page: dict[int, list] = {}
         for item, _ in self.doc.iterate_items():
             if isinstance(item, TextItem) and item.prov:
-                bbox = item.prov[0].bbox
-                by_page.setdefault(item.prov[0].page_no, []).append((item.self_ref, item.text, (bbox.l, bbox.b, bbox.r, bbox.t)))
+                for entry in item.prov:  # a paragraph over a column break has a box per column
+                    bbox = entry.bbox
+                    by_page.setdefault(entry.page_no, []).append((item.self_ref, item.text, (bbox.l, bbox.b, bbox.r, bbox.t)))
             elif isinstance(item, TableItem) and item.prov and item.data:
                 page_no = item.prov[0].page_no
                 size = self.doc.pages[page_no].size if page_no in self.doc.pages else None
@@ -347,35 +478,38 @@ class StructAdapter:
                             box = (bbox.l, min(bbox.b, bbox.t), bbox.r, max(bbox.b, bbox.t))
                         by_page.setdefault(page_no, []).append((f"{item.self_ref}#c{key[0]}-{key[1]}", cell.text, box))
         mapped: dict[str, list[tuple[str, str]]] = {}
+        group_wrapped_links(self.links)
+        seen_pairs: set[tuple[str, str, str]] = set()
         for link in self.links:
-            if link.kind != "uri" or not link.uri or not SAFE_HREF_RE.match(link.uri):
+            uri = normalize_uri(link.uri) if link.kind == "uri" and link.uri else ""
+            if not uri or not SAFE_HREF_RE.match(uri):
                 self.report.internal_links_skipped += 1
                 continue
             self.report.links_expected += 1
             l, b, r, t = link.rect
-            best, best_text, best_overlap = None, "", 0.0
+            best, best_text, best_ratio = None, "", 0.0
+            area = max((r - l) * (t - b), 1e-6)
             for key, text, (bl, bb, br, bt) in by_page.get(link.page, []):
                 overlap = max(0.0, min(r, br) - max(l, bl)) * max(0.0, min(t, bt) - max(b, bb))
-                if overlap > best_overlap or (overlap == best_overlap and best is not None and "#c" in key and overlap > 0):
-                    best_overlap, best, best_text = overlap, key, text
-            area = max((r - l) * (t - b), 1e-6)
-            if best is None or best_overlap / area < 0.3:
+                if overlap <= 0:
+                    continue
+                # a table cell's glyph box is far shorter than the annotation
+                # rectangle: measure the overlap against the smaller of the two
+                ratio = overlap / max(min(area, (br - bl) * (bt - bb)), 1e-6)
+                if ratio > best_ratio or (ratio == best_ratio and "#c" in key):
+                    best_ratio, best, best_text = ratio, key, text
+            if best is None or best_ratio < 0.3:
                 self.report.links_unmapped += 1
                 continue
-            uri = link.uri
-            candidates = [uri, re.sub(r"^https?://", "", uri), re.sub(r"^https?://(www\.)?", "", uri).rstrip("/")]
-            if link.text:
-                candidates.append(link.text.rstrip(".,;"))
-            chosen = None
-            for candidate in candidates:
-                if candidate and len(candidate) >= 4:
-                    match = loose_pattern(candidate).search(best_text)
-                    if match:
-                        chosen = best_text[match.start() : match.end()]
-                        break
+            chosen = link_visible_text(best_text, uri, link.text, link.group_text)
             if chosen is None:
                 self.report.links_unmapped += 1
                 continue
+            pair_key = (best, chosen, uri)
+            if pair_key in seen_pairs:
+                self.report.links_mapped += 1  # another line of the same wrapped link
+                continue
+            seen_pairs.add(pair_key)
             mapped.setdefault(best, []).append((chosen, uri))
             self.report.links_mapped += 1
             if "#c" in best:
@@ -390,14 +524,14 @@ class StructAdapter:
         if hyperlink and not pairs and SAFE_HREF_RE.match(str(hyperlink)):
             pairs.append((text, str(hyperlink)))
         for visible, href in pairs:
-            match = loose_pattern(visible).search(text) if visible else None
-            if not match or match.end() <= match.start():
+            span = first_free_span(visible, text, spans)
+            if span is None and len(visible.split()) >= 2:
+                # the block text may have shed a leading note marker or label
+                span = first_free_span(visible.split(None, 1)[1], text, spans)
+            if span is None:
                 continue
-            start, end = match.span()
-            if any(not (end <= s or start >= e) for s, e in spans):
-                continue
-            spans.append((start, end))
-            runs.append({"start": start, "end": end, "href": href})
+            spans.append(span)
+            runs.append({"start": span[0], "end": span[1], "href": href})
         runs.extend(self._style_runs(item, text))
         return runs
 
@@ -445,6 +579,72 @@ class StructAdapter:
             return True
         return box["y"] <= 0.12 or box["y"] + box["height"] >= 0.88
 
+    def _furniture_text_is_prose(self, item: TextItem) -> bool:
+        """A furniture-layer text that occurs on one page only, reads as prose
+        (six or more words, no journal or licence wording), and is not a
+        running line is a paragraph the layout model filed as a footer."""
+        text = sanitize(item.text).strip()
+        words = text.split()
+        if len(words) < 6 or len(text) > 400 or PARATEXT_NOTE_RE.match(text) or PARATEXT_NOTE_ANY_RE.search(text) or JOURNAL_LINE_RE.search(text):
+            return False
+        key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower()))
+        if self._furniture_keys is None:
+            counter: dict[str, set[int]] = {}
+            for other, _ in self.doc.iterate_items(included_content_layers={ContentLayer.FURNITURE}):
+                if isinstance(other, TextItem) and other.prov:
+                    other_key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", sanitize(other.text).strip().lower()))
+                    counter.setdefault(other_key, set()).add(other.prov[0].page_no)
+            self._furniture_keys = counter
+        return len(self._furniture_keys.get(key, set())) <= 1
+
+    def _rescue_prose_from_furniture(self, item: TextItem) -> None:
+        text = sanitize(item.text).strip()
+        block = self._new_block("paragraph", item, text)
+        block["inline"] = self._runs_for(item, text)
+        block["evidence"]["signals"].append("rescued-from-furniture-layer")
+        box = self._box(item)
+        position = len(self.blocks)
+        if box is not None:
+            for i, existing in enumerate(self.blocks):
+                if existing["page"] != box["page"] or not existing["evidence"]["boxes"]:
+                    continue
+                ebox = existing["evidence"]["boxes"][0]
+                if ebox["y"] >= box["y"] and min(ebox["x"] + ebox["width"], box["x"] + box["width"]) - max(ebox["x"], box["x"]) > 0:
+                    position = i
+                    break
+            else:
+                position = next((i for i, b in enumerate(self.blocks) if b["page"] is not None and b["page"] > box["page"]), len(self.blocks))
+        self.blocks.insert(position, block)
+        self.report.paragraphs += 1
+        self.report.prose_rescued_from_furniture += 1
+
+    def _rescue_caption_from_furniture(self, item: TextItem) -> bool:
+        """A `Table N` / `Figure N` caption the layout model filed as page
+        furniture is a caption: it goes back into the flow where its geometry
+        puts it (before the first block below it on its page)."""
+        text = sanitize(item.text).strip()
+        if not (FIGURE_CAPTION_RE.match(text) or TABLE_CAPTION_RE.match(text)) or len(text) > 1200:
+            return False
+        self._flush()
+        block = self._new_block("caption", item, text)
+        block["inline"] = self._runs_for(item, text)
+        box = self._box(item)
+        position = len(self.blocks)
+        if box is not None:
+            for i, existing in enumerate(self.blocks):
+                if existing["page"] != box["page"] or not existing["evidence"]["boxes"]:
+                    continue
+                ebox = existing["evidence"]["boxes"][0]
+                if ebox["y"] >= box["y"] and min(ebox["x"] + ebox["width"], box["x"] + box["width"]) - max(ebox["x"], box["x"]) > 0:
+                    position = i
+                    break
+            else:
+                position = next((i for i, b in enumerate(self.blocks) if b["page"] is not None and b["page"] > box["page"]), len(self.blocks))
+        self.blocks.insert(position, block)
+        self.report.orphan_captions += 1
+        self.report.captions_rescued_from_furniture += 1
+        return True
+
     def _furniture_block(self, item: TextItem, classification: str, evidence: str | None = None) -> None:
         box = self._box(item)
         page = self._page_of(item)
@@ -477,9 +677,79 @@ class StructAdapter:
             return previous[:-1] + following, True
         return previous + following, False
 
+    def _prov_segments(self, item) -> list[tuple[int, str]]:
+        """(provenance index, text) per provenance entry, from the character
+        spans the layout model recorded; one segment when there is only one."""
+        prov = getattr(item, "prov", None) or []
+        text = item.text or ""
+        if len(prov) < 2:
+            return [(0, text)]
+        segments = []
+        for index, entry in enumerate(prov):
+            span = getattr(entry, "charspan", None)
+            if not span or len(span) != 2 or span[1] <= span[0] or span[1] > len(text) + 1:
+                return [(0, text)]
+            segments.append((index, text[span[0] : span[1]]))
+        return segments
+
+    def _split_merged_caption(self, item: TextItem) -> bool:
+        """A text item whose later provenance entries carry a `Figure N` /
+        `Table N` caption is a paragraph the layout model merged with a
+        caption: the caption segment becomes its own caption block with its
+        own box, the rest stays a paragraph."""
+        segments = self._prov_segments(item)
+        if len(segments) < 2:
+            return False
+        caption_at = next((i for i, (_, text) in enumerate(segments) if FIGURE_CAPTION_RE.match(text.strip()) or TABLE_CAPTION_RE.match(text.strip())), None)
+        if caption_at is None:
+            return False
+        head = " ".join(text.strip() for _, text in segments[:caption_at] if text.strip())
+        caption_parts = segments[caption_at:]
+        if head:
+            block = self._new_block("paragraph", item, sanitize(head))
+            block["evidence"]["boxes"] = [b for i, (index, _) in enumerate(segments[:caption_at]) for b in ([self._box(item, index)] if self._box(item, index) else [])]
+            block["evidence"]["pages"] = sorted({b["page"] for b in block["evidence"]["boxes"]}) or block["evidence"]["pages"]
+            block["inline"] = self._runs_for(item, block["text"])
+            self._flush()
+            self.blocks.append(block)
+            self.report.paragraphs += 1
+        caption_text = sanitize(" ".join(text.strip() for _, text in caption_parts if text.strip()))
+        caption = self._new_block("caption", item, caption_text)
+        caption["evidence"]["boxes"] = [b for index, _ in caption_parts for b in ([self._box(item, index)] if self._box(item, index) else [])]
+        caption["evidence"]["pages"] = sorted({b["page"] for b in caption["evidence"]["boxes"]}) or caption["evidence"]["pages"]
+        caption["page"] = caption["evidence"]["pages"][0] if caption["evidence"]["pages"] else caption["page"]
+        caption["inline"] = self._runs_for(item, caption_text)
+        self.blocks.append(caption)
+        self.report.orphan_captions += 1
+        self.report.captions_split_from_merged_items += 1
+        return True
+
+    def _is_description_item(self, item: TextItem, text: str) -> bool:
+        """`resolved_on_timestamp : the time at which …`: a description-list
+        entry whose term is set in a monospace face (`\\item[term]`)."""
+        match = re.match(r"^([A-Za-z_][\w.\-]*(?:\s[A-Za-z_][\w.\-]*){0,3})\s*:\s+\S", text.strip())
+        if not match:
+            return False
+        page_text = self._page_text(self._page_of(item))
+        box = self._box(item)
+        if page_text is None or box is None:
+            return False
+        share = page_text.font_share(box)
+        return share["total"] >= 10 and 0.1 <= share["mono"] < 0.8
+
     def _emit_paragraph(self, item: TextItem) -> None:
         if not VISIBLE_RE.search(sanitize(item.text)):
             self.report.invisible_items_dropped += 1
+            return
+        if self._split_merged_caption(item):
+            return
+        if self._is_description_item(item, sanitize(item.text)):
+            self._flush()
+            block = self._new_block("list-item", item, sanitize(item.text).strip())
+            block["inline"] = self._runs_for(item, block["text"])
+            block["attributes"] = {"ordered": False, "listId": f"deflist-p{self._page_of(item)}"}
+            self.blocks.append(block)
+            self.report.description_items += 1
             return
         if self._is_edge_page_number(item):
             self.report.edge_page_numbers_dropped += 1
@@ -502,23 +772,13 @@ class StructAdapter:
                 candidate = self.blocks[-back]
                 if candidate["kind"] == "paragraph":
                     between = self.blocks[len(self.blocks) - back + 1 :]
-                    if (
-                        between
-                        and all(b["kind"] in FLOAT_KINDS for b in between)
-                        and not TERMINAL_RE.search(candidate["text"].rstrip())
-                        and not TRAILING_MARKER_RE.search(candidate["text"].rstrip())
-                    ):
+                    if between and all(b["kind"] in FLOAT_KINDS for b in between) and not is_terminated(candidate["text"]):
                         pending = candidate
                         resumed = True
                     break
                 if candidate["kind"] not in FLOAT_KINDS:
                     break
-        if (
-            pending is not None
-            and not TERMINAL_RE.search(pending["text"].rstrip())
-            and not TRAILING_MARKER_RE.search(pending["text"].rstrip())
-            and (LOWER_START_RE.match(text.lstrip()) or pending["text"].rstrip().endswith("-"))
-        ):
+        if pending is not None and not is_terminated(pending["text"]) and (LOWER_START_RE.match(text.lstrip()) or pending["text"].rstrip().endswith("-")):
             previous = pending["text"].rstrip()
             following = text.lstrip()
             offset_shift = len(text) - len(following)
@@ -552,7 +812,15 @@ class StructAdapter:
         text = sanitize(item.text.strip())
         if not text:
             return
-        if not self.title_seen and self._page_of(item) == 1 and not TOP_LEVEL_HEADING_RE.match(text):
+        if (FIGURE_CAPTION_RE.match(text) or TABLE_CAPTION_RE.match(text)) and len(text) < 1200 and self.title_seen:
+            # a caption the layout model called a section heading
+            self._flush()
+            block = self._new_block("caption", item, text)
+            block["inline"] = self._runs_for(item, text)
+            self.blocks.append(block)
+            self.report.orphan_captions += 1
+            return
+        if not self.title_seen and not self._has_title_item and self._page_of(item) == 1 and not TOP_LEVEL_HEADING_RE.match(text):
             candidate_words = len(text.split())
             if self._title_candidate is None:
                 self._title_candidate = (text, item)
@@ -623,6 +891,10 @@ class StructAdapter:
     def _emit_picture(self, item: PictureItem) -> None:
         caption = self._caption_text(item)
         box = self._box(item)
+        caption_boxes = [self._box(ref.resolve(self.doc)) for ref in getattr(item, "captions", [])]
+        caption_boxes = [b for b in caption_boxes if b]
+        if box and caption_boxes:
+            self._figure_caption_below.append(caption_boxes[0]["y"] >= box["y"] + box["height"] * 0.5)
         if not caption and box and box["width"] * box["height"] < 0.01:
             self.report.decorative_pictures_skipped += 1
             return
@@ -633,18 +905,33 @@ class StructAdapter:
             image = item.get_image(self.doc)
         except Exception as error:  # pragma: no cover
             self.report.warnings.append(f"picture image unavailable: {error}")
-        label_match = re.match(r"^(Figure|Fig\.?)\s*(\d+)", caption or "", re.IGNORECASE)
-        label = f"Figure {label_match.group(2)}" if label_match else f"Figure {self.report.figures}"
-        block = self._new_block("figure", item, caption, label=label)
+        label_match = re.match(r"^(Figure|Fig\.?)\s*(\d+(?:\.\d+)*)", caption or "", re.IGNORECASE)
+        label = f"Figure {label_match.group(2)}" if label_match else None
+        block = self._new_block("figure", item, caption, **({"label": label} if label else {}))
+        if caption_boxes:
+            self._attached_caption_boxes[block["id"]] = caption_boxes[0]
         asset_id = self._asset("figure", f"figure-{self.report.figures:03d}", image, item)
         if asset_id:
             block["fallbackAssetIds"] = [asset_id]
         else:
             self.report.figures_without_image += 1
-            self._diagnostic("warning", "visuals", "Figure image unavailable", f"{label} has no crop", item)
+            self._diagnostic("warning", "visuals", "Figure image unavailable", f"{label or 'a caption-less figure'} has no crop", item)
         if caption:
             self.report.figures_with_caption += 1
         self.blocks.append(block)
+
+    @staticmethod
+    def _grid_is_entry_list(grid) -> bool:
+        """A caption-less grid of one or two columns whose text cells are prose
+        (reference entries after a `[AKC+21]` label) is a list, not a table."""
+        if not grid or len(grid) < 4 or max(len(row) for row in grid) > 2:
+            return False
+        long_cells = [cell.text for row in grid for cell in row if cell.text.strip() and (len(cell.text) > 80 or PROSE_LIKE_RE.search(cell.text))]
+        text_cells = [cell for row in grid for cell in row if cell.text.strip()]
+        if not text_cells or len(long_cells) < 0.5 * len(grid):
+            return False
+        numeric = sum(1 for cell in text_cells if re.fullmatch(r"[\d.,%\s\-–+]+", cell.text.strip()))
+        return numeric <= 0.2 * len(text_cells)
 
     def _emit_table(self, item: TableItem) -> None:
         self._flush()
@@ -656,8 +943,51 @@ class StructAdapter:
             if table_box and caption_box:
                 self._captions_below_tables.append(caption_box["y"] >= table_box["y"] + table_box["height"] * 0.5)
         grid = item.data.grid if item.data else []
+        if not caption and self._grid_is_entry_list(grid):
+            # a bibliography or glossary the layout model read as a table: its
+            # rows are entries, not cells; the reader wants them as a list
+            self._list_counter += 1
+            for r, row in enumerate(grid):
+                texts = [sanitize(cell.text).strip() for cell in row if cell.text.strip()]
+                if not texts:
+                    continue
+                entry = " ".join(dict.fromkeys(texts))
+                block = self._new_block("list-item", item, entry)
+                block["id"] = self._id(f"b-{len(self.blocks) + 1:04d}-entry-{r}")
+                block["inline"] = []
+                spans: list[tuple[int, int]] = []
+                for c, cell in enumerate(row):
+                    for visible, href in self._item_links.get(f"{item.self_ref}#c{r}-{c}", []):
+                        span = first_free_span(visible, entry, spans)
+                        if span is not None:
+                            spans.append(span)
+                            block["inline"].append({"start": span[0], "end": span[1], "href": href})
+                block["attributes"] = {"ordered": False, "listId": f"list-entries-{self._list_counter}"}
+                self.blocks.append(block)
+            self.report.tables_as_entry_lists += 1
+            return
+        figure_label = FIGURE_CAPTION_RE.match(caption or "")
+        if figure_label:
+            # the paper calls this box a figure (a prompt, a code listing in a
+            # frame): it is one, and its crop is the artwork
+            image = None
+            try:
+                image = item.get_image(self.doc)
+            except Exception:
+                image = None
+            self.report.figures += 1
+            block = self._new_block("figure", item, clean_caption(caption), label=f"Figure {figure_label.group(2)}")
+            asset_id = self._asset("figure", f"figure-{self.report.figures:03d}", image, item)
+            if asset_id:
+                block["fallbackAssetIds"] = [asset_id]
+            else:
+                self.report.figures_without_image += 1
+            self.report.figures_with_caption += 1
+            self.report.tables_relabelled_figure += 1
+            self.blocks.append(block)
+            return
         block = self._new_block("table", item, "")
-        label_match = re.match(r"^Table\s*(\d+)", caption or "", re.IGNORECASE)
+        label_match = re.match(r"^Table\s*(\d+(?:\.\d+)*)", caption or "", re.IGNORECASE)
         if label_match:
             block["label"] = f"Table {label_match.group(1)}"
         usable = bool(grid) and any(cell.text.strip() for row in grid for cell in row)
@@ -665,7 +995,12 @@ class StructAdapter:
             rows = len(grid)
             columns = max(len(row) for row in grid)
             filled = sum(1 for row in grid for cell in row if cell.text.strip())
-            if rows * columns < 2 or filled < 0.5 * rows * columns:
+            single_text_box = rows * columns == 1 and (PROSE_LIKE_RE.search(grid[0][0].text) or len(grid[0][0].text) > 80)
+            if single_text_box:
+                # a one-cell table holding prose is a boxed text (a prompt, an
+                # example); the text is the structure a reader wants
+                self.report.tables_single_cell_text += 1
+            elif rows * columns < 2 or filled < 0.3 * rows * columns:
                 # a single cell or a mostly empty grid is not a table a
                 # reader can use; the crop is the honest fallback
                 usable = False
@@ -699,12 +1034,10 @@ class StructAdapter:
                     cell_text = sanitize(cell.text)
                     cell_runs: list[dict] = []
                     for visible, href in self._item_links.get(f"{item.self_ref}#c{r}-{c}", []):
-                        match = loose_pattern(visible).search(cell_text) if visible else None
-                        if not match or match.end() <= match.start():
+                        span = first_free_span(visible, cell_text, [(run["start"], run["end"]) for run in cell_runs])
+                        if span is None:
                             continue
-                        if any(not (match.end() <= run["start"] or match.start() >= run["end"]) for run in cell_runs):
-                            continue
-                        cell_runs.append({"start": match.start(), "end": match.end(), "href": href})
+                        cell_runs.append({"start": span[0], "end": span[1], "href": href})
                     cells.append(
                         {
                             "id": f"c{r}-{c}",
@@ -763,6 +1096,7 @@ class StructAdapter:
         self._flush()
         block = self._new_block("code", item, sanitize(page_text.region_text(box)) or text)
         block["evidence"]["signals"].append("monospace-face")
+        block["inline"] = [run for run in self._runs_for(item, block["text"]) if run.get("href")]
         self.blocks.append(block)
         self.report.code_blocks += 1
         self.report.code_from_monospace += 1
@@ -790,7 +1124,9 @@ class StructAdapter:
             region = sanitize(page_text.region_text(box))
             if region and len(region) >= 0.5 * len(text):
                 text = region
-        self.blocks.append(self._new_block("code", item, text))
+        block = self._new_block("code", item, text)
+        block["inline"] = [run for run in self._runs_for(item, text) if run.get("href")]
+        self.blocks.append(block)
         self.report.code_blocks += 1
 
     def _emit_formula(self, item: TextItem, prefer_image: bool = False) -> None:
@@ -833,6 +1169,13 @@ class StructAdapter:
             self.report.paratext_notes_demoted += 1
             self._furniture_block(item, "explicit-paratext", "paratext-note")
             return
+        if FIGURE_CAPTION_RE.match(raw.strip()) or TABLE_CAPTION_RE.match(raw.strip()):
+            # a caption at the foot of the page the layout model called a note
+            self.report.orphan_captions += 1
+            block = self._new_block("caption", item, raw.strip())
+            block["inline"] = self._runs_for(item, block["text"])
+            self.blocks.append(block)
+            return
         marker, body = footnote_parts(raw)
         if LIST_LIKE_NOTE_RE.match(raw) or (marker and marker.isdigit() and re.match(r"^[.)]\s+\S", body)):
             # "1. Preserve the Core Inquiry" / "- Valid values": a list item the layout model mislabelled
@@ -843,6 +1186,15 @@ class StructAdapter:
             self.blocks.append(block)
             return
         self.report.footnotes += 1
+        if marker and not marker.isdigit() and not self._symbol_referenced_on_page(marker, item):
+            # a `*` note whose star appears nowhere else on the page (the
+            # corresponding author marked by an envelope icon): keep the
+            # printed symbol in the text, there is no reference to link
+            self.report.notes_without_reference += 1
+            block = self._new_block("footnote", item, f"{marker} {body}".strip())
+            block["inline"] = self._runs_for(item, block["text"])
+            self.blocks.append(block)
+            return
         block = self._new_block("footnote", item, body, **({"label": marker} if marker else {}))
         block["inline"] = self._runs_for(item, body)
         self.blocks.append(block)
@@ -850,6 +1202,26 @@ class StructAdapter:
             self.report.footnotes_with_marker += 1
         # linking happens in `_link_notes` once every block on the page exists
         self._notes.append((block, marker, item))
+
+    def _symbol_referenced_on_page(self, marker: str, item: TextItem) -> bool:
+        """Whether a symbol marker (`*`, `†`) occurs on the note's page apart
+        from the note itself, in the glyphs or the text layer."""
+        page = self._page_of(item)
+        if page is None:
+            return True
+        wanted = normalize_marker(marker)
+        page_text = self._page_text(page)
+        if page_text is not None:
+            if any(m.has_label(wanted) for m in page_text.markers):
+                return True
+            lines = [line.text for line in page_text.lines]
+        elif 0 < page <= len(self.page_lines):
+            lines = self.page_lines[page - 1]
+        else:
+            return True
+        count = sum(normalize_marker(line).count(wanted) for line in lines)
+        own = normalize_marker(sanitize(item.text)).count(wanted)
+        return count > own
 
     def _link_notes(self) -> None:
         note_boxes = [(b["page"], box) for b, _, _ in self._notes for box in b["evidence"]["boxes"]]
@@ -859,16 +1231,39 @@ class StructAdapter:
                 continue
             linked = False
             if marker:
-                linked = self._link_marker_by_glyphs(marker, block, item, note_boxes)
+                twins = [b for b, m, _ in self._notes if m == marker and b["page"] == block["page"] and b["kind"] == "footnote" and id(b) in alive]
+                rank = next((i for i, b in enumerate(twins) if b is block), 0) if len(twins) > 1 else None
+                linked = self._link_marker_by_glyphs(marker, block, item, note_boxes, rank=rank, twins=len(twins))
                 if not linked:
                     # no superscript glyph run carries this label (marker set on the
                     # baseline, or on another page): fall back to the text heuristics
                     linked = self._link_marker(marker, block, item)
             if linked:
                 self.report.footnotes_linked += 1
+            elif marker and marker.isdigit() and self._no_superscript_run(marker, self._page_of(item)):
+                # glyph signals are available and no raised run carries this
+                # digit on the note's page or the page before: the label is
+                # part of the note's text, not a reference
+                block["text"] = f"{marker} {block['text']}".strip()
+                block.pop("label", None)
+                self.report.footnotes_with_marker = max(0, self.report.footnotes_with_marker - 1)
+                self.report.notes_without_reference += 1
             else:
                 self.report.footnotes_unlinked += 1
                 self._diagnostic("warning", "notes", "Footnote marker not found", f"footnote {marker or '?'} has no matched reference", item)
+
+    def _no_superscript_run(self, marker: str, page: int | None) -> bool:
+        if page is None:
+            return False
+        seen_any = False
+        for candidate_page in (page, page - 1):
+            page_text = self._page_text(candidate_page) if candidate_page >= 1 else None
+            if page_text is None:
+                continue
+            seen_any = True
+            if any(m.has_label(marker, loose=True) for m in page_text.markers):
+                return False
+        return seen_any
 
     @staticmethod
     def _locate_marker(text: str, left_context: str, token: str, label: str) -> tuple[int, int] | None:
@@ -876,7 +1271,7 @@ class StructAdapter:
         `left_context`, compared without whitespace; longest context first."""
         compact_chars: list[str] = []
         index_map: list[int] = []
-        for index, char in enumerate(text):
+        for index, char in enumerate(normalize_marker(text)):
             if not char.isspace():
                 compact_chars.append(char)
                 index_map.append(index)
@@ -924,7 +1319,7 @@ class StructAdapter:
         )
         return True
 
-    def _link_marker_by_glyphs(self, marker: str, note_block: dict, item: TextItem, note_boxes: list) -> bool:
+    def _link_marker_by_glyphs(self, marker: str, note_block: dict, item: TextItem, note_boxes: list, rank: int | None = None, twins: int = 1) -> bool:
         """Link a note to every superscript glyph run on its page that carries
         the note's label and sits inside a body block; the run's own left
         context locates the exact characters in the block text."""
@@ -938,16 +1333,38 @@ class StructAdapter:
 
         usable = [m for m in page_text.markers if not m.at_line_start and outside_notes(m)]
         candidates = [m for m in usable if m.has_label(marker)] or [m for m in usable if m.has_label(marker, loose=True)]
+        if rank is not None and len(candidates) >= twins:
+            # two notes with the same label (an affiliation and a footnote):
+            # the k-th note takes the k-th marker in reading order
+            ordered = sorted(candidates, key=lambda m: (round(m.y, 2), m.x))
+            candidates = ordered[rank : rank + 1] if rank < twins - 1 else ordered[rank:]
         if not candidates:
             return False
-        hosts = [b for b in self.blocks if b["page"] == page and b["kind"] in ("paragraph", "list-item", "heading", "caption", "figure", "quote") and b is not note_block]
+        # a paragraph that runs over the page break keeps the page it starts
+        # on: blocks of the previous page are candidates too, located by the
+        # marker's own left context
+        hosts = [
+            b
+            for b in self.blocks
+            if (b["page"] in (page, page - 1) or page in b["evidence"]["pages"]) and (b["kind"] in ("paragraph", "list-item", "heading", "caption", "figure", "quote") or (b["kind"] == "footnote" and not b.get("label"))) and b is not note_block
+        ]
+        cell_hosts = [
+            (b, cell)
+            for b in self.blocks
+            if b.get("table") and (b["page"] in (page, page - 1) or page in b["evidence"]["pages"])
+            for cell in b["table"]["cells"]
+            if cell["text"].strip()
+        ]
         linked = False
         for glyph_marker in candidates:
             cx, cy = glyph_marker.x + glyph_marker.width / 2, glyph_marker.y + glyph_marker.height / 2
             containing = [
                 b
                 for b in hosts
-                if any(bx["x"] - 0.006 <= cx <= bx["x"] + bx["width"] + 0.006 and bx["y"] - 0.006 <= cy <= bx["y"] + bx["height"] + 0.006 for bx in b["evidence"]["boxes"])
+                if any(
+                    bx["page"] == page and bx["x"] - 0.006 <= cx <= bx["x"] + bx["width"] + 0.006 and bx["y"] - 0.006 <= cy <= bx["y"] + bx["height"] + 0.006
+                    for bx in b["evidence"]["boxes"]
+                )
             ]
             containing.sort(key=lambda b: min(bx["width"] * bx["height"] for bx in b["evidence"]["boxes"]))
             others = [b for b in hosts if b not in containing] if len(glyph_marker.left_context) >= 6 else []
@@ -966,6 +1383,28 @@ class StructAdapter:
                     linked = True
                     self.report.footnotes_glyph_linked += 1
                 break
+            else:
+                # the marker sits in a table cell: the cell carries the reference, the table the relationship
+                for table_block, cell in cell_hosts:
+                    span = self._locate_marker(cell["text"], glyph_marker.left_context, glyph_marker.text, marker)
+                    if span is None:
+                        continue
+                    if any(not (span[1] <= r["start"] or span[0] >= r["end"]) for r in cell["inline"] if r.get("href") or r.get("targetIds")):
+                        continue
+                    evidence = {
+                        "confidence": 0.9,
+                        "pages": [page],
+                        "boxes": [{"page": page, "x": glyph_marker.x, "y": glyph_marker.y, "width": max(glyph_marker.width, 0.001), "height": max(glyph_marker.height, 0.001), "rotation": 0}],
+                        "sourceIds": [self._source_id(item)],
+                        "signals": ["superscript-glyph", "table-cell"],
+                    }
+                    relationship_id = self._id(f"rel-note-{note_block['id']}")
+                    self.relationships.append({"id": relationship_id, "kind": "footnote", "from": table_block["id"], "to": [note_block["id"]], "label": marker, "status": "matched", "confidence": 0.9, "evidence": evidence})
+                    cell["inline"].append({"start": span[0], "end": span[1], "targetIds": [note_block["id"]], "relationshipId": relationship_id, "verticalAlign": "superscript", "semanticRole": "note-reference"})
+                    linked = True
+                    self.report.footnotes_glyph_linked += 1
+                    self.report.notes_linked_in_cells += 1
+                    break
         return linked
 
     def _place_notes(self) -> None:
@@ -1142,12 +1581,24 @@ class StructAdapter:
                 if item.self_ref in self._caption_refs:
                     return
                 self._flush()
+                text = sanitize(item.text)
+                embedded = EMBEDDED_CAPTION_RE.search(text) if not FIGURE_CAPTION_RE.match(text.strip()) else None
+                if embedded and embedded.start() > 0:
+                    # the layout model glued the artwork's own text (a code
+                    # listing inside the figure) to the caption: the head stays
+                    # beside the figure as its text, the caption starts at `Figure N`
+                    head = self._new_block("paragraph", item, text[: embedded.start()].strip())
+                    head["evidence"]["signals"].append("caption-head")
+                    self.blocks.append(head)
+                    self.report.paragraphs += 1
+                    text = text[embedded.start() :].strip()
                 self.report.orphan_captions += 1
-                block = self._new_block("caption", item, sanitize(item.text))
+                block = self._new_block("caption", item, text)
                 block["inline"] = self._runs_for(item, block["text"])
                 self.blocks.append(block)
             elif label in (DocItemLabel.PAGE_HEADER, DocItemLabel.PAGE_FOOTER):
-                self._furniture_block(item, "explicit-paratext")
+                if not self._rescue_caption_from_furniture(item):
+                    self._furniture_block(item, "explicit-paratext")
             elif label == DocItemLabel.FORMULA:
                 self._emit_formula(item)
             elif label == DocItemLabel.CODE:
@@ -1257,40 +1708,81 @@ class StructAdapter:
             return previous + following
         return None
 
+    def _continuation_predecessor(self, index: int) -> tuple[dict | None, str]:
+        """The block a lowercase-starting paragraph continues: the nearest
+        unterminated paragraph or list item behind it (this page or the
+        previous one), looking past floats, listings, list items, listing
+        captions typeset as headings, and up to three complete paragraphs
+        that belong to another column's flow. A figure whose caption is
+        unterminated and sits just above the paragraph is a split caption."""
+        block = self.blocks[index]
+        skip = FLOAT_KINDS | {"furniture", "code"}
+        back = index - 1
+        complete_skipped = 0
+        box = block["evidence"]["boxes"][0] if block["evidence"]["boxes"] else None
+        prose_between = False
+        while back >= 0 and index - back <= 16:
+            candidate = self.blocks[back]
+            if candidate["page"] is None or block["page"] is None:
+                break
+            # a page of floats between the halves is still one sentence
+            if block["page"] - candidate["page"] > (1 if prose_between else 2):
+                break
+            kind = candidate["kind"]
+            if kind == "figure" and candidate["text"] and not is_terminated(candidate["text"]) and candidate["page"] == block["page"] and box and candidate["evidence"]["boxes"]:
+                fbox = candidate["evidence"]["boxes"][0]
+                if -0.01 <= box["y"] - (fbox["y"] + fbox["height"]) <= 0.12 and index - back <= 3:
+                    return candidate, "caption"
+            if kind in skip:
+                back -= 1
+                continue
+            if kind == "heading":
+                if CAPTION_LIKE_RE.match(candidate["text"]) or self._heading_belongs_to_float(back):
+                    back -= 1
+                    continue
+                break
+            if kind not in ("paragraph", "list-item"):
+                break
+            if is_terminated(candidate["text"]):
+                complete_skipped += 1
+                prose_between = True
+                if complete_skipped > 3:
+                    break
+                back -= 1
+                continue
+            return candidate, kind
+        return None, ""
+
+    def _heading_belongs_to_float(self, index: int) -> bool:
+        """A short heading directly above a figure, table or listing on the
+        same page is that float's own title (a screenshot's caption bar, a
+        listing name), not a section boundary."""
+        heading = self.blocks[index]
+        if len(heading["text"].split()) > 6 or not heading["evidence"]["boxes"]:
+            return False
+        for j in range(index + 1, min(index + 3, len(self.blocks))):
+            nxt = self.blocks[j]
+            if nxt["kind"] == "furniture":
+                continue
+            if nxt["kind"] not in ("figure", "table", "code") or nxt["page"] != heading["page"] or not nxt["evidence"]["boxes"]:
+                return False
+            hbox, nbox = heading["evidence"]["boxes"][0], nxt["evidence"]["boxes"][0]
+            return -0.01 <= nbox["y"] - (hbox["y"] + hbox["height"]) <= 0.03
+        return False
+
     def _join_split_paragraphs(self) -> None:
         """Post-pass join for paragraphs split by floats or furniture that were
-        only classified after the walk: the previous paragraph lacks terminal
-        punctuation and the continuation starts lowercase (or the two halves
-        fuse into an attested word)."""
-        skip = FLOAT_KINDS | {"furniture"}
+        only classified after the walk: the continuation starts lowercase and
+        its predecessor lacks terminal punctuation (or the two halves fuse
+        into an attested word). Complete paragraphs in between belong to
+        another column's flow."""
         index = 1
         while index < len(self.blocks):
             block = self.blocks[index]
             if block["kind"] != "paragraph" or not LOWER_START_RE.match(block["text"].lstrip()):
                 index += 1
                 continue
-            # the continuation's paragraph is the nearest unterminated
-            # paragraph behind it, on this page or the previous one; complete
-            # paragraphs in between belong to another column's flow
-            back = index - 1
-            previous = None
-            complete_skipped = 0
-            while back >= 0 and index - back <= 8:
-                candidate = self.blocks[back]
-                if candidate["kind"] in skip:
-                    back -= 1
-                    continue
-                if candidate["kind"] != "paragraph" or candidate["page"] is None or block["page"] is None or block["page"] - candidate["page"] > 1:
-                    break
-                text = candidate["text"].rstrip()
-                if TERMINAL_RE.search(text) or TRAILING_MARKER_RE.search(text):
-                    complete_skipped += 1
-                    if complete_skipped > 3:
-                        break
-                    back -= 1
-                    continue
-                previous = candidate
-                break
+            previous, how = self._continuation_predecessor(index)
             if previous is None:
                 index += 1
                 continue
@@ -1311,7 +1803,8 @@ class StructAdapter:
             for run in block["inline"]:
                 previous["inline"].append({**run, "start": run["start"] - shift + base, "end": run["end"] - shift + base})
             previous["evidence"]["pages"] = sorted(set(previous["evidence"]["pages"] + block["evidence"]["pages"]))
-            previous["evidence"]["boxes"].extend(block["evidence"]["boxes"])
+            if how != "caption":
+                previous["evidence"]["boxes"].extend(block["evidence"]["boxes"])
             previous["evidence"]["sourceIds"] = list(dict.fromkeys(previous["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))
             # relationships pointing at the absorbed block now point at the survivor
             for relationship in self.relationships:
@@ -1319,8 +1812,54 @@ class StructAdapter:
                     relationship["from"] = previous["id"]
                 relationship["to"] = [previous["id"] if t == block["id"] else t for t in relationship["to"]]
             del self.blocks[index]
+            self.report.paragraphs -= 1
             self.report.joins += 1
             self.report.post_pass_joins += 1
+            if how == "caption":
+                self.report.caption_continuations_joined += 1
+            elif how == "list-item":
+                self.report.list_item_continuations_joined += 1
+
+    def _strip_glued_tails(self) -> None:
+        """The layout model sometimes appends a running footer (`Preprint.`) or
+        a chart label from a neighbouring figure (`UMAP Dimension 1 (a.u.)`)
+        to the last line of a paragraph; the glued words end the paragraph
+        with punctuation that is not the sentence's. They are cut when they
+        match a furniture text or a text line inside a figure on the page."""
+        furniture_texts = {
+            re.sub(r"[\s.]+$", "", b["text"].strip().lower())
+            for b in self.blocks
+            if b["kind"] == "furniture" and 3 <= len(b["text"].strip()) <= 40
+        }
+        for block in self.blocks:
+            if block["kind"] != "paragraph" or block["page"] is None or len(block["text"]) < 60:
+                continue
+            text = block["text"].rstrip()
+            lowered = text.lower()
+            tails: list[str] = []
+            for furniture in furniture_texts:
+                if furniture and re.search(r"(?<![a-z0-9])" + re.escape(furniture) + r"\.?$", lowered) and not lowered.endswith("." + furniture):
+                    tails.append(furniture)
+            for figure in self.blocks:
+                if figure["kind"] != "figure" or figure["page"] not in (block["page"], block["page"] + 1) or not figure["evidence"]["boxes"]:
+                    continue
+                fbox = figure["evidence"]["boxes"][0]
+                for _, _, line in self._lines_in(fbox["page"], fbox["x"] - 0.02, fbox["y"] - 0.02, fbox["x"] + fbox["width"] + 0.02, fbox["y"] + fbox["height"] + 0.04):
+                    line = line.strip().lower()
+                    if len(line) >= 6 and lowered.endswith(line) and not lowered.endswith("." + line):
+                        tails.append(line)
+            if not tails:
+                continue
+            tail = max(tails, key=len)
+            cut = lowered.rfind(tail, 0, len(lowered))
+            if cut <= 20:
+                continue
+            head = text[:cut].rstrip()
+            if TERMINAL_RE.search(head):
+                continue  # a complete sentence before it: the words are the paragraph's own (a DOI in a reference block)
+            block["text"] = head
+            block["inline"] = [run for run in block["inline"] if run["end"] <= len(block["text"])]
+            self.report.glued_tails_stripped += 1
 
     def _demote_repeated_edge_text(self) -> None:
         """Spec 042 rule: short text repeated on three or more pages inside the
@@ -1332,8 +1871,8 @@ class StructAdapter:
             if block["kind"] not in ("paragraph", "caption", "heading", "furniture") or not block["evidence"]["boxes"]:
                 continue
             text = block["text"].strip()
-            if not text or len(text) > 160:
-                continue
+            if not text or len(text) > 160 or CAPTION_LIKE_RE.match(text):
+                continue  # `Figure 17: …` repeated on four pages is four captions, not a running head
             box = block["evidence"]["boxes"][0]
             if not (box["y"] <= 0.15 or box["y"] + box["height"] >= 0.84):
                 continue
@@ -1407,7 +1946,7 @@ class StructAdapter:
                 merged.append(block)
                 continue
             existing["text"] = f"{existing['text']} {block['text']}".strip()
-            existing["evidence"]["boxes"] = (existing["evidence"]["boxes"] + block["evidence"]["boxes"])[:4]
+            existing["evidence"]["boxes"] = (existing["evidence"]["boxes"] + block["evidence"]["boxes"])[:8]
             existing["evidence"]["sourceIds"] = list(dict.fromkeys(existing["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))[:8]
             furniture = existing.get("furniture")
             if furniture:
@@ -1462,8 +2001,10 @@ class StructAdapter:
                         ):
                             block["text"] = clean_caption(neighbour["text"])
                             block["inline"] = neighbour.get("inline", []) if block["text"] == neighbour["text"] else []
-                            label = re.match(r"^(Figure|Fig\.?)\s*(\d+)", neighbour["text"], re.IGNORECASE)
+                            label = re.match(r"^(Figure|Fig\.?)\s*(\d+(?:\.\d+)*)", neighbour["text"], re.IGNORECASE)
                             block["label"] = f"Figure {label.group(2)}"
+                            if neighbour["evidence"]["boxes"]:
+                                self._attached_caption_boxes[block["id"]] = neighbour["evidence"]["boxes"][0]
                             self.report.figures_with_caption += 1
                             if neighbour["kind"] == "caption":
                                 self.report.orphan_captions -= 1
@@ -1494,30 +2035,121 @@ class StructAdapter:
         words.sort()
         return [(y, t) for y, _, t in words]
 
+    def _lines_in(self, page: int, x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float, str]]:
+        """Source text lines inside a region as (top, bottom, text), from the
+        word boxes grouped by baseline."""
+        if page - 1 >= len(self.word_boxes) or page not in self.doc.pages:
+            return []
+        size = self.doc.pages[page].size
+        if not size.width or not size.height:
+            return []
+        words = []
+        for wx0, wy0, wx1, wy1, text in self.word_boxes[page - 1]:
+            cx, cy = (wx0 + wx1) / 2 / size.width, (wy0 + wy1) / 2 / size.height
+            if x0 <= cx <= x1 and y0 <= cy <= y1:
+                words.append((wy0 / size.height, wy1 / size.height, wx0 / size.width, text))
+        words.sort(key=lambda w: (round((w[0] + w[1]) / 2, 3), w[2]))
+        lines: list[list] = []
+        for top, bottom, x, text in words:
+            if lines and abs((top + bottom) / 2 - (lines[-1][0] + lines[-1][1]) / 2) <= 0.4 * max(bottom - top, 0.004):
+                lines[-1][0] = min(lines[-1][0], top)
+                lines[-1][1] = max(lines[-1][1], bottom)
+                lines[-1][2].append((x, text))
+            else:
+                lines.append([top, bottom, [(x, text)]])
+        return [(top, bottom, " ".join(t for _, t in sorted(parts))) for top, bottom, parts in lines]
+
     def _read_captions_inside_figures(self) -> None:
-        """When the layout model swallowed the caption into the picture crop, the
-        PDF text layer still holds it: read the words in the bottom band of the
-        figure box; if they start with `Figure N`, that is the caption."""
-        for block in self.blocks:
-            if block["kind"] != "figure" or block["text"] or not block["evidence"]["boxes"] or block["page"] is None:
+        """When the layout model swallowed a caption into a picture crop, the
+        PDF text layer still holds it. A `Figure N` line at the foot of a
+        caption-less figure is its caption (the crop is trimmed above it); a
+        `Figure N` line with artwork below it splits the crop into the figure
+        that owns the caption and the rest."""
+        index = 0
+        while index < len(self.blocks):
+            block = self.blocks[index]
+            index += 1
+            if block["kind"] != "figure" or not block["evidence"]["boxes"] or block["page"] is None or not block.get("fallbackAssetIds"):
+                continue
+            if "rule-box" in (block["evidence"].get("signals") or []):
                 continue
             box = block["evidence"]["boxes"][0]
-            band_top = box["y"] + box["height"] * 0.6
-            words = self._words_in(block["page"], box["x"] - 0.01, band_top, box["x"] + box["width"] + 0.01, box["y"] + box["height"] + 0.01)
-            if not words:
+            page = block["page"]
+            lines = self._lines_in(page, box["x"] - 0.01, box["y"] - 0.005, box["x"] + box["width"] + 0.01, box["y"] + box["height"] + 0.01)
+            caption_index = next((i for i, (_, _, text) in enumerate(lines) if FIGURE_CAPTION_RE.match(clean_caption(text))), None)
+            if caption_index is None:
                 continue
-            # keep the lines from the first `Figure N` word onward
-            start = next((i for i, (_, t) in enumerate(words) if re.match(r"^(Figure|Fig\.?)$", t, re.IGNORECASE)), None)
-            if start is None:
+            # the caption runs over the following lines while they keep the same line spacing
+            end = caption_index
+            while end + 1 < len(lines) and lines[end + 1][0] - lines[end][1] <= 0.6 * max(lines[end][1] - lines[end][0], 0.005):
+                end += 1
+            caption_text = clean_caption(sanitize(" ".join(text for _, _, text in lines[caption_index : end + 1])))
+            label = FIGURE_CAPTION_RE.match(caption_text)
+            if not label or len(caption_text) > 1200:
                 continue
-            caption = clean_caption(sanitize(" ".join(t for _, t in words[start:])))
-            label = FIGURE_CAPTION_RE.match(caption)
-            if not label:
+            caption_top, caption_bottom = lines[caption_index][0], lines[end][1]
+            artwork_below = box["y"] + box["height"] - caption_bottom
+            artwork_above = caption_top - box["y"]
+            if block["text"] and artwork_below < 0.03:
+                continue  # the figure already owns a caption and nothing sits under this line
+            if artwork_below < 0.03:
+                # caption at the foot: adopt it and trim the crop above it
+                block["text"] = caption_text
+                block["label"] = f"Figure {label.group(2)}"
+                self._attached_caption_boxes[block["id"]] = {"page": page, "x": box["x"], "y": round(caption_top, 5), "width": box["width"], "height": round(caption_bottom - caption_top, 5), "rotation": 0}
+                self.report.figures_with_caption += 1
+                self.report.captions_read_from_source += 1
+                if artwork_above >= 0.03:
+                    self._recrop_figure(block, box["x"], box["y"], box["x"] + box["width"], caption_top - 0.002)
                 continue
-            block["text"] = caption
-            block["label"] = f"Figure {label.group(2)}"
+            if artwork_above < 0.03:
+                continue  # a caption at the head of the crop belongs to the artwork below (caption-above convention): leave it
+            # artwork on both sides: the upper part owns this caption, the rest keeps the block's own
+            upper_evidence = {
+                "confidence": 0.7,
+                "pages": [page],
+                "boxes": [{"page": page, "x": box["x"], "y": box["y"], "width": box["width"], "height": round(caption_top - 0.002 - box["y"], 5), "rotation": 0}],
+                "sourceIds": block["evidence"]["sourceIds"],
+                "signals": ["source-region-fallback", "split-at-inner-caption"],
+            }
+            asset_id = self._crop_asset("figure", f"figure-split-{label.group(2)}", page, box["x"], box["y"], box["x"] + box["width"], caption_top - 0.002, upper_evidence, block["evidence"]["sourceIds"], require_ink=True)
+            if not asset_id:
+                continue
+            upper = {
+                "id": self._id(f"b-split-figure-{label.group(2)}"),
+                "kind": "figure",
+                "text": caption_text,
+                "label": f"Figure {label.group(2)}",
+                "page": page,
+                "order": 0,
+                "column": "single",
+                "inline": [],
+                "evidence": upper_evidence,
+                "fallbackAssetIds": [asset_id],
+            }
+            self._recrop_figure(block, box["x"], caption_bottom + 0.002, box["x"] + box["width"], box["y"] + box["height"])
+            self.blocks.insert(index - 1, upper)
+            self.report.figures += 1
             self.report.figures_with_caption += 1
             self.report.captions_read_from_source += 1
+            self._diagnostic("info", "visuals", "Figure split at an inner caption", f"{upper['label']}: the caption inside the crop separates two figures", None, page)
+            # the lower part now sits at `index`: examine it again for a further inner caption
+
+    def _recrop_figure(self, block: dict, x0: float, y0: float, x1: float, y1: float) -> None:
+        """Replace a figure's crop with a sub-region of it."""
+        if y1 - y0 < 0.02 or x1 - x0 < 0.02:
+            return
+        page = block["page"]
+        evidence = dict(block["evidence"])
+        evidence["boxes"] = [{"page": page, "x": round(x0, 5), "y": round(y0, 5), "width": round(x1 - x0, 5), "height": round(y1 - y0, 5), "rotation": 0}]
+        evidence["signals"] = list(dict.fromkeys((evidence.get("signals") or []) + ["source-region-fallback", "recropped"]))
+        asset_id = self._crop_asset("figure", f"figure-recrop-{block['id']}", page, x0, y0, x1, y1, evidence, evidence["sourceIds"])
+        if not asset_id:
+            return
+        old = set(block.get("fallbackAssetIds", []))
+        self.assets = [a for a in self.assets if a["id"] not in old]
+        block["fallbackAssetIds"] = [asset_id]
+        block["evidence"] = evidence
 
     def _read_table_captions_from_source(self) -> None:
         """A caption-less table whose `Table N` caption the layout model
@@ -1549,6 +2181,8 @@ class StructAdapter:
         and the caption's own horizontal extent, cut from the page image."""
         rebuilt: list[dict] = []
         for index, block in enumerate(self.blocks):
+            if block.get("_absorbed"):
+                continue
             label_match = FIGURE_CAPTION_RE.match(block["text"])
             claimed = any(
                 0 <= index + delta < len(self.blocks)
@@ -1580,27 +2214,44 @@ class StructAdapter:
             if image is None:
                 rebuilt.append(block)
                 continue
-            # column extent: widen a narrow caption to its column; span captions keep their width
-            x0 = max(0.0, caption_box["x"] - 0.02)
-            x1 = min(1.0, caption_box["x"] + caption_box["width"] + 0.02)
-            if caption_box["width"] < 0.5:
-                x0 = max(0.0, x0 - 0.03)
-                x1 = min(1.0, x1 + 0.03)
-            top = 0.06
-            for previous in reversed(rebuilt):
-                if previous["page"] != page or not previous["evidence"]["boxes"]:
-                    continue
-                pbox = previous["evidence"]["boxes"][-1]
-                overlaps_column = pbox["x"] < x1 and pbox["x"] + pbox["width"] > x0
-                if overlaps_column and pbox["y"] + pbox["height"] <= caption_box["y"]:
-                    top = max(top, pbox["y"] + pbox["height"] + 0.005)
-                    break
-            bottom = caption_box["y"] - 0.003
+            absorbed: list[dict] = []
+            band = self._panel_band(index, block, "above")
+            if band is None and index + 1 < len(self.blocks):
+                band = self._panel_band(index, block, "below")
+            if band is not None:
+                # the caption's neighbours are panels, sub-captions and chart
+                # labels: the run of them is the artwork
+                (x0, top, x1, bottom), absorbed = band
+                x0, top, x1, bottom = max(0.0, x0), max(0.0, top), min(1.0, x1), min(1.0, bottom)
+                signals = ["source-region-fallback", "orphan-caption", "panel-band"]
+            else:
+                # column extent: widen a narrow caption to its column; span captions keep their width
+                x0 = max(0.0, caption_box["x"] - 0.02)
+                x1 = min(1.0, caption_box["x"] + caption_box["width"] + 0.02)
+                if caption_box["width"] < 0.5:
+                    x0 = max(0.0, x0 - 0.03)
+                    x1 = min(1.0, x1 + 0.03)
+                top = 0.06
+                for previous in reversed(rebuilt):
+                    if previous["page"] != page or not previous["evidence"]["boxes"]:
+                        continue
+                    pbox = previous["evidence"]["boxes"][-1]
+                    overlaps_column = pbox["x"] < x1 and pbox["x"] + pbox["width"] > x0
+                    if overlaps_column and pbox["y"] + pbox["height"] <= caption_box["y"]:
+                        top = max(top, pbox["y"] + pbox["height"] + 0.005)
+                        break
+                bottom = caption_box["y"] - 0.003
+                signals = ["source-region-fallback", "orphan-caption"]
             if bottom - top < 0.04:
+                self._diagnostic("info", "visuals", "No artwork beside caption", f"{label_match.group(0).strip()}: the band {'of panels ' if absorbed else ''}above the caption is {bottom - top:.3f} of the page tall", None, page)
                 rebuilt.append(block)
                 continue
             width, height = image.size
             crop = image.crop((int(x0 * width), int(top * height), int(x1 * width), int(bottom * height)))
+            if absorbed and not self._has_ink(crop):
+                self._diagnostic("info", "visuals", "No artwork beside caption", f"{label_match.group(0).strip()}: the band of panels beside the caption is blank", None, page)
+                rebuilt.append(block)
+                continue
             self.report.figures += 1
             self.report.figures_with_caption += 1
             self.report.figures_recovered_from_source += 1
@@ -1608,7 +2259,7 @@ class StructAdapter:
                 self.report.orphan_captions -= 1
             else:
                 self.report.paragraphs -= 1
-            label = re.match(r"^(Figure|Fig\.?)\s*(\d+)", block["text"], re.IGNORECASE)
+            label = re.match(r"^(Figure|Fig\.?)\s*(\d+(?:\.\d+)*)", block["text"], re.IGNORECASE)
             figure = {
                 "id": self._id(f"b-recovered-figure-{label.group(2)}"),
                 "kind": "figure",
@@ -1623,15 +2274,26 @@ class StructAdapter:
                     "pages": [page],
                     "boxes": [{"page": page, "x": round(x0, 5), "y": round(top, 5), "width": round(x1 - x0, 5), "height": round(bottom - top, 5), "rotation": 0}],
                     "sourceIds": block["evidence"]["sourceIds"],
-                    "signals": ["source-region-fallback", "orphan-caption"],
+                    "signals": signals,
                 },
             }
             asset_id = self._asset_from_image("figure", f"figure-recovered-{label.group(2)}", crop, figure["evidence"], block["evidence"]["sourceIds"])
             if asset_id:
                 figure["fallbackAssetIds"] = [asset_id]
-            self._diagnostic("info", "visuals", "Figure recovered from source region", f"{figure['label']} cut from the page band above its caption", None, page)
+            if absorbed:
+                old_assets = {a for m in absorbed for a in m.get("fallbackAssetIds", [])}
+                self.assets = [a for a in self.assets if a["id"] not in old_assets]
+                for member in absorbed:
+                    if member["kind"] == "figure":
+                        self.report.figures -= 1
+                    if member in rebuilt:
+                        rebuilt.remove(member)
+                    else:
+                        member["_absorbed"] = True
+                self.report.figures_from_panel_band += 1
+            self._diagnostic("info", "visuals", "Figure recovered from source region", f"{figure['label']} cut from the page band {'of panels beside' if absorbed else 'above'} its caption", None, page)
             rebuilt.append(figure)
-        self.blocks = rebuilt
+        self.blocks = [b for b in rebuilt if not b.get("_absorbed")]
 
     def _asset_from_image(self, kind: str, base: str, pil_image, evidence: dict, source_ids: list[str]) -> str | None:
         if pil_image is None or pil_image.width < 8 or pil_image.height < 8:
@@ -1712,6 +2374,11 @@ class StructAdapter:
             while j < len(self.blocks):
                 nxt = self.blocks[j]
                 if nxt["kind"] == "figure" and not nxt["text"] and nxt["evidence"]["boxes"] and nxt["page"] == block["page"]:
+                    last = group[-1]["evidence"]["boxes"][0]
+                    nbox = nxt["evidence"]["boxes"][0]
+                    ux0, ux1 = min(last["x"], nbox["x"]), max(last["x"] + last["width"], nbox["x"] + nbox["width"])
+                    if self._caption_between(block["page"], last["y"], last["y"] + last["height"], nbox, ux0, ux1):
+                        break  # a caption between two pictures separates two figures
                     group.append(nxt)
                     j += 1
                 else:
@@ -1778,6 +2445,11 @@ class StructAdapter:
                     horizontal_gap = max(nbox["x"] - (fbox["x"] + fbox["width"]), fbox["x"] - (nbox["x"] + nbox["width"]))
                     if min(vertical_gap, horizontal_gap) > 0.04:
                         continue
+                    attached = self._attached_caption_boxes.get(block["id"])
+                    if attached is not None and vertical_gap > 0:
+                        cap_center = attached["y"] + attached["height"] / 2
+                        if (nbox["y"] >= fbox["y"] + fbox["height"] and fbox["y"] + fbox["height"] - 0.01 < cap_center < nbox["y"]) or (nbox["y"] + nbox["height"] <= fbox["y"] and nbox["y"] + nbox["height"] < cap_center < fbox["y"] + 0.01):
+                            continue  # the neighbour lies beyond this figure's own caption
                     group = [neighbour, block] if neighbour_index < index else [block, neighbour]
                     if self._union_figure(block, group):
                         self.report.figures_with_caption += 0
@@ -1786,14 +2458,65 @@ class StructAdapter:
                 if changed:
                     break
 
+    def _fix_caption_sides(self) -> None:
+        """When the paper sets figure captions below their figures, a picture
+        whose attached caption sits above it while an orphan `Figure N`
+        caption sits right below it took its neighbour's caption: it swaps to
+        the caption below, and the caption above becomes an orphan for the
+        picture above to adopt (symmetric for captions-above papers)."""
+        if len(self._figure_caption_below) < 2:
+            return
+        below = sum(self._figure_caption_below) > len(self._figure_caption_below) / 2
+        for block in list(self.blocks):
+            if block["kind"] != "figure" or not block["text"] or not block["evidence"]["boxes"] or block["page"] is None:
+                continue
+            attached = self._attached_caption_boxes.get(block["id"])
+            if attached is None:
+                continue
+            fbox = block["evidence"]["boxes"][0]
+            attached_below = attached["y"] >= fbox["y"] + fbox["height"] * 0.5
+            if attached_below == below:
+                continue
+            for orphan in self.blocks:
+                if orphan["kind"] not in ("caption", "paragraph") or orphan["page"] != block["page"] or not orphan["evidence"]["boxes"] or not FIGURE_CAPTION_RE.match(orphan["text"]) or len(orphan["text"]) > 1200:
+                    continue
+                obox = orphan["evidence"]["boxes"][0]
+                gap = obox["y"] - (fbox["y"] + fbox["height"]) if below else fbox["y"] - (obox["y"] + obox["height"])
+                overlap = min(fbox["x"] + fbox["width"], obox["x"] + obox["width"]) - max(fbox["x"], obox["x"])
+                if not (-0.01 <= gap <= 0.09) or overlap < 0.4 * min(fbox["width"], obox["width"]):
+                    continue
+                former = self._new_block("caption", None, block["text"]) if False else {
+                    "id": self._id(f"b-caption-{block['id']}"),
+                    "kind": "caption",
+                    "text": block["text"],
+                    "page": block["page"],
+                    "order": 0,
+                    "column": "single",
+                    "inline": block.get("inline", []),
+                    "evidence": {"confidence": 0.8, "pages": [block["page"]], "boxes": [attached], "sourceIds": block["evidence"]["sourceIds"], "signals": ["docling-layout", "caption-side-fixed"]},
+                }
+                block["text"] = clean_caption(orphan["text"])
+                block["inline"] = orphan.get("inline", []) if block["text"] == orphan["text"] else []
+                label = FIGURE_CAPTION_RE.match(block["text"])
+                block["label"] = f"Figure {label.group(2)}" if label else block.get("label")
+                position = self.blocks.index(orphan)
+                self.blocks[position] = former  # the freed caption takes the orphan's place
+                self._attached_caption_boxes[block["id"]] = obox
+                self.report.orphan_captions += 1
+                self.report.caption_sides_fixed += 1
+                self._diagnostic("info", "visuals", "Caption reassigned to its figure", f"{block['label']}: the caption on the paper's caption side replaces one attached from the other side", None, block["page"])
+                break
+
     def _adopt_captions_by_geometry(self) -> None:
         """A caption-less figure or table adopts the nearest orphan `Figure N`
         / `Table N` caption on its page that shares its column and sits just
         below or above it, wherever the caption landed in reading order."""
         owned = {t for r in self.relationships for t in r["to"]}
         for block in list(self.blocks):
-            if block["kind"] not in ("figure", "table") or block["text"] or not block["evidence"]["boxes"] or block["page"] is None:
+            if block["kind"] not in ("figure", "table") or not block["evidence"]["boxes"] or block["page"] is None:
                 continue
+            if block["text"] and not (block["kind"] == "figure" and SUBCAPTION_RE.match(block["text"]) and len(block["text"]) < 160):
+                continue  # `(c) Dynamic outlining …` is a panel's sub-caption, not the figure's caption
             pattern = TABLE_CAPTION_RE if block["kind"] == "table" else FIGURE_CAPTION_RE
             fbox = block["evidence"]["boxes"][0]
             best, best_gap = None, 1.0
@@ -1804,19 +2527,54 @@ class StructAdapter:
                     continue
                 cbox = candidate["evidence"]["boxes"][0]
                 overlap = min(fbox["x"] + fbox["width"], cbox["x"] + cbox["width"]) - max(fbox["x"], cbox["x"])
+                v_overlap = min(fbox["y"] + fbox["height"], cbox["y"] + cbox["height"]) - max(fbox["y"], cbox["y"])
+                side_gap = max(cbox["x"] - (fbox["x"] + fbox["width"]), fbox["x"] - (cbox["x"] + cbox["width"]))
                 if overlap < 0.4 * min(fbox["width"], cbox["width"]):
+                    # a caption set beside its figure (a two-column float with the text on one side)
+                    if block["kind"] == "figure" and v_overlap >= 0.5 * cbox["height"] and -0.01 <= side_gap <= 0.06 and side_gap + 0.02 < best_gap:
+                        best, best_gap = candidate, side_gap + 0.02
                     continue
                 below = cbox["y"] - (fbox["y"] + fbox["height"])
                 above = fbox["y"] - (cbox["y"] + cbox["height"])
                 gap = below if -0.01 <= below <= 0.08 else (above if -0.01 <= above <= 0.08 else None)
                 if gap is not None and abs(gap) < best_gap:
                     best, best_gap = candidate, abs(gap)
+            if best is None and block["kind"] == "table":
+                # the paper calls this box a figure: a Docling table whose only
+                # caption nearby says `Figure N`
+                for candidate in self.blocks:
+                    if candidate is block or candidate["kind"] not in ("caption", "paragraph") or candidate["page"] != block["page"] or candidate["id"] in owned:
+                        continue
+                    if not FIGURE_CAPTION_RE.match(candidate["text"]) or len(candidate["text"]) > 1200 or not candidate["evidence"]["boxes"]:
+                        continue
+                    cbox = candidate["evidence"]["boxes"][0]
+                    overlap = min(fbox["x"] + fbox["width"], cbox["x"] + cbox["width"]) - max(fbox["x"], cbox["x"])
+                    gap = min(abs(cbox["y"] - (fbox["y"] + fbox["height"])), abs(fbox["y"] - (cbox["y"] + cbox["height"])))
+                    if overlap >= 0.4 * min(fbox["width"], cbox["width"]) and gap <= 0.03:
+                        evidence = dict(block["evidence"])
+                        evidence["signals"] = list(dict.fromkeys((evidence.get("signals") or []) + ["source-region-fallback", "table-item-as-figure"]))
+                        asset_id = self._crop_asset("figure", f"figure-from-table-{block['id']}", block["page"], fbox["x"], fbox["y"], fbox["x"] + fbox["width"], fbox["y"] + fbox["height"], evidence, evidence["sourceIds"])
+                        if not asset_id:
+                            break
+                        old_assets = set(block.get("fallbackAssetIds", []))
+                        self.assets = [a for a in self.assets if a["id"] not in old_assets]
+                        block["kind"] = "figure"
+                        block.pop("table", None)
+                        block["fallbackAssetIds"] = [asset_id]
+                        block["evidence"] = evidence
+                        if block.get("table") is None:
+                            self.report.tables_semantic = max(0, self.report.tables_semantic - 1)
+                        self.report.figures += 1
+                        pattern = FIGURE_CAPTION_RE
+                        best = candidate
+                        break
             if best is None:
                 continue
             label = pattern.match(best["text"])
             block["text"] = clean_caption(best["text"]) if block["kind"] == "figure" else best["text"]
             block["inline"] = best.get("inline", []) if block["text"] == best["text"] else []
             block["label"] = f"{'Table' if block['kind'] == 'table' else 'Figure'} {label.group(2)}"
+            self._attached_caption_boxes[block["id"]] = best["evidence"]["boxes"][0]
             self.blocks.remove(best)
             owned.add(best["id"])
             if best["kind"] == "caption":
@@ -1991,6 +2749,11 @@ class StructAdapter:
             self.report.paragraphs -= 1
         elif block["kind"] == "caption":
             self.report.orphan_captions = max(0, self.report.orphan_captions - 1)
+        elif block["kind"] == "footnote":
+            self.report.footnotes = max(0, self.report.footnotes - 1)
+            if block.get("label"):
+                self.report.footnotes_with_marker = max(0, self.report.footnotes_with_marker - 1)
+            self._notes = [entry for entry in self._notes if entry[0] is not block]
 
     def _rejoin_split_listings(self) -> None:
         """Two code blocks separated only by a caption, footnote, or furniture
@@ -2093,6 +2856,17 @@ class StructAdapter:
                     continue
             index += 1
 
+    def _in_furniture_band(self, box: dict) -> bool:
+        """Whether furniture on at least two other pages sits at this height."""
+        pages = set()
+        for other in self.blocks:
+            if other["kind"] != "furniture" or not other["evidence"]["boxes"]:
+                continue
+            obox = other["evidence"]["boxes"][0]
+            if abs(obox["y"] - box["y"]) <= 0.015 and obox["page"] != box["page"]:
+                pages.add(obox["page"])
+        return len(pages) >= 2
+
     def _demote_heading_running_heads(self) -> None:
         """Running heads that repeat the current section title or the paper
         title (so their text changes from page to page and escapes the
@@ -2107,11 +2881,13 @@ class StructAdapter:
             if block["kind"] not in ("paragraph", "caption") or not block["evidence"]["boxes"] or block["page"] in (None, 1):
                 continue
             text = block["text"].strip()
-            if not text or len(text) > 120:
+            if not text or len(text) > 120 or CAPTION_LIKE_RE.match(text):
                 continue
             box = block["evidence"]["boxes"][0]
             if not (box["y"] <= 0.12 or box["y"] + box["height"] >= 0.88):
                 continue
+            if not (box["y"] <= 0.075 or box["y"] + box["height"] >= 0.925) and not self._in_furniture_band(box):
+                continue  # a bold lead-in at the foot of a page is prose, not a running head
             normalized = re.sub(r"^\d+\s+|\s+\d+$", "", key(text))
             if len(normalized) < 6:
                 continue
@@ -2156,6 +2932,828 @@ class StructAdapter:
         flush_run()
         self.blocks = kept
 
+    def _drop_numeric_fragments(self) -> None:
+        """A number-only block the size of a single glyph outside the page's
+        edge bands is a fraction digit or chart tick the layout model cut out
+        of a formula or figure; it cannot be a page number and reads as noise."""
+        kept: list[dict] = []
+        for block in self.blocks:
+            box = block["evidence"]["boxes"][0] if block["evidence"]["boxes"] else None
+            if (
+                block["kind"] == "paragraph"
+                and box is not None
+                and TICK_LABEL_RE.match(block["text"])
+                and box["height"] < 0.012
+                and box["width"] < 0.025
+                and 0.06 < box["y"] < 0.94
+            ):
+                self.report.numeric_fragments_dropped += 1
+                continue
+            kept.append(block)
+        self.blocks = kept
+
+
+    # ------------------------------------------------------------ rule boxes
+    def _rule_rows(self, page: int, cbox: dict) -> list[tuple[float, float, float, float]]:
+        """Horizontal rules on the page that span the caption's column, merged
+        when several segments share a baseline: (y, x0, x1, stroke width)
+        sorted by y. Rules in the page's edge bands (the line under a running
+        head) are not table rules."""
+        page_text = self._page_text(page)
+        if page_text is None:
+            return []
+        cx0, cx1 = cbox["x"], cbox["x"] + cbox["width"]
+        rows: list[list[float]] = []
+        for rule in page_text.rules:
+            if not rule.horizontal or rule.y0 < 0.06 or rule.y0 > 0.95:
+                continue
+            if rule.x1 - rule.x0 < 0.5 * (cx1 - cx0):
+                continue  # a footnote separator under a wide caption
+            overlap = min(cx1, rule.x1) - max(cx0, rule.x0)
+            if overlap < 0.6 * min(cx1 - cx0, rule.x1 - rule.x0):
+                continue
+            for row in rows:
+                if abs(row[0] - rule.y0) <= 0.003:
+                    row[1] = min(row[1], rule.x0)
+                    row[2] = max(row[2], rule.x1)
+                    row[3] = max(row[3], rule.width)
+                    break
+            else:
+                rows.append([rule.y0, rule.x0, rule.x1, rule.width])
+        return sorted((y, x0, x1, w) for y, x0, x1, w in rows)
+
+    def _blocking_between(self, page: int, y_a: float, y_b: float, x0: float, x1: float, exclude: dict) -> bool:
+        """Whether another caption, a captioned float, or a section heading
+        lies between two rules: the rules then belong to different objects."""
+        lo, hi = min(y_a, y_b), max(y_a, y_b)
+        for block in self.blocks:
+            if block is exclude or block["page"] != page or not block["evidence"]["boxes"]:
+                continue
+            box = block["evidence"]["boxes"][0]
+            if min(x1, box["x"] + box["width"]) - max(x0, box["x"]) < 0.3 * min(x1 - x0, box["width"]):
+                continue
+            if block["kind"] in ("figure", "table") and block["text"]:
+                if min(hi, box["y"] + box["height"]) - max(lo, box["y"]) > 0.005:
+                    return True
+                continue
+            cy = box["y"] + box["height"] / 2
+            if not (lo < cy < hi):
+                continue
+            text = block["text"].strip()
+            if CAPTION_LIKE_RE.match(text):
+                return True
+            if block["kind"] == "heading" and (NUMBERED_HEADING_RE.match(text) or APPENDIX_HEADING_RE.match(text) or TOP_LEVEL_HEADING_RE.match(text)):
+                return True
+        return False
+
+    def _rule_box(self, page: int, cbox: dict, side: str, exclude: dict, open_ended: bool = False) -> tuple[float, float, float, float] | None:
+        """(x0, y0, x1, y1) of the ruled region above or below a caption: the
+        rule nearest the caption on that side, extended rule by rule away from
+        it while no other caption, captioned float or section heading lies in
+        between. A heavy rule (booktabs top/bottom rule) closes the region when
+        the near rule is heavy too; vertical rules at the region's sides
+        extend it to their far end."""
+        rows = self._rule_rows(page, cbox)
+        if not rows:
+            return None
+        if side == "above":
+            near_candidates = [r for r in rows if r[0] <= cbox["y"] + 0.004 and cbox["y"] - r[0] <= 0.06]
+            near = max(near_candidates) if near_candidates else None
+            further = [r for r in rows if near and r[0] < near[0] - 0.005][::-1]
+        else:
+            bottom = cbox["y"] + cbox["height"]
+            near_candidates = [r for r in rows if r[0] >= bottom - 0.004 and r[0] - bottom <= 0.06]
+            near = min(near_candidates) if near_candidates else None
+            further = [r for r in rows if near and r[0] > near[0] + 0.005]
+        if near is None:
+            return None
+        x0, x1 = near[1], near[2]
+        page_text = self._page_text(page)
+        if page_text is not None:
+            # a framed box: a vertical side through the near rule fixes the far
+            # edge outright; nothing inside a frame separates it
+            for rule in page_text.rules:
+                if rule.horizontal or not (abs(rule.x0 - x0) <= 0.03 or abs(rule.x0 - x1) <= 0.03):
+                    continue
+                if not (rule.y0 - 0.01 <= near[0] <= rule.y1 + 0.01):
+                    continue
+                end = rule.y0 if side == "above" else rule.y1
+                if abs(end - near[0]) >= 0.02 and ((side == "above" and end < near[0]) or (side == "below" and end > near[0])):
+                    snapped = next((r for r in rows if abs(r[0] - end) <= 0.02), None)
+                    far_y = snapped[0] if snapped else end
+                    return (x0, min(near[0], far_y), x1, max(near[0], far_y))
+        thinnest = min(r[3] for r in rows)
+        heavy_edges = near[3] >= 1.5 * thinnest
+        far = near
+        for row in further:
+            if abs(row[0] - far[0]) > 0.75 or self._blocking_between(page, far[0], row[0], min(x0, row[1]), max(x1, row[2]), exclude):
+                break
+            far = row
+            x0, x1 = min(x0, row[1]), max(x1, row[2])
+            if heavy_edges and row[3] >= 0.9 * near[3]:
+                break  # the matching heavy rule closes the box
+        top, bottom = min(near[0], far[0]), max(near[0], far[0])
+        if far is (further[-1] if further else near) and open_ended:
+            # the last rule on this side: the box runs off the page (a table
+            # continued on the next page) and reaches the page's edge when
+            # text blocks sit between the rule and the edge and nothing blocks
+            edge = 0.06 if side == "above" else 0.94
+            beyond = (x0, min(far[0], edge), x1, max(far[0], edge))
+            if abs(far[0] - edge) >= 0.08 and not self._blocking_between(page, far[0], edge, x0, x1, exclude) and any(
+                m["kind"] in ("paragraph", "list-item", "code", "heading", "footnote") and m["text"].strip() for m in self._blocks_inside(page, beyond, exclude)
+            ):
+                top, bottom = min(top, beyond[1]), max(bottom, beyond[3])
+        if bottom - top < 0.02:
+            return None
+        return (x0, top, x1, bottom)
+
+    def _pixel_rows(self, page: int, x0: float, x1: float):
+        """Per-row ink and background fractions of a column strip of the page
+        image: (dark_fraction, nonwhite_fraction, image_height)."""
+        page_item = self.doc.pages.get(page)
+        try:
+            image = page_item.image.pil_image if page_item and page_item.image else None
+        except Exception:
+            image = None
+        if image is None:
+            return None
+        try:
+            import numpy as np
+        except ImportError:  # pragma: no cover
+            return None
+        width, height = image.size
+        px0, px1 = max(0, int(x0 * width)), min(width, int(x1 * width))
+        if px1 - px0 < 20:
+            return None
+        strip = np.asarray(image.convert("L"))[:, px0:px1]
+        # a frame edge is a thin line of any grey (anti-aliased at 2x); a shaded
+        # box is a run of rows tinted just off white
+        dark = (strip < 236).mean(axis=1)
+        nonwhite = (strip < 250).mean(axis=1)
+        return dark, nonwhite, height
+
+    def _pixel_box(self, page: int, cbox: dict, side: str, exclude: dict) -> tuple[float, float, float, float] | None:
+        """The framed or shaded region beside a caption, read from the page
+        image when the PDF's vector paths gave no rule: a row of ink across
+        the column is a frame edge, a run of tinted rows is a filled box.
+        Edges chain away from the caption while no other caption or captioned
+        float lies between them."""
+        x0 = max(0.0, cbox["x"] - 0.02 - (0.03 if cbox["width"] < 0.5 else 0.0))
+        x1 = min(1.0, cbox["x"] + cbox["width"] + 0.02 + (0.03 if cbox["width"] < 0.5 else 0.0))
+        rows = self._pixel_rows(page, x0, x1)
+        if rows is None:
+            return None
+        dark, nonwhite, height = rows
+        edge_rows = [i for i in range(len(dark)) if dark[i] >= 0.6]
+        # merge adjacent rows of one rule
+        edges: list[float] = []
+        for i in edge_rows:
+            if edges and i - edges[-1] * height <= 3:
+                continue
+            edges.append(i / height)
+        edges = [e for e in edges if 0.06 <= e <= 0.95]
+        if side == "above":
+            start = cbox["y"]
+            near_candidates = [e for e in edges if e <= start + 0.004 and start - e <= 0.08]
+            near = max(near_candidates) if near_candidates else None
+            further = sorted([e for e in edges if near is not None and e < near - 0.01], reverse=True)
+        else:
+            start = cbox["y"] + cbox["height"]
+            near_candidates = [e for e in edges if e >= start - 0.004 and e - start <= 0.08]
+            near = min(near_candidates) if near_candidates else None
+            further = sorted([e for e in edges if near is not None and e > near + 0.01])
+        if near is not None:
+            far = near
+            for edge in further:
+                if abs(edge - far) > 0.75 or self._blocking_between(page, far, edge, x0, x1, exclude):
+                    break
+                far = edge
+            if abs(far - near) >= 0.02:
+                return (x0, min(near, far), x1, max(near, far))
+        # a shaded box: tinted rows running away from the caption
+        tinted = nonwhite >= 0.9
+        row = int(start * height) - 1 if side == "above" else int(start * height) + 1
+        step = -1 if side == "above" else 1
+        gap = 0
+        while 0 <= row < height and not tinted[row] and gap < 0.04 * height:
+            row += step
+            gap += 1
+        if not (0 <= row < height) or not tinted[row]:
+            return None
+        end = row
+        misses = 0
+        while 0 <= row < height:
+            if tinted[row]:
+                end = row
+                misses = 0
+            else:
+                misses += 1
+                if misses > 4:
+                    break
+            row += step
+        top, bottom = (min(end, int(start * height) - 1), int(start * height) - 1) if side == "above" else (int(start * height) + 1, max(end, int(start * height) + 1))
+        if (bottom - top) / height < 0.03:
+            return None
+        y0, y1 = top / height, bottom / height
+        if self._blocking_between(page, y0, y1, x0, x1, exclude):
+            return None
+        return (x0, y0, x1, y1)
+
+    def _blocks_inside(self, page: int, region: tuple[float, float, float, float], exclude: dict | None = None) -> list[dict]:
+        x0, y0, x1, y1 = region
+        found = []
+        for block in self.blocks:
+            if block is exclude or block["page"] != page or not block["evidence"]["boxes"] or block["kind"] == "furniture":
+                continue
+            if block["kind"] in ("figure", "table") and block["text"]:
+                continue  # a captioned float is its own object, never a row of another
+            box = block["evidence"]["boxes"][0]
+            cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            if x0 - 0.005 <= cx <= x1 + 0.005 and y0 - 0.005 <= cy <= y1 + 0.005:
+                found.append(block)
+        return found
+
+    def _table_from_blocks(self, caption: dict, label: str, members: list[dict], region: tuple[float, float, float, float]) -> dict:
+        """A ruled box whose content the layout model emitted as text blocks
+        is a text table: one column per x-cluster of blocks, one row per
+        block (in column order), the caption as the table's text."""
+        clusters: list[list[dict]] = []
+        for block in sorted(members, key=lambda b: b["evidence"]["boxes"][0]["x"]):
+            box = block["evidence"]["boxes"][0]
+            for cluster in clusters:
+                anchor = cluster[0]["evidence"]["boxes"][0]
+                if abs(anchor["x"] - box["x"]) <= 0.05 or min(anchor["x"] + anchor["width"], box["x"] + box["width"]) - max(anchor["x"], box["x"]) >= 0.5 * min(anchor["width"], box["width"]):
+                    cluster.append(block)
+                    break
+            else:
+                clusters.append([block])
+        if len(clusters) > 3:
+            clusters = [sorted(members, key=lambda b: (b["evidence"]["boxes"][0]["y"], b["evidence"]["boxes"][0]["x"]))]
+        cells = []
+        rows = 0
+        for column, cluster in enumerate(clusters):
+            cluster.sort(key=lambda b: b["evidence"]["boxes"][0]["y"])
+            row = 0
+            for block in cluster:
+                entries: list[tuple[str, list[dict], bool]] = []
+                if block.get("table"):
+                    # a caption-less grid the layout model found inside the box: its rows join
+                    by_row: dict[int, list[str]] = {}
+                    for cell in sorted(block["table"]["cells"], key=lambda c: (c["row"], c["column"])):
+                        if cell["text"].strip():
+                            by_row.setdefault(cell["row"], []).append(cell["text"].strip())
+                    entries = [(" ".join(texts), [], False) for _, texts in sorted(by_row.items())]
+                elif block["text"].strip():
+                    entries = [(block["text"], [run for run in block["inline"] if not run.get("targetIds")], block["kind"] == "heading")]
+                for text, inline, is_heading in entries:
+                    cells.append(
+                        {
+                            "id": f"c{row}-{column}",
+                            "text": text,
+                            "row": row,
+                            "column": column,
+                            "rowSpan": 1,
+                            "columnSpan": 1,
+                            "headerScope": "column" if row == 0 and is_heading and len(cluster) > 1 else None,
+                            "inline": inline,
+                            "evidence": block["evidence"],
+                        }
+                    )
+                    row += 1
+            rows = max(rows, row)
+        page = caption["page"]
+        x0, y0, x1, y1 = region
+        return {
+            "id": self._id(f"b-ruled-table-{label.split()[-1]}"),
+            "kind": "table",
+            "text": caption["text"],
+            "label": label,
+            "page": page,
+            "order": 0,
+            "column": "single",
+            "inline": [],
+            "evidence": {
+                "confidence": 0.7,
+                "pages": [page],
+                "boxes": [{"page": page, "x": round(x0, 5), "y": round(y0, 5), "width": round(x1 - x0, 5), "height": round(y1 - y0, 5), "rotation": 0}],
+                "sourceIds": list(dict.fromkeys(caption["evidence"]["sourceIds"] + [sid for b in members for sid in b["evidence"]["sourceIds"]]))[:8],
+                "signals": ["rule-box", "orphan-table-caption"],
+            },
+            "table": {"rows": rows, "columns": len(clusters), "cells": cells, "semantic": "source-preserved"},
+        }
+
+    def _caption_sides(self, kind: str) -> list[str]:
+        """Which side of a caption its float sits on, the document's own
+        convention first (captions below figures is the default)."""
+        if kind == "table":
+            below = sum(self._captions_below_tables) > len(self._captions_below_tables) / 2 if self._captions_below_tables else False
+            return ["above", "below"] if below else ["below", "above"]
+        below = sum(self._figure_caption_below) >= len(self._figure_caption_below) / 2 if self._figure_caption_below else True
+        return ["above", "below"] if below else ["below", "above"]
+
+    def _recover_ruled_boxes(self) -> None:
+        """A `Table N` or `Figure N` caption with no float beside it whose
+        neighbouring region is framed by drawn rules: the blocks inside the
+        frame are the table's rows (a text table) or, for a figure, the frame
+        is cropped as the artwork and the text inside becomes part of it."""
+        index = 0
+        while index < len(self.blocks):
+            block = self.blocks[index]
+            if block["kind"] not in ("caption", "paragraph") or block["page"] is None or not block["evidence"]["boxes"] or len(block["text"]) > 1200:
+                index += 1
+                continue
+            table_match = TABLE_CAPTION_RE.match(block["text"])
+            figure_match = FIGURE_CAPTION_RE.match(block["text"]) if not table_match else None
+            if not table_match and not figure_match:
+                index += 1
+                continue
+            kind = "table" if table_match else "figure"
+            label = f"{'Table' if table_match else 'Figure'} {(table_match or figure_match).group(2)}"
+            if any(b.get("label") == label for b in self.blocks if b["kind"] in ("table", "figure")):
+                self._diagnostic("info", "tables" if table_match else "visuals", "Caption text repeats a float's label", f"{label}: another block already carries this label; left as text", None, block["page"])
+                index += 1
+                continue
+            # caption adoption has already run: a caption-less picture still
+            # beside this caption is content inside the box (an icon in a
+            # prompt), so the ruled box is read regardless
+            page = block["page"]
+            cbox = block["evidence"]["boxes"][0]
+            chosen = None
+            reasons = []
+            rows = self._rule_rows(page, cbox)
+            spans_caption = lambda r: r[2] - r[1] >= 0.9 * cbox["width"]  # noqa: E731
+            rule_above = next((r for r in reversed(rows) if r[0] <= cbox["y"] + 0.004 and cbox["y"] - r[0] <= 0.03 and spans_caption(r)), None)
+            rule_below = next((r for r in rows if r[0] >= cbox["y"] + cbox["height"] - 0.004 and r[0] - (cbox["y"] + cbox["height"]) <= 0.06 and spans_caption(r)), None)
+            sides = self._caption_sides(kind)
+            caption_in_box = rule_above is not None and rule_below is not None
+            for position_in_order, side in enumerate(sides):
+                region = self._rule_box(page, cbox, side, block, open_ended=position_in_order == 0 or caption_in_box)
+                if region is not None and caption_in_box and side == "below":
+                    # the caption is the first row of its own box: the box
+                    # starts at the rule above it
+                    region = (region[0], min(region[1], rule_above[0]), region[2], region[3])
+                pixel_box = False
+                if region is None:
+                    region = self._pixel_box(page, cbox, side, block)
+                    pixel_box = region is not None
+                if region is None:
+                    reasons.append(f"{side}: no rule within reach")
+                    continue
+                members = self._blocks_inside(page, region, block)
+                if kind == "table" and not any((m["kind"] in ("paragraph", "list-item", "code", "heading", "caption", "equation", "footnote") and m["text"].strip()) or m.get("table") for m in members):
+                    reasons.append(f"{side}: ruled region holds no text blocks")
+                    continue
+                chosen = (region, members)
+                break
+            if chosen is None:
+                self._diagnostic("info", "tables" if kind == "table" else "visuals", "No ruled box beside caption", f"{label}: {'; '.join(reasons)}", None, page)
+                index += 1
+                continue
+            region, members = chosen
+            x0, y0, x1, y1 = region
+            position = index
+            if kind == "table":
+                table = self._table_from_blocks(block, label, members, region)
+                # the table takes the place of its first member (reading order), else the caption's
+                first = min([self.blocks.index(m) for m in members if m in self.blocks] + [position])
+                for member in members:
+                    self._absorb_block(member)
+                self._absorb_block(block)
+                self.blocks.insert(min(first, len(self.blocks)), table)
+                position = self.blocks.index(table)
+                self.report.tables_from_rule_box += 1
+                self.report.tables_semantic += 1
+                self._diagnostic("info", "tables", "Table read from its ruled box", f"{label}: {len(members)} text blocks inside the drawn rules became rows", None, page)
+            else:
+                evidence = {
+                    "confidence": 0.7,
+                    "pages": [page],
+                    "boxes": [{"page": page, "x": round(x0, 5), "y": round(y0, 5), "width": round(x1 - x0, 5), "height": round(y1 - y0, 5), "rotation": 0}],
+                    "sourceIds": list(dict.fromkeys(block["evidence"]["sourceIds"] + [sid for b in members for sid in b["evidence"]["sourceIds"]]))[:8],
+                    "signals": ["rule-box", "source-region-fallback", "orphan-caption"],
+                }
+                asset_id = self._crop_asset("figure", f"figure-ruled-{figure_match.group(2)}", page, x0, y0, x1, y1, evidence, evidence["sourceIds"], require_ink=True)
+                if not asset_id:
+                    self._diagnostic("info", "visuals", "Ruled box crop refused", f"{label}: the framed region {y0:.3f}-{y1:.3f} holds no ink", None, page)
+                    index += 1
+                    continue
+                figure = {
+                    "id": self._id(f"b-ruled-figure-{figure_match.group(2)}"),
+                    "kind": "figure",
+                    "text": clean_caption(block["text"]),
+                    "label": label,
+                    "page": page,
+                    "order": 0,
+                    "column": "single",
+                    "inline": block.get("inline", []),
+                    "evidence": evidence,
+                    "fallbackAssetIds": [asset_id],
+                }
+                old_assets = {a for m in members for a in m.get("fallbackAssetIds", [])}
+                self.assets = [a for a in self.assets if a["id"] not in old_assets]
+                figures_inside = sum(1 for m in members if m["kind"] == "figure")
+                first = min([self.blocks.index(m) for m in members if m in self.blocks] + [position])
+                for member in members:
+                    self._absorb_block(member)
+                self._absorb_block(block)
+                self.blocks.insert(min(first, len(self.blocks)), figure)
+                position = self.blocks.index(figure)
+                self.report.figures += 1 - figures_inside
+                self.report.figures_with_caption += 1
+                self.report.figures_from_rule_box += 1
+                self._diagnostic("info", "visuals", "Figure cut from its ruled box", f"{label}: the framed region beside the caption ({len(members)} blocks inside) is the artwork", None, page)
+            index = position + 1  # continue right after the recovered block; absorbed members shifted the rest up
+
+    # ------------------------------------------------------------ panel bands
+    def _figure_like(self, block: dict) -> bool:
+        """Blocks that belong to a figure's artwork when they sit beside it:
+        caption-less pictures, sub-captions, chart labels, short labels."""
+        text = block["text"].strip()
+        if block["kind"] == "figure" and not text:
+            return True
+        if block["kind"] in ("paragraph", "caption", "heading", "list-item"):
+            if SUBCAPTION_RE.match(text) and len(text) < 160:
+                return True
+            if TICK_LABEL_RE.match(text):
+                return True
+            if len(text) < 60 and not re.search(r"[.!?]\s", text) and not CAPTION_LIKE_RE.match(text):
+                return True
+            if "caption-head" in (block["evidence"].get("signals") or []):
+                return True
+        if block["kind"] == "code":
+            return True  # a listing the layout model recognised, beside a caption
+        if block["kind"] == "paragraph" and block["evidence"]["boxes"] and block["page"] is not None:
+            # a listing set in a monospace face between a picture and its caption
+            page_text = self._page_text(block["page"])
+            if page_text is not None:
+                mono = total = 0
+                for box in block["evidence"]["boxes"]:
+                    if box["page"] != block["page"]:
+                        continue
+                    share = page_text.font_share(box)
+                    mono += share["mono"] * share["total"]
+                    total += share["total"]
+                if total >= 10 and mono >= 0.5 * total:
+                    return True
+        return False
+
+    def _panel_band(self, index: int, caption: dict, side: str) -> tuple[tuple[float, float, float, float], list[dict]] | None:
+        """The run of figure-like blocks stacked against one side of the
+        caption in its column, by geometry rather than reading order (chart
+        labels land anywhere in the layout model's order): a region plus the
+        blocks it covers; None when the run holds no picture and is too small
+        to be artwork."""
+        page = caption["page"]
+        cbox = caption["evidence"]["boxes"][0]
+        x0 = max(0.0, cbox["x"] - 0.02 - (0.03 if cbox["width"] < 0.5 else 0.0))
+        x1 = min(1.0, cbox["x"] + cbox["width"] + 0.02 + (0.03 if cbox["width"] < 0.5 else 0.0))
+        column = []
+        for candidate in self.blocks:
+            if candidate is caption or candidate["page"] != page or candidate["kind"] == "furniture" or not candidate["evidence"]["boxes"]:
+                continue
+            box = candidate["evidence"]["boxes"][0]
+            if not (box["x"] < x1 and box["x"] + box["width"] > x0):
+                continue
+            if side == "above" and box["y"] + box["height"] <= cbox["y"] + 0.01:
+                column.append((box["y"] + box["height"], candidate))
+            elif side == "below" and box["y"] >= cbox["y"] + cbox["height"] - 0.01:
+                column.append((-box["y"], candidate))
+        column.sort(key=lambda entry: -entry[0])  # nearest the caption first
+        members: list[dict] = []
+        limit = cbox["y"] if side == "above" else cbox["y"] + cbox["height"]
+        edge = 0.06 if side == "above" else 0.94
+        for _, candidate in column:
+            box = candidate["evidence"]["boxes"][0]
+            if not self._figure_like(candidate):
+                edge = box["y"] + box["height"] + 0.004 if side == "above" else box["y"] - 0.004
+                break
+            members.append(candidate)
+            limit = min(limit, box["y"]) if side == "above" else max(limit, box["y"] + box["height"])
+        if not members:
+            return None
+        pictures = [m for m in members if m["kind"] == "figure"]
+        if side == "above":
+            top, bottom = min(limit, max(edge, 0.0)) if pictures else limit, cbox["y"] - 0.003
+            top = max(top, edge) if edge > top else top
+        else:
+            top, bottom = cbox["y"] + cbox["height"] + 0.003, (max(limit, min(edge, 1.0)) if pictures else limit)
+            bottom = min(bottom, edge) if edge < bottom else bottom
+        if not pictures and bottom - top < 0.04:
+            return None
+        return (x0, top - 0.003, x1, bottom + 0.003), members
+
+    def _gap_is_figure_like(self, page: int, uy0: float, uy1: float, box: dict, ux0: float, ux1: float) -> bool:
+        """Whether the blocks between a figure and a candidate panel are all
+        sub-captions, labels or other figure content."""
+        lo = min(uy1, box["y"] + box["height"])
+        hi = max(uy0, box["y"])
+        for other in self.blocks:
+            if other["page"] != page or other["kind"] == "furniture" or not other["evidence"]["boxes"]:
+                continue
+            obox = other["evidence"]["boxes"][0]
+            cy = obox["y"] + obox["height"] / 2
+            if not (lo < cy < hi) or min(ux1, obox["x"] + obox["width"]) - max(ux0, obox["x"]) <= 0:
+                continue
+            if not ((other["kind"] == "figure" and not other["text"]) or self._figure_like(other)):
+                return False
+        return True
+
+    def _caption_between(self, page: int, uy0: float, uy1: float, box: dict, ux0: float, ux1: float) -> bool:
+        lo = min(uy1, box["y"] + box["height"])
+        hi = max(uy0, box["y"])
+        for other in self.blocks:
+            if other["page"] != page or other["kind"] not in ("caption", "paragraph") or not other["evidence"]["boxes"]:
+                continue
+            if not CAPTION_LIKE_RE.match(other["text"]):
+                continue
+            obox = other["evidence"]["boxes"][0]
+            cy = obox["y"] + obox["height"] / 2
+            if lo < cy < hi and min(ux1, obox["x"] + obox["width"]) - max(ux0, obox["x"]) > 0:
+                return True
+        return False
+
+    def _fold_panels_by_geometry(self) -> None:
+        """A captioned figure gathers the caption-less pictures and
+        sub-captions stacked against it in its column, wherever they landed
+        in reading order, into one crop."""
+        changed = True
+        while changed:
+            changed = False
+            for block in list(self.blocks):
+                if block["kind"] != "figure" or not block["text"] or not block["evidence"]["boxes"] or block["page"] is None:
+                    continue
+                fbox = block["evidence"]["boxes"][0]
+                group = [block]
+                ux0, uy0, ux1, uy1 = fbox["x"], fbox["y"], fbox["x"] + fbox["width"], fbox["y"] + fbox["height"]
+                grew = True
+                while grew:
+                    grew = False
+                    for candidate in self.blocks:
+                        if candidate in group or candidate["page"] != block["page"] or not candidate["evidence"]["boxes"]:
+                            continue
+                        box = candidate["evidence"]["boxes"][0]
+                        page_boxes = [b for b in candidate["evidence"]["boxes"] if b["page"] == block["page"]]
+                        cx0, cy0 = min(b["x"] for b in page_boxes), min(b["y"] for b in page_boxes)
+                        cx1, cy1 = max(b["x"] + b["width"] for b in page_boxes), max(b["y"] + b["height"] for b in page_boxes)
+                        encloses = (
+                            candidate["kind"] == "paragraph"
+                            and cx0 <= ux0 + 0.02
+                            and cx1 >= ux1 - 0.02
+                            and cy0 <= uy0 + 0.02
+                            and cy1 >= uy1 - 0.02
+                            and (cx1 - cx0) * (cy1 - cy0) <= 1.6 * max((ux1 - ux0) * (uy1 - uy0), 1e-6)
+                        )
+                        if encloses:
+                            box = {"page": block["page"], "x": cx0, "y": cy0, "width": cx1 - cx0, "height": cy1 - cy0, "rotation": 0}
+                        if not ((candidate["kind"] == "figure" and not candidate["text"]) or self._figure_like(candidate) or encloses):
+                            continue  # a paragraph whose box encloses the picture is the picture's own text layer
+                        overlap = min(ux1, box["x"] + box["width"]) - max(ux0, box["x"])
+                        vertical_gap = max(box["y"] - uy1, uy0 - (box["y"] + box["height"]))
+                        horizontal_gap = max(box["x"] - ux1, ux0 - (box["x"] + box["width"]))
+                        v_overlap = min(uy1, box["y"] + box["height"]) - max(uy0, box["y"])
+                        if vertical_gap > 0 and self._caption_between(block["page"], uy0, uy1, box, ux0, ux1):
+                            continue  # a caption between two pictures separates two figures
+                        attached = self._attached_caption_boxes.get(block["id"])
+                        if attached is not None and vertical_gap > 0:
+                            cap_center = attached["y"] + attached["height"] / 2
+                            if (box["y"] >= uy1 and cap_center < box["y"] and cap_center > uy1 - 0.01) or (box["y"] + box["height"] <= uy0 and cap_center > box["y"] + box["height"] and cap_center < uy0 + 0.01):
+                                continue  # the candidate lies beyond this figure's own caption
+                        stacked = overlap >= 0.3 * min(ux1 - ux0, box["width"]) and (vertical_gap <= 0.05 or (vertical_gap <= 0.1 and self._gap_is_figure_like(block["page"], uy0, uy1, box, ux0, ux1)))
+                        if stacked or (v_overlap >= 0.3 * min(uy1 - uy0, box["height"]) and horizontal_gap <= 0.05):
+                            group.append(candidate)
+                            ux0, uy0 = min(ux0, box["x"]), min(uy0, box["y"])
+                            ux1, uy1 = max(ux1, box["x"] + box["width"]), max(uy1, box["y"] + box["height"])
+                            grew = True
+                if len(group) < 2 or uy1 - uy0 > 0.85:
+                    continue
+                page = block["page"]
+                attached = self._attached_caption_boxes.get(block["id"])
+                if attached is not None and attached["page"] == page and uy0 < attached["y"] + attached["height"] / 2 < uy1:
+                    # the crop must not carry the caption the figure already renders
+                    if attached["y"] + attached["height"] / 2 > (uy0 + uy1) / 2:
+                        uy1 = max(uy0 + 0.02, attached["y"] - 0.003)
+                    else:
+                        uy0 = min(uy1 - 0.02, attached["y"] + attached["height"] + 0.003)
+                evidence = {
+                    "confidence": 0.7,
+                    "pages": [page],
+                    "boxes": [{"page": page, "x": round(ux0, 5), "y": round(uy0, 5), "width": round(ux1 - ux0, 5), "height": round(uy1 - uy0, 5), "rotation": 0}],
+                    "sourceIds": list(dict.fromkeys(sid for b in group for sid in b["evidence"]["sourceIds"]))[:8],
+                    "signals": ["source-region-fallback", "panel-union"],
+                }
+                asset_id = self._crop_asset("figure", f"figure-panels-{block['id']}", page, ux0, uy0, ux1, uy1, evidence, evidence["sourceIds"])
+                if not asset_id:
+                    continue
+                old_assets = {a for b in group for a in b.get("fallbackAssetIds", [])}
+                self.assets = [a for a in self.assets if a["id"] not in old_assets]
+                block["fallbackAssetIds"] = [asset_id]
+                block["evidence"] = evidence
+                for member in group:
+                    if member is block:
+                        continue
+                    if member["kind"] == "figure":
+                        self.report.figures -= 1
+                        self.report.subpanel_figures_merged += 1
+                    self._absorb_block(member)
+                self.report.panels_folded_by_geometry += 1
+                changed = True
+                break
+
+    # ------------------------------------------------------------ dropped regions
+    def _restore_missing_lines(self) -> None:
+        """A text-layer line inside a paragraph's own box whose words the
+        layout model did not carry (an italic title, a URL line) goes back
+        into the paragraph after the line above it."""
+        if not self.page_layout:
+            return
+        for block in self.blocks:
+            if block["kind"] not in ("paragraph", "list-item") or block["page"] is None or len(block["evidence"]["boxes"]) != 1 or "text-layer-fallback" in (block["evidence"].get("signals") or []):
+                continue
+            box = block["evidence"]["boxes"][0]
+            page_index = box["page"]
+            if page_index - 1 >= len(self.page_layout):
+                continue
+            layout = self.page_layout[page_index - 1]
+            width, height = layout.get("width") or 0, layout.get("height") or 0
+            if not width or not height:
+                continue
+            compact_block = re.sub(r"[^a-z0-9]", "", block["text"].lower())
+            lines = []
+            for line in layout["lines"]:
+                cx, cy = (line["xmin"] + line["xmax"]) / 2 / width, (line["ymin"] + line["ymax"]) / 2 / height
+                if box["x"] - 0.004 <= cx <= box["x"] + box["width"] + 0.004 and box["y"] - 0.004 <= cy <= box["y"] + box["height"] + 0.004:
+                    lines.append(line)
+            if len(lines) < 2:
+                continue
+            lines.sort(key=lambda l: (l["ymin"], l["xmin"]))
+            inserted = 0
+            for i, line in enumerate(lines):
+                text = sanitize(line["text"].strip())
+                compact = re.sub(r"[^a-z0-9]", "", text.lower())
+                if len(compact) < 12 or compact[:24] in compact_block or compact[-24:] in compact_block:
+                    continue
+                if any(re.sub(r"[^a-z0-9]", "", t.lower()) and re.sub(r"[^a-z0-9]", "", t.lower())[:24] in re.sub(r"[^a-z0-9]", "", other["text"].lower()) for other in self.blocks if other is not block and other["page"] == page_index for t in [text]):
+                    continue  # the words live in another block (a caption, a note)
+                # anchor: the tail of the line above, located in the block text
+                position = len(block["text"])
+                if i > 0:
+                    anchor_words = re.findall(r"[A-Za-z0-9]+", lines[i - 1]["text"])[-3:]
+                    if anchor_words:
+                        match = None
+                        for m in re.finditer(r"\s*".join(re.escape(w) for w in anchor_words), block["text"]):
+                            match = m
+                        if match:
+                            position = match.end()
+                else:
+                    position = 0
+                head, tail = block["text"][:position], block["text"][position:]
+                joiner = "" if not head or head.endswith(" ") else " "
+                insertion = joiner + text + ("" if not tail or tail.startswith(" ") else " ")
+                block["text"] = head + insertion + tail
+                shift = len(insertion)
+                for run in block["inline"]:
+                    if run["start"] >= position:
+                        run["start"] += shift
+                        run["end"] += shift
+                    elif run["end"] > position:
+                        run["end"] += shift
+                compact_block = re.sub(r"[^a-z0-9]", "", block["text"].lower())
+                inserted += 1
+            if inserted:
+                block["evidence"]["signals"] = list(dict.fromkeys((block["evidence"].get("signals") or []) + ["text-layer-lines-restored"]))
+                self.report.lines_restored_from_text_layer += inserted
+                self._diagnostic("info", "text", "Lines restored from the text layer", f"page {page_index}: {inserted} line(s) inside a paragraph's box that the layout model did not carry", None, page_index)
+
+    def _recover_dropped_regions(self) -> None:
+        """Text-layer lines the layout model returned no item for (an author
+        line, a reference entry, a whole page) come back as paragraphs with
+        their own boxes, in the position their geometry dictates. A line is
+        recovered only when no layout item box covers it and no item on the
+        page already carries its words."""
+        if not self.page_layout:
+            return
+        covered: dict[int, list[tuple[float, float, float, float]]] = {}
+        item_texts: dict[int, list[str]] = {}
+        for item, _ in self.doc.iterate_items(included_content_layers={ContentLayer.BODY, ContentLayer.FURNITURE}):
+            boxes = self._boxes(item)
+            if not boxes:
+                continue
+            text = getattr(item, "text", None)
+            compact_text = re.sub(r"[^a-z0-9]", "", text.lower()) if isinstance(text, str) and text.strip() else ""
+            for box in boxes:
+                covered.setdefault(box["page"], []).append((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
+                if compact_text:
+                    item_texts.setdefault(box["page"], []).append(compact_text)
+        for block in self.blocks:
+            if block["kind"] in ("figure", "table", "equation"):
+                for box in block["evidence"]["boxes"]:
+                    covered.setdefault(box["page"], []).append((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
+        edge_counter: dict[str, set[int]] = {}
+        for page_index, lines in enumerate(self.page_lines, start=1):
+            for line in lines[:6] + lines[-6:]:
+                key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", line.strip().lower()))
+                if 6 <= len(key) <= 160:
+                    edge_counter.setdefault(key, set()).add(page_index)
+        running = {key for key, pages in edge_counter.items() if len(pages) >= 3}
+        page_links: dict[int, list] = {}
+        for link in self.links:
+            if link.kind == "uri" and link.uri:
+                page_links.setdefault(link.page, []).append(link)
+        recovered_pages: set[int] = set()
+        for page_index, layout in enumerate(self.page_layout, start=1):
+            if page_index not in self.doc.pages or not layout.get("width") or not layout.get("height"):
+                continue
+            width, height = layout["width"], layout["height"]
+            boxes = covered.get(page_index, [])
+            texts = item_texts.get(page_index, [])
+            page_text_joined = "\u0001".join(texts)
+            page_text_joined = page_text_joined if texts else ""
+            groups: list[list[dict]] = []
+            for line in layout["lines"]:
+                text = line["text"].strip()
+                x0, y0, x1, y1 = line["xmin"] / width, line["ymin"] / height, line["xmax"] / width, line["ymax"] / height
+                cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+                if not text or cy < 0.05 or cy > 0.95:
+                    continue
+                key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower()))
+                if key in running or PAGE_NUMBER_TEXT_RE.match(text):
+                    continue
+                if any(bx0 - 0.004 <= cx <= bx1 + 0.004 and by0 - 0.004 <= cy <= by1 + 0.004 for bx0, by0, bx1, by1 in boxes):
+                    continue
+                compact = re.sub(r"[^a-z0-9]", "", text.lower())
+                # the words are already carried by a layout item (a line pdftotext
+                # merged across two columns, a hyphenation the extractor undid)
+                if compact and ((len(compact) >= 20 and (compact[:40] in page_text_joined or compact[-40:] in page_text_joined)) or (len(compact) < 20 and f"\u0001{compact}\u0001" in f"\u0001{page_text_joined}\u0001")):
+                    continue
+                entry = {"text": text, "x0": x0, "y0": y0, "x1": x1, "y1": y1}
+                last = groups[-1][-1] if groups else None
+                if last is not None and 0 <= y0 - last["y1"] <= 1.6 * max(last["y1"] - last["y0"], 0.005) and min(x1, last["x1"]) - max(x0, last["x0"]) > 0:
+                    groups[-1].append(entry)
+                else:
+                    groups.append([entry])
+            new_blocks: list[tuple[float, float, dict]] = []
+            for group in groups:
+                text = sanitize(" ".join(entry["text"] for entry in group))
+                if len(text) < 20 or len(WORD_RE_ADAPTER.findall(text)) < 3:
+                    continue
+                gx0, gy0 = min(e["x0"] for e in group), min(e["y0"] for e in group)
+                gx1, gy1 = max(e["x1"] for e in group), max(e["y1"] for e in group)
+                runs: list[dict] = []
+                spans: list[tuple[int, int]] = []
+                for link in page_links.get(page_index, []):
+                    l, b, r, t = link.rect
+                    lcx, lcy = (l + r) / 2 / width, 1 - (b + t) / 2 / height
+                    if not (gx0 - 0.01 <= lcx <= gx1 + 0.01 and gy0 - 0.01 <= lcy <= gy1 + 0.01):
+                        continue
+                    uri = normalize_uri(link.uri)
+                    visible = link_visible_text(text, uri, link.text, link.group_text)
+                    span = first_free_span(visible, text, spans) if visible else None
+                    if span is None:
+                        continue
+                    spans.append(span)
+                    runs.append({"start": span[0], "end": span[1], "href": uri})
+                    self.report.links_mapped += 1
+                    self.report.links_unmapped = max(0, self.report.links_unmapped - 1)
+                block = {
+                    "id": self._id(f"b-p{page_index}-region-{len(new_blocks) + 1}"),
+                    "kind": "paragraph",
+                    "text": text,
+                    "page": page_index,
+                    "order": 0,
+                    "column": "single",
+                    "inline": runs,
+                    "evidence": {
+                        "confidence": 0.5,
+                        "pages": [page_index],
+                        "boxes": [{"page": page_index, "x": round(gx0, 5), "y": round(gy0, 5), "width": round(gx1 - gx0, 5), "height": round(gy1 - gy0, 5), "rotation": 0}],
+                        "sourceIds": [f"pdftotext-page-{page_index}"],
+                        "signals": ["text-layer-fallback", "layout-model-dropped-region"],
+                    },
+                }
+                new_blocks.append((gy0, gx0, block))
+            if not new_blocks:
+                continue
+            for gy0, gx0, block in new_blocks:
+                position = None
+                for i, existing in enumerate(self.blocks):
+                    if existing["page"] != page_index or not existing["evidence"]["boxes"] or existing["kind"] == "furniture":
+                        continue
+                    ebox = existing["evidence"]["boxes"][0]
+                    same_column = min(ebox["x"] + ebox["width"], block["evidence"]["boxes"][0]["x"] + block["evidence"]["boxes"][0]["width"]) - max(ebox["x"], gx0) > 0
+                    if same_column and ebox["y"] >= gy0:
+                        position = i
+                        break
+                if position is None:
+                    position = next((i for i, b in enumerate(self.blocks) if b["page"] is not None and b["page"] > page_index), len(self.blocks))
+                self.blocks.insert(position, block)
+                self.report.paragraphs += 1
+                self.report.regions_recovered_from_text_layer += 1
+            layout_lines = sum(1 for line in layout["lines"] if line["text"].strip())
+            if layout_lines and sum(len(g) for g in groups) >= 0.8 * layout_lines:
+                recovered_pages.add(page_index)
+            self._diagnostic("info", "layout", "Region recovered from text layer", f"page {page_index}: {len(new_blocks)} text-layer paragraph(s) the layout model returned no item for", None, page_index)
+        self.report.pages_recovered_from_text_layer += len(recovered_pages)
+
     # ------------------------------------------------------------- build
     def build(self) -> tuple[dict, AdapterReport]:
         for floating in list(self.doc.pictures) + list(self.doc.tables):
@@ -2167,22 +3765,37 @@ class StructAdapter:
             if isinstance(item, TextItem) and item.text.strip():
                 self.report.source_items += 1
                 self.report.accounted_items += 1
+                if self._rescue_caption_from_furniture(item):
+                    continue
+                if self._furniture_text_is_prose(item):
+                    self._rescue_prose_from_furniture(item)
+                    continue
                 self._furniture_block(item, "explicit-paratext")
         self._flush()
-        self._recover_dropped_pages()
+        if self.page_layout:
+            self._restore_missing_lines()
+            self._recover_dropped_regions()
+        else:
+            self._recover_dropped_pages()
         self._drop_tick_label_runs()
+        self._drop_numeric_fragments()
         self._demote_repeated_edge_text()
         self._demote_heading_running_heads()
+        self._strip_glued_tails()
         self._join_split_paragraphs()
         self._link_notes()
         self._merge_subpanel_figures()
+        self._read_captions_inside_figures()
+        self._fix_caption_sides()
         self._adopt_orphan_captions()
         self._adopt_captions_by_geometry()
-        self._read_captions_inside_figures()
         self._read_table_captions_from_source()
         self._fold_panels_into_captioned_figures()
+        self._fold_panels_by_geometry()
+        self._recover_ruled_boxes()
         self._recover_uncaptured_figures()
         self._recover_uncaptured_tables()
+        self._join_split_paragraphs()  # captions adopted above may now claim their continuation
         self._merge_continued_tables()
         self._rejoin_split_listings()
         self._compact_graph()
@@ -2272,5 +3885,5 @@ class StructAdapter:
         return document, self.report
 
 
-def to_struct_draft(doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None, source_text: SourceText | None = None) -> tuple[dict, AdapterReport]:
-    return StructAdapter(doc, pdf_path, source_sha256, links, word_boxes, page_lines, source_text).build()
+def to_struct_draft(doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None, source_text: SourceText | None = None, page_layout: list | None = None) -> tuple[dict, AdapterReport]:
+    return StructAdapter(doc, pdf_path, source_sha256, links, word_boxes, page_lines, source_text, page_layout).build()

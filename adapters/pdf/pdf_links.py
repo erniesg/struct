@@ -14,6 +14,34 @@ import subprocess
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+
+UNSAFE_URI_CHARS = re.compile(r"[{}|\\^`\"<>\u0000-\u001f\u007f]|[^\x00-\x7f]")
+HOST_LIKE_RE = re.compile(r"^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/:?#]|$)", re.IGNORECASE)
+QUOTE_CHARS = "\"'“”‘’«»"
+
+
+def normalize_uri(uri: str) -> str:
+    """The comparable, renderable form of a link target: whitespace and
+    wrapping quotes removed, a doubled scheme collapsed, a bare host given
+    `http://`, characters a WHATWG parser would reject percent-encoded, then
+    the parser's own canonical shape (lowercase scheme and host, `/` for an
+    empty path). The adapter emits this form and the evaluator compares it,
+    so an annotation and the rendered href agree by construction."""
+    value = re.sub(r"\s|\u200b|\u00ad", "", uri or "")
+    value = value.strip(QUOTE_CHARS)
+    value = re.sub(r"^(https?://)(?:https?://)+", r"\1", value, flags=re.IGNORECASE)
+    if value and not re.match(r"^[a-z][a-z0-9+.-]*:", value, re.IGNORECASE) and HOST_LIKE_RE.match(value):
+        value = "http://" + value
+    value = UNSAFE_URI_CHARS.sub(lambda m: "".join(f"%{b:02X}" for b in m.group(0).encode("utf-8")), value)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+    if not parts.scheme or not parts.netloc:
+        return value
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", parts.query, parts.fragment))
 
 
 @dataclass
@@ -23,10 +51,17 @@ class SourceLink:
     uri: str | None  # external target, None for internal destinations
     kind: str  # 'uri' | 'internal'
     words: list[str] = field(default_factory=list)
+    group_words: list[str] | None = None  # words of every line of a wrapped link, in reading order
 
     @property
     def text(self) -> str:
         return " ".join(self.words).strip()
+
+    @property
+    def group_text(self) -> str:
+        """Visible text of the whole link when it wraps over several lines
+        (one annotation per line, the same target)."""
+        return " ".join(self.group_words or self.words).strip()
 
 
 def _rect_of(annotation) -> tuple[float, float, float, float] | None:
@@ -145,6 +180,36 @@ def attach_words(
             if l - 1 <= cx <= r + 1 and top - 1 <= cy <= bottom + 1:
                 words.append(text)
         link.words = words
+
+
+def group_wrapped_links(links: list[SourceLink]) -> None:
+    """Annotations on one page with the same target whose rectangles sit on
+    consecutive lines (each starts near the line below the previous one) are
+    one link that wrapped; every member learns the words of the whole group."""
+    by_key: dict[tuple[int, str], list[SourceLink]] = {}
+    for link in links:
+        if link.kind == "uri" and link.uri:
+            by_key.setdefault((link.page, link.uri), []).append(link)
+    for members in by_key.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda link: (-link.rect[3], link.rect[0]))
+        group: list[SourceLink] = [members[0]]
+        for previous, link in zip(members, members[1:]):
+            height = max(previous.rect[3] - previous.rect[1], 1.0)
+            gap = previous.rect[1] - link.rect[3]
+            if -0.5 * height <= gap <= 1.6 * height:
+                group.append(link)
+            else:
+                if len(group) > 1:
+                    words = [w for member in group for w in member.words]
+                    for member in group:
+                        member.group_words = words
+                group = [link]
+        if len(group) > 1:
+            words = [w for member in group for w in member.words]
+            for member in group:
+                member.group_words = words
 
 
 def page_text_lines(pdf_path: Path) -> list[list[str]]:

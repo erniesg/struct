@@ -131,6 +131,26 @@ class Line:
 
 
 @dataclass
+class Rule:
+    """A drawn line segment long enough to be a table rule or a box edge,
+    in normalized top-left page coordinates."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    width: float  # stroke width in points
+
+    @property
+    def horizontal(self) -> bool:
+        return abs(self.y1 - self.y0) < 0.002
+
+    @property
+    def length(self) -> float:
+        return max(self.x1 - self.x0, self.y1 - self.y0)
+
+
+@dataclass
 class Marker:
     """A superscript glyph run and the body text it follows."""
 
@@ -169,13 +189,75 @@ class Marker:
 
 
 class PageText:
-    def __init__(self, page_no: int, width: float, height: float, chars: list[Char]) -> None:
+    def __init__(self, page_no: int, width: float, height: float, chars: list[Char], shapes: list | None = None) -> None:
         self.page_no = page_no
         self.width = width
         self.height = height
         self.chars = chars
+        self.shapes = shapes or []
         self._lines: list[Line] | None = None
         self._markers: list[Marker] | None = None
+        self._rules: list[Rule] | None = None
+
+    # ------------------------------------------------------------ rules
+    @property
+    def rules(self) -> list[Rule]:
+        """Horizontal segments at least a tenth of the page wide and vertical
+        segments at least a fiftieth of the page tall, from the page's vector
+        paths (table rules, box frames). Segments are the consecutive point
+        pairs of each path; a closed rectangle yields its four sides."""
+        if self._rules is None:
+            self._rules = self._find_rules()
+        return self._rules
+
+    def _find_rules(self) -> list[Rule]:
+        rules: list[Rule] = []
+        if not self.width or not self.height:
+            return rules
+        for shape in self.shapes:
+            points = list(getattr(shape, "points", []) or [])
+            stroke = float(getattr(shape, "line_width", 0.0) or 0.0)
+            if len(points) >= 6:
+                # a rounded or curved frame is flattened into many short
+                # segments: its bounding box gives the frame's four edges
+                xs = [float(pt.x) for pt in points]
+                ys = [float(pt.y) for pt in points]
+                bw, bh = max(xs) - min(xs), max(ys) - min(ys)
+                closed = abs(xs[0] - xs[-1]) <= 2.0 and abs(ys[0] - ys[-1]) <= 2.0
+                if closed and bw >= 0.10 * self.width and bh >= 0.02 * self.height:
+                    x0, x1 = min(xs) / self.width, max(xs) / self.width
+                    y0, y1 = 1 - max(ys) / self.height, 1 - min(ys) / self.height
+                    rules.append(Rule(round(x0, 4), round(y0, 4), round(x1, 4), round(y0, 4), stroke))
+                    rules.append(Rule(round(x0, 4), round(y1, 4), round(x1, 4), round(y1, 4), stroke))
+                    rules.append(Rule(round(x0, 4), round(y0, 4), round(x0, 4), round(y1, 4), stroke))
+                    rules.append(Rule(round(x1, 4), round(y0, 4), round(x1, 4), round(y1, 4), stroke))
+                    continue
+            for a, b in zip(points, points[1:]):
+                ax, ay, bx, by = float(a.x), float(a.y), float(b.x), float(b.y)
+                if abs(ay - by) <= 0.75 and abs(ax - bx) >= 0.10 * self.width:
+                    x0, x1 = sorted((ax / self.width, bx / self.width))
+                    y = 1 - (ay + by) / 2 / self.height
+                    rules.append(Rule(round(x0, 4), round(y, 4), round(x1, 4), round(y, 4), stroke))
+                elif abs(ax - bx) <= 0.75 and abs(ay - by) >= 0.02 * self.height:
+                    y0, y1 = sorted((1 - ay / self.height, 1 - by / self.height))
+                    x = (ax + bx) / 2 / self.width
+                    rules.append(Rule(round(x, 4), round(y0, 4), round(x, 4), round(y1, 4), stroke))
+        # rules drawn as thin filled rectangles come out as two parallel edges
+        # a fraction of a point apart: keep one
+        deduped: list[Rule] = []
+        for rule in sorted(rules, key=lambda r: (not r.horizontal, r.y0, r.x0)):
+            twin = next(
+                (
+                    d
+                    for d in deduped
+                    if d.horizontal == rule.horizontal
+                    and (abs(d.y0 - rule.y0) <= 0.002 and abs(d.x0 - rule.x0) <= 0.01 and abs(d.x1 - rule.x1) <= 0.01 if rule.horizontal else abs(d.x0 - rule.x0) <= 0.003 and abs(d.y0 - rule.y0) <= 0.01 and abs(d.y1 - rule.y1) <= 0.01)
+                ),
+                None,
+            )
+            if twin is None:
+                deduped.append(rule)
+        return deduped
 
     # ------------------------------------------------------------ geometry
     def _normalized(self, l: float, b: float, r: float, t: float) -> tuple[float, float, float, float]:
@@ -426,7 +508,11 @@ class SourceText:
                     if r <= l or t <= b:
                         continue
                     chars.append(Char(cell.text, l, b, r, t, cell.font_name or ""))
-                page_text = PageText(page_no, float(page.dimension.width), float(page.dimension.height), chars)
+                try:
+                    shapes = list(page.shapes)
+                except Exception:
+                    shapes = []
+                page_text = PageText(page_no, float(page.dimension.width), float(page.dimension.height), chars, shapes)
             except Exception:
                 page_text = None
         self._pages[page_no] = page_text
