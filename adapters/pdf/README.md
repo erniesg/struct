@@ -73,6 +73,16 @@ Apple silicon); run one or two workers for fresh extraction, four for
 `--reuse-json`. `screenshot.mjs` needs Playwright with Chromium (from this
 repository's `node_modules` or the sibling `erniesg` checkout).
 
+### Beyond the command line
+
+- [`service/`](service/README.md) — a token-gated HTTP front for the same
+  pipeline: upload a PDF in a browser, get both EPUBs and the spec-052 criteria
+  back. It wraps `pdf2epub.py` and changes nothing about the conversion.
+- [`bench/`](bench/README.md) — what a bounded model adjudicator (spec 046) is
+  worth: six models across three tiers on the caption-to-region residual, scored
+  against ground truth that does not come from these rules, with token counts
+  and dollars per call.
+
 ## Reader criteria measured by `evaluate.py`
 
 Expectations come from the PDF, never from the adapter's output:

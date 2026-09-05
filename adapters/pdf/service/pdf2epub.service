@@ -1,0 +1,31 @@
+[Unit]
+Description=pdf2epub staging service (adapters/pdf)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/code/erniesg/struct/adapters/pdf/service
+EnvironmentFile=/etc/pdf2epub/pdf2epub.env
+Environment=HF_HOME=/home/ubuntu/.cache/huggingface
+Environment=OMP_NUM_THREADS=4
+ExecStart=/home/ubuntu/.venvs/docling/bin/uvicorn app:app --host 127.0.0.1 --port 8010
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+# the pipeline parses untrusted PDFs: give it as little of the machine as it needs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/.local/state/pdf2epub /home/ubuntu/.cache/huggingface /home/ubuntu/.cache/docling
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryMax=12G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target
