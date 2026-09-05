@@ -68,6 +68,8 @@ TOP_LEVEL_HEADING_RE = re.compile(
 DATE_AFTER_RE = re.compile(
     r"\s+(?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b|\d{4}\b|of\s+\d|\(\d{4}\))"
 )
+# `a A complex neural network …`: a table's lettered (or symbol, or numbered) note
+TABLE_NOTE_LEAD_RE = re.compile(r"^\s*(?:[a-z]|\d{1,2}|[*∗⋆★✱†‡§¶‖]{1,3})\s+[A-Z]")
 FOOTNOTE_MARKER_RE = re.compile(r"^\s*(?:(\d{1,3})(?=\s|[A-Za-z(\[“\"'])|([*∗⋆★✱†‡§¶‖]{1,3}))\s*")
 LIST_LIKE_NOTE_RE = re.compile(r"^\s*(?:\d{1,3}[.)]|[-•–—▪◦])\s+\S")
 PAGE_NUMBER_TEXT_RE = re.compile(
@@ -337,6 +339,7 @@ class AdapterReport:
     captions_split_from_merged_items: int = 0
     stray_leads_split: int = 0
     side_column_tails_split: int = 0
+    table_notes_split: int = 0
     tables_from_open_rule_box: int = 0
     description_items: int = 0
     tables_as_entry_lists: int = 0
@@ -392,6 +395,7 @@ class StructAdapter:
         self._ids: set[str] = set()
         self._list_counter = 0
         self._corpus_words: set[str] | None = None
+        self._corpus_forms: set[str] | None = None
         self._captions_below_tables: list[bool] = []
         self._figure_caption_below: list[bool] = []
         self._attached_caption_boxes: dict[str, dict] = {}
@@ -712,9 +716,11 @@ class StructAdapter:
         segments = []
         for index, entry in enumerate(prov):
             span = getattr(entry, "charspan", None)
-            if not span or len(span) != 2 or span[1] <= span[0] or span[1] > len(text) + 1:
+            # the spans index the text before the model normalised it, and may
+            # overshoot the text by a character or two: the starts still hold
+            if not span or len(span) != 2 or span[1] <= span[0] or span[1] > len(text) + 3:
                 return [(0, text)]
-            segments.append((index, text[span[0] : span[1]]))
+            segments.append((index, text[span[0] : min(span[1], len(text))]))
         return segments
 
     def _split_merged_caption(self, item: TextItem) -> bool:
@@ -855,6 +861,139 @@ class StructAdapter:
         self.report.side_column_tails_split += 1
         return True
 
+    def _table_above(self, box: dict) -> dict | None:
+        """The box of a table on the same page whose foot lies directly above
+        `box` (a gap of at most three hundredths of the page) and which
+        overlaps it horizontally: the table a note under it annotates."""
+        for other, _ in self.doc.iterate_items():
+            if not isinstance(other, TableItem):
+                continue
+            for tbox in self._boxes(other):
+                if tbox["page"] != box["page"]:
+                    continue
+                if not -0.005 <= box["y"] - (tbox["y"] + tbox["height"]) <= 0.03:
+                    continue
+                if min(tbox["x"] + tbox["width"], box["x"] + box["width"]) - max(tbox["x"], box["x"]) > 0:
+                    return tbox
+        return None
+
+    @staticmethod
+    def _span_gap(item, before: int, index: int) -> str:
+        """The characters between two provenance spans of one item, which the
+        spans themselves leave out (a raised note marker, a space)."""
+        prov = getattr(item, "prov", None) or []
+        if before >= len(prov) or index >= len(prov):
+            return ""
+        first, second = getattr(prov[before], "charspan", None), getattr(prov[index], "charspan", None)
+        if not first or not second or len(first) != 2 or len(second) != 2 or second[0] <= first[1]:
+            return ""
+        return (item.text or "")[first[1] : second[0]].strip()
+
+    def _raised_lead_marker(self, box: dict) -> str | None:
+        """The label of a raised glyph run that opens the first line inside
+        `box`: a note's own marker, set as a superscript before its text."""
+        page_text = self._page_text(box["page"])
+        if page_text is None:
+            return None
+        for glyph_marker in page_text.markers:
+            if not glyph_marker.at_line_start or glyph_marker.page != box["page"]:
+                continue
+            if not (box["x"] - 0.006 <= glyph_marker.x <= box["x"] + 0.03 and box["y"] - 0.006 <= glyph_marker.y <= box["y"] + 0.012):
+                continue
+            label = glyph_marker.text.strip()
+            if 1 <= len(label) <= 3:
+                return label
+        return None
+
+    def _split_table_note_tail(self, item: TextItem) -> bool:
+        """`… leaving room for op` at the foot of one column and `a A complex
+        neural network …` directly under the table heading the next column
+        came back as one item: the layout model glued a table's note to the
+        paragraph before it. A later provenance box that sits directly under
+        a table, opens with a note marker, and does not continue a box under
+        that same table ends the paragraph; the note becomes an unlabelled
+        footnote that keeps its printed marker and is placed after its table."""
+        segments = self._prov_segments(item)
+        if len(segments) < 2:
+            return False
+        cut_at, marker, glued = None, "", False
+        for position, (index, text) in enumerate(segments[1:], start=1):
+            box = self._box(item, index)
+            if box is None:
+                continue
+            # the marker is a raised glyph: the layout model leaves it between
+            # the two spans (`… for op` | `a` | `A complex …`) or glues it to
+            # the head's last word (`… for opa`), where the text layer's raised
+            # run at the start of the note's line names it
+            gap = self._span_gap(item, segments[position - 1][0], index)
+            head_text = segments[position - 1][1].rstrip()
+            raised = self._raised_lead_marker(box)
+            if gap and len(gap) <= 3:
+                lead, found, from_head = f"{gap} {text}", gap, False
+            elif raised and head_text.endswith(raised) and not TABLE_NOTE_LEAD_RE.match(sanitize(text)):
+                lead, found, from_head = f"{raised} {text}", raised, True
+            else:
+                lead, found, from_head = text, "", False
+            if not TABLE_NOTE_LEAD_RE.match(sanitize(lead)):
+                continue
+            table = self._table_above(box)
+            if table is None:
+                continue
+            previous = self._box(item, segments[position - 1][0])
+            if previous is not None and previous["page"] == box["page"] and self._table_above(previous) is table:
+                continue  # the note's own second line, not the paragraph's end
+            cut_at, marker, glued = position, found, from_head
+            break
+        if cut_at is None:
+            return False
+        head = sanitize(" ".join(text.strip() for _, text in segments[:cut_at] if text.strip()))
+        if glued and head.endswith(marker):
+            head = head[: -len(marker)].rstrip()
+        tail = sanitize(" ".join(text.strip() for _, text in segments[cut_at:] if text.strip()))
+        if marker:
+            tail = f"{marker} {tail}"
+        if len(head) < 40 or len(tail) < 20:
+            return False
+        self._flush()
+        block = self._new_block("paragraph", item, head)
+        block["evidence"]["boxes"] = [b for index, _ in segments[:cut_at] for b in ([self._box(item, index)] if self._box(item, index) else [])]
+        block["evidence"]["pages"] = sorted({b["page"] for b in block["evidence"]["boxes"]}) or block["evidence"]["pages"]
+        block["inline"] = self._runs_for(item, head)
+        self.blocks.append(block)
+        self.report.paragraphs += 1
+        note = self._new_block("footnote", item, tail)
+        note["evidence"]["boxes"] = [b for index, _ in segments[cut_at:] for b in ([self._box(item, index)] if self._box(item, index) else [])]
+        note["evidence"]["pages"] = sorted({b["page"] for b in note["evidence"]["boxes"]}) or note["evidence"]["pages"]
+        note["page"] = note["evidence"]["pages"][0] if note["evidence"]["pages"] else note["page"]
+        note["inline"] = self._runs_for(item, tail)
+        note["evidence"]["signals"] = list(dict.fromkeys((note["evidence"].get("signals") or []) + ["table-note"]))
+        self.blocks.append(note)
+        self.report.notes_without_reference += 1
+        self.report.table_notes_split += 1
+        return True
+
+    def _place_table_notes(self) -> None:
+        """A note cut from the paragraph before its table follows the table
+        (and the table's caption) it sits under, instead of preceding it."""
+        for note in [b for b in self.blocks if b["kind"] == "footnote" and "table-note" in (b["evidence"].get("signals") or [])]:
+            box = note["evidence"]["boxes"][0] if note["evidence"]["boxes"] else None
+            if box is None:
+                continue
+            position = self.blocks.index(note)
+            for index in range(position + 1, min(position + 6, len(self.blocks))):
+                table = self.blocks[index]
+                if table["kind"] != "table" or table["page"] != note["page"] or not table["evidence"]["boxes"]:
+                    continue
+                tbox = table["evidence"]["boxes"][0]
+                if not -0.005 <= box["y"] - (tbox["y"] + tbox["height"]) <= 0.03:
+                    continue
+                target = index
+                if target + 1 < len(self.blocks) and self.blocks[target + 1]["kind"] == "caption":
+                    target += 1
+                self.blocks.insert(target + 1, note)
+                del self.blocks[position]
+                break
+
     def _side_column_owner(self, box: dict) -> dict | None:
         """The entry a cut side-column segment continues: the last paragraph
         behind it whose own column is this one (their boxes overlap
@@ -908,6 +1047,8 @@ class StructAdapter:
             return
         if self._split_side_column_tail(item):
             return
+        if self._split_table_note_tail(item):
+            return
         if self._is_description_item(item, sanitize(item.text)):
             self._flush()
             block = self._new_block("list-item", item, sanitize(item.text).strip())
@@ -953,8 +1094,14 @@ class StructAdapter:
                     self.report.joins_dehyphenated += 1
                 base = len(previous) - (1 if dropped else 0)
             else:
-                joined = previous + " " + following
-                base = len(previous) + 1
+                fused = self._fuse_words(previous, following)
+                if fused is not None:
+                    # `op` + `timization`: the hyphen the layout model dropped
+                    joined, base = fused, len(previous)
+                    self.report.joins_fused_words += 1
+                else:
+                    joined = previous + " " + following
+                    base = len(previous) + 1
             pending["text"] = joined
             for run in runs:
                 pending["inline"].append({**run, "start": run["start"] - offset_shift + base, "end": run["end"] - offset_shift + base})
@@ -1857,19 +2004,20 @@ class StructAdapter:
 
     def _fuse_words(self, previous: str, following: str) -> str | None:
         """`eval` + `uation` -> `evaluation` when the fused word is attested in
-        the paper; otherwise None."""
+        the paper, letter for letter: `LLM` + `agents` is not `LLMAgents`, a
+        heading the layout model ran together; otherwise None."""
         head = re.search(r"([A-Za-z]+)$", previous)
         tail = re.match(r"([a-z]+)", following)
         if not head or not tail:
             return None
-        if self._corpus_words is None:
-            words: set[str] = set()
+        if self._corpus_forms is None:
+            forms: set[str] = set()
             for item, _ in self.doc.iterate_items():
                 if isinstance(item, TextItem):
-                    words.update(w.lower() for w in re.findall(r"[A-Za-z]{3,}", item.text))
-            self._corpus_words = words
-        fused = (head.group(1) + tail.group(1)).lower()
-        if fused in self._corpus_words and fused != head.group(1).lower() and fused != tail.group(1):
+                    forms.update(re.findall(r"[A-Za-z]{3,}", item.text))
+            self._corpus_forms = forms
+        fused = head.group(1) + tail.group(1)
+        if fused in self._corpus_forms and fused != head.group(1) and fused != tail.group(1):
             return previous + following
         return None
 
@@ -4044,6 +4192,7 @@ class StructAdapter:
         self._demote_repeated_edge_text()
         self._demote_heading_running_heads()
         self._strip_glued_tails()
+        self._place_table_notes()
         self._strip_glued_heads()
         self._join_split_paragraphs()
         self._link_notes()

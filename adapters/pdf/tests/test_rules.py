@@ -587,3 +587,149 @@ class SideColumnBudget(unittest.TestCase):
     def test_four_body_width_paragraphs_still_stop_the_search(self):
         _, (found, _) = self._find(0.616)
         self.assertIsNone(found)
+
+
+class TableNoteTails(unittest.TestCase):
+    """`_split_table_note_tail`: a table's note the layout model glued to the
+    paragraph before it (`… leaving room for op` at the foot of one column,
+    `a A complex neural network …` directly under the table heading the next)
+    is cut off where the note's box begins and becomes an unlabelled footnote
+    placed after its table; the exposed halves of the word then fuse."""
+
+    HEAD = ("Despite these advancements, the focus remains predominantly on linear models, leaving room for op")
+    NOTE = ("A complex neural network with intensive operator parallelism and interdependencies, unlike simpler "
+            "linear networks like MobileNet and ResNet50.")
+    HEAD_BOX = (49, 150, 300, 48)  # left column, foot of page 12
+    TABLE_BOX = (314, 703, 561, 655)  # right column, top of page 12
+    NOTE_BOX = (313, 657, 562, 631)  # directly under the table
+
+    @staticmethod
+    def _text(ref, text, prov):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, TextItem
+        return TextItem(self_ref=ref, label=DocItemLabel.TEXT, orig=text, text=text,
+                        prov=[ProvenanceItem(page_no=page, charspan=span,
+                                             bbox=BoundingBox(l=l, t=t, r=r, b=b, coord_origin=CoordOrigin.BOTTOMLEFT))
+                              for page, span, (l, t, r, b) in prov])
+
+    @staticmethod
+    def _table(box):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, TableData, TableItem
+        l, t, r, b = box
+        return TableItem(self_ref="#/tables/4", label=DocItemLabel.TABLE, data=TableData(),
+                         prov=[ProvenanceItem(page_no=12, charspan=(0, 0),
+                                              bbox=BoundingBox(l=l, t=t, r=r, b=b, coord_origin=CoordOrigin.BOTTOMLEFT))])
+
+    def _adapter(self, items, markers=()):
+        from types import SimpleNamespace
+        adapter = StructAdapter.__new__(StructAdapter)
+        size = SimpleNamespace(width=612.0, height=792.0)
+        adapter.doc = SimpleNamespace(pages={12: SimpleNamespace(size=size)},
+                                      iterate_items=lambda **kwargs: [(item, 0) for item in items])
+        adapter.blocks, adapter._pending, adapter._ids = [], None, set()
+        adapter.report = AdapterReport()
+        adapter._runs_for = lambda item, text: []
+        adapter._page_text = lambda page: SimpleNamespace(markers=list(markers)) if markers else None
+        return adapter
+
+    def test_a_marker_between_the_spans_opens_the_note(self):
+        text = self.HEAD + " a " + self.NOTE
+        glued = self._text("#/texts/774", text, [(12, (0, len(self.HEAD)), self.HEAD_BOX), (12, (len(self.HEAD) + 3, len(text)), self.NOTE_BOX)])
+        adapter = self._adapter([glued, self._table(self.TABLE_BOX)])
+        self.assertTrue(adapter._split_table_note_tail(glued))
+        self.assertEqual([(b["kind"], b["text"]) for b in adapter.blocks], [("paragraph", self.HEAD), ("footnote", "a " + self.NOTE)])
+        note = adapter.blocks[1]
+        self.assertEqual(note["page"], 12)
+        self.assertIn("table-note", note["evidence"]["signals"])
+        self.assertNotIn("label", note)
+        self.assertEqual(adapter.report.table_notes_split, 1)
+        self.assertEqual(adapter.report.notes_without_reference, 1)
+
+    def test_a_marker_glued_to_the_head_is_named_by_the_raised_glyph(self):
+        from pdf_text import Marker
+        text = self.HEAD + "a " + self.NOTE  # `… for opa`: the raised `a` read as the head's last letter
+        glued = self._text("#/texts/774", text, [(12, (0, len(self.HEAD) + 1), self.HEAD_BOX), (12, (len(self.HEAD) + 2, len(text) + 2), self.NOTE_BOX)])
+        raised = Marker(text="a", page=12, x=0.5117, y=0.1710, width=0.0055, height=0.0055, left_context="", right_context="Acomplexneur", at_line_start=True)
+        adapter = self._adapter([glued, self._table(self.TABLE_BOX)], markers=[raised])
+        self.assertTrue(adapter._split_table_note_tail(glued))
+        self.assertEqual([(b["kind"], b["text"]) for b in adapter.blocks], [("paragraph", self.HEAD), ("footnote", "a " + self.NOTE)])
+
+    def test_without_a_raised_glyph_the_glued_letter_stays_a_letter(self):
+        text = self.HEAD + "a " + self.NOTE
+        glued = self._text("#/texts/774", text, [(12, (0, len(self.HEAD) + 1), self.HEAD_BOX), (12, (len(self.HEAD) + 2, len(text)), self.NOTE_BOX)])
+        adapter = self._adapter([glued, self._table(self.TABLE_BOX)])
+        self.assertFalse(adapter._split_table_note_tail(glued))
+        self.assertEqual(adapter.blocks, [])
+
+    def test_a_box_that_is_not_under_a_table_is_a_column_break(self):
+        text = self.HEAD + " a " + self.NOTE
+        glued = self._text("#/texts/774", text, [(12, (0, len(self.HEAD)), self.HEAD_BOX), (12, (len(self.HEAD) + 3, len(text)), self.NOTE_BOX)])
+        adapter = self._adapter([glued])  # no table on the page
+        self.assertFalse(adapter._split_table_note_tail(glued))
+        far = self._table((314, 760, 561, 720))  # a table well above the box, prose between
+        adapter = self._adapter([glued, far])
+        self.assertFalse(adapter._split_table_note_tail(glued))
+
+    def test_a_paragraph_that_continues_under_a_table_is_left_whole(self):
+        tail = "timization in more complex and irregular model architectures."
+        text = self.HEAD + " " + tail
+        glued = self._text("#/texts/774", text, [(12, (0, len(self.HEAD)), self.HEAD_BOX), (12, (len(self.HEAD) + 1, len(text)), self.NOTE_BOX)])
+        adapter = self._adapter([glued, self._table(self.TABLE_BOX)])
+        self.assertFalse(adapter._split_table_note_tail(glued))
+
+    def test_the_note_moves_after_its_table_and_caption(self):
+        adapter = self._adapter([])
+        note_box = {"page": 12, "x": 0.5117, "y": 0.1710, "width": 0.4064, "height": 0.0325, "rotation": 0}
+        table_box = {"page": 12, "x": 0.5128, "y": 0.1127, "width": 0.4040, "height": 0.0601, "rotation": 0}
+        head = {"id": "h", "kind": "paragraph", "page": 12, "text": self.HEAD, "evidence": {"boxes": [], "signals": []}}
+        note = {"id": "n", "kind": "footnote", "page": 12, "text": "a " + self.NOTE, "evidence": {"boxes": [note_box], "signals": ["table-note"]}}
+        table = {"id": "t", "kind": "table", "page": 12, "text": "TABLE IV", "evidence": {"boxes": [table_box], "signals": []}}
+        caption = {"id": "c", "kind": "caption", "page": 12, "text": "TABLE IV Comparing frameworks", "evidence": {"boxes": [], "signals": []}}
+        after = {"id": "a", "kind": "paragraph", "page": 12, "text": "Our work innovatively addresses irregular graphs.", "evidence": {"boxes": [], "signals": []}}
+        adapter.blocks = [head, note, table, caption, after]
+        adapter._place_table_notes()
+        self.assertEqual([b["id"] for b in adapter.blocks], ["h", "t", "c", "n", "a"])
+
+    def test_spans_that_overshoot_the_text_by_a_character_or_two_still_split(self):
+        text = self.HEAD + " a " + self.NOTE
+        item = self._text("#/texts/774", text, [(12, (0, len(self.HEAD)), self.HEAD_BOX), (12, (len(self.HEAD) + 3, len(text) + 2), self.NOTE_BOX)])
+        adapter = self._adapter([item])
+        self.assertEqual(len(adapter._prov_segments(item)), 2)
+        item = self._text("#/texts/774", text, [(12, (0, len(self.HEAD)), self.HEAD_BOX), (12, (len(self.HEAD) + 3, len(text) + 8), self.NOTE_BOX)])
+        self.assertEqual(len(adapter._prov_segments(item)), 1)
+
+    def test_the_walk_join_fuses_the_attested_word(self):
+        # the head left open by the cut and the paragraph after the table meet in the walk, not the post-pass
+        adapter = self._adapter([])
+        adapter._corpus_forms = {"optimization", "linear", "models"}
+        for name in ("_split_merged_caption", "_split_stray_lead", "_split_side_column_tail", "_split_table_note_tail", "_is_edge_page_number"):
+            setattr(adapter, name, lambda item: False)
+        adapter._is_description_item = lambda item, text: False
+        adapter._emit_monospace_code = lambda item, text: False
+        adapter._source_id = lambda item: item.self_ref
+        adapter._in_abstract = False
+        head = {"id": "h", "kind": "paragraph", "page": 12, "text": self.HEAD, "inline": [], "evidence": {"boxes": [], "pages": [12], "sourceIds": [], "signals": []}}
+        adapter._pending = head
+        tail = self._text("#/texts/776", "timization in more complex and irregular model architectures.", [(12, (0, 61), (313, 620, 562, 610))])
+        adapter._emit_paragraph(tail)
+        self.assertEqual(head["text"], self.HEAD[:-2] + "optimization in more complex and irregular model architectures.")
+        self.assertEqual(adapter.report.joins_fused_words, 1)
+
+
+class FusedWordAttestation(unittest.TestCase):
+    """`_fuse_words`: the fused word must occur in the paper letter for
+    letter. `LLMAgents` (a heading the layout model ran together) does not
+    attest `LLM` + `agents`; `optimization` attests `op` + `timization`."""
+
+    def _adapter(self, forms):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter._corpus_forms = set(forms)
+        return adapter
+
+    def test_a_case_variant_does_not_attest_the_fusion(self):
+        adapter = self._adapter({"LLMAgents", "agents", "LLM"})
+        self.assertIsNone(adapter._fuse_words("qualities that LLM", "agents cannot fully replace."))
+
+    def test_the_exact_form_does(self):
+        adapter = self._adapter({"optimization"})
+        self.assertEqual(adapter._fuse_words("leaving room for op", "timization in more"), "leaving room for optimization in more")
+        self.assertIsNone(self._adapter({"Optimization"})._fuse_words("leaving room for op", "timization in more"))
