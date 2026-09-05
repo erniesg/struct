@@ -414,7 +414,7 @@ function* renderedInlineSources(
           runs: cell.inline,
           pathPrefix: `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline`,
         }
-      continue
+      // the block text of a table is its caption
     }
     yield {
       key: `block:${blockIndex}`,

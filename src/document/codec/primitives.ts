@@ -58,6 +58,7 @@ function snapshotObject(
   value: unknown,
   path: string,
   maximumKeys = MAX_OBJECT_KEYS,
+  boundMessage?: string,
 ): Snapshot {
   try {
     if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -70,7 +71,8 @@ function snapshotObject(
       fail(
         'BUDGET',
         path,
-        `object field count exceeds the ${maximumKeys} field bound`,
+        boundMessage ??
+          `object field count exceeds the ${maximumKeys} field bound`,
       )
     if (keys.some((key) => typeof key !== 'string'))
       fail('FIELD', path, 'symbol fields are not permitted')
@@ -96,8 +98,9 @@ export function dataEntries(
   value: unknown,
   path: string,
   maximumKeys?: number,
+  boundMessage?: string,
 ) {
-  const snapshot = snapshotObject(value, path, maximumKeys)
+  const snapshot = snapshotObject(value, path, maximumKeys, boundMessage)
   return snapshot.keys.map(
     (key) => [key, snapshot.values[key]] as [string, unknown],
   )
@@ -126,6 +129,7 @@ export function array(
   value: unknown,
   path: string,
   maximumLength?: number,
+  boundMessage?: string,
 ): unknown[] {
   try {
     if (!Array.isArray(value)) fail('TYPE', path, 'expected an array')
@@ -142,7 +146,7 @@ export function array(
       fail(
         'BUDGET',
         path,
-        `array length exceeds the ${maximumLength} item bound`,
+        boundMessage ?? `array length exceeds the ${maximumLength} item bound`,
       )
     const keys = Reflect.ownKeys(value)
     if (
