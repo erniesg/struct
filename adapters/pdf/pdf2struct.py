@@ -51,6 +51,11 @@ CAPTION_LIKE_RE = re.compile(r"^(?:Figure|Fig\.?|Table|Listing|Algorithm|Program
 SUBCAPTION_RE = re.compile(r"^\(?[a-z]\)\s*\S", re.IGNORECASE)
 TRAILING_MARKER_RE = re.compile(r"(?:(?<!\d)\.|[!?:;\"”’)\]])\s?(?:\d{1,3}|[*†‡§¶]{1,3})$")
 LOWER_START_RE = re.compile(r"^[a-zß-ÿ]")
+# the layout model spaces out mathematics: `κ = 0 . 946` is a decimal, not a full
+# stop and a note marker, and `Q Y ( j )` closes a bracket in a formula, not a
+# sentence — a paragraph ending that way is still open; `( Fig.2 )`, a spaced
+# bracket around a word, is prose and still ends the sentence
+SPACED_MATH_TAIL_RE = re.compile(r"(?:\d\s\.\s\d{1,3}|\(\s(?![^()]*[A-Za-z]{3,})[^()]*\S\s\))$")
 NUMBERED_HEADING_RE = re.compile(r"^(\d+)(?:\.\d+)*\.?\s+\S")
 APPENDIX_HEADING_RE = re.compile(r"^(?:Appendix\s+)?([A-Z])(?:\.\d+)*\.?\s+\S")
 TOP_LEVEL_HEADING_RE = re.compile(
@@ -102,8 +107,11 @@ def sanitize(value: str) -> str:
 def is_terminated(text: str) -> bool:
     """Whether a paragraph ends a sentence: terminal punctuation after any
     trailing citation brackets, or a trailing note marker. A parenthesis
-    opened in the last words and never closed keeps the sentence open."""
+    opened in the last words and never closed keeps the sentence open, and
+    so does a spaced-out formula tail (`0 . 946`, `Q Y ( j )`)."""
     stripped = text.rstrip()
+    if SPACED_MATH_TAIL_RE.search(stripped):
+        return False
     if TRAILING_MARKER_RE.search(stripped):
         return True
     tail = stripped[-60:]
@@ -256,6 +264,7 @@ class AdapterReport:
     float_resumptions: int = 0
     post_pass_joins: int = 0
     joins_fused_words: int = 0
+    joins_attested_over_nearer: int = 0
     headings: int = 0
     figures: int = 0
     figures_with_caption: int = 0
@@ -326,6 +335,8 @@ class AdapterReport:
     prose_rescued_from_furniture: int = 0
     lines_restored_from_text_layer: int = 0
     captions_split_from_merged_items: int = 0
+    stray_leads_split: int = 0
+    side_column_tails_split: int = 0
     tables_from_open_rule_box: int = 0
     description_items: int = 0
     tables_as_entry_lists: int = 0
@@ -339,6 +350,19 @@ class AdapterReport:
     panels_folded_by_geometry: int = 0
     glyph_signals_available: bool = False
     warnings: list[str] = field(default_factory=list)
+
+
+def _line_words_present(line: str, compact_block: str) -> bool:
+    """Whether a text-layer line's words are already in a block: the block
+    holds at least two thirds of the line's words of three or more letters
+    (three words at least). A line of mathematics reads `E µ [Σ t ]` in the
+    text layer and `E µ [Σ K t ]` from the layout model, so a character
+    comparison sees a missing line where the words say otherwise."""
+    words = [w.lower() for w in re.findall(r"[A-Za-z]{3,}", line)]
+    if len(words) < 3:
+        return False
+    present = sum(1 for w in words if w in compact_block)
+    return present * 3 >= len(words) * 2
 
 
 class StructAdapter:
@@ -725,6 +749,142 @@ class StructAdapter:
         self.report.captions_split_from_merged_items += 1
         return True
 
+    def _split_stray_lead(self, item: TextItem) -> bool:
+        """`and` between two display equations on one page and `Corollary 4.35
+        …` at the top of the next came back as one item: the layout model
+        glued a stray word to the paragraph that follows it. When the first
+        provenance box holds no more than three words, the rest sits on a
+        later page, and body text still lies below the stray words in their
+        column, the words stay a paragraph of their own where they are and
+        the rest is a paragraph on its own page."""
+        segments = self._prov_segments(item)
+        if len(segments) < 2:
+            return False
+        lead_index, lead = segments[0]
+        lead = sanitize(lead).strip()
+        if not lead or len(lead.split()) > 3 or len(lead) > 24:
+            return False
+        lead_box = self._box(item, lead_index)
+        next_box = self._box(item, segments[1][0])
+        if lead_box is None or next_box is None or next_box["page"] <= lead_box["page"]:
+            return False
+        if not self._body_text_below(lead_box):
+            return False
+        rest = sanitize(" ".join(text.strip() for _, text in segments[1:] if text.strip()))
+        if not rest:
+            return False
+        self._flush()
+        stray = self._new_block("paragraph", item, lead)
+        stray["evidence"]["boxes"] = [lead_box]
+        stray["evidence"]["pages"] = [lead_box["page"]]
+        stray["inline"] = self._runs_for(item, lead)
+        self.blocks.append(stray)
+        self.report.paragraphs += 1
+        body = self._new_block("paragraph", item, rest)
+        body["evidence"]["boxes"] = [b for index, _ in segments[1:] for b in ([self._box(item, index)] if self._box(item, index) else [])]
+        body["evidence"]["pages"] = sorted({b["page"] for b in body["evidence"]["boxes"]}) or [next_box["page"]]
+        body["page"] = body["evidence"]["pages"][0]
+        body["inline"] = self._runs_for(item, rest)
+        self._pending = body
+        self.report.stray_leads_split += 1
+        return True
+
+    @staticmethod
+    def _is_side_column(box: dict, body: dict) -> bool:
+        """Whether a box belongs to a narrow column beside the body's, the way
+        a journal's first-page metadata sidebar (`Funding:`, `Competing
+        interests:`) sits beside the article: no more than two thirds of the
+        body box's width, and no horizontal overlap with it at all. The
+        second test is what keeps an ordinary two-column flow out — there the
+        columns are disjoint but equally wide."""
+        if box["width"] > 0.65 * body["width"]:
+            return False
+        return box["x"] + box["width"] <= body["x"] or box["x"] >= body["x"] + body["width"]
+
+    def _split_side_column_tail(self, item: TextItem) -> bool:
+        """The layout model sometimes continues a body paragraph into the
+        narrow sidebar beside it, gluing the journal's funding statement onto
+        the end of the article's first sentence. A provenance box in a side
+        column ends the paragraph: from there the text is that column's, and
+        it becomes a paragraph of its own."""
+        segments = self._prov_segments(item)
+        if len(segments) < 2:
+            return False
+        body = self._box(item, segments[0][0])
+        if body is None:
+            return False
+        cut_at = None
+        for position, (index, _) in enumerate(segments[1:], start=1):
+            box = self._box(item, index)
+            if box is not None and self._is_side_column(box, body):
+                cut_at = position
+                break
+        if cut_at is None:
+            return False
+        head = sanitize(" ".join(text.strip() for _, text in segments[:cut_at] if text.strip()))
+        tail = sanitize(" ".join(text.strip() for _, text in segments[cut_at:] if text.strip()))
+        if len(head) < 40 or len(tail) < 20:
+            return False
+        self._flush()
+        block = self._new_block("paragraph", item, head)
+        block["evidence"]["boxes"] = [b for index, _ in segments[:cut_at] for b in ([self._box(item, index)] if self._box(item, index) else [])]
+        block["evidence"]["pages"] = sorted({b["page"] for b in block["evidence"]["boxes"]}) or block["evidence"]["pages"]
+        block["inline"] = self._runs_for(item, head)
+        self.blocks.append(block)
+        self.report.paragraphs += 1
+        aside_boxes = [b for index, _ in segments[cut_at:] for b in ([self._box(item, index)] if self._box(item, index) else [])]
+        runs = self._runs_for(item, tail)
+        owner = self._side_column_owner(aside_boxes[0]) if aside_boxes else None
+        if owner is not None:
+            # the entry this text continues, still open in its own column
+            base = len(owner["text"].rstrip()) + 1
+            owner["text"] = owner["text"].rstrip() + " " + tail
+            owner["inline"].extend({**run, "start": run["start"] + base, "end": run["end"] + base} for run in runs)
+            owner["evidence"]["boxes"].extend(aside_boxes)
+            owner["evidence"]["pages"] = sorted(set(owner["evidence"]["pages"] + [b["page"] for b in aside_boxes]))
+            self.report.joins += 1
+        else:
+            aside = self._new_block("paragraph", item, tail)
+            aside["evidence"]["boxes"] = aside_boxes
+            aside["evidence"]["pages"] = sorted({b["page"] for b in aside_boxes}) or aside["evidence"]["pages"]
+            aside["page"] = aside["evidence"]["pages"][0] if aside["evidence"]["pages"] else aside["page"]
+            aside["inline"] = runs
+            aside["evidence"]["signals"] = list(dict.fromkeys((aside["evidence"].get("signals") or []) + ["side-column-aside"]))
+            self.blocks.append(aside)
+            self.report.paragraphs += 1
+        self.report.side_column_tails_split += 1
+        return True
+
+    def _side_column_owner(self, box: dict) -> dict | None:
+        """The entry a cut side-column segment continues: the last paragraph
+        behind it whose own column is this one (their boxes overlap
+        horizontally by most of the narrower box) and whose sentence is still
+        open. The body's columns never qualify — they do not overlap it."""
+        for candidate in reversed(self.blocks):
+            if candidate["kind"] != "paragraph" or not candidate["evidence"]["boxes"]:
+                continue
+            other = candidate["evidence"]["boxes"][0]
+            overlap = min(other["x"] + other["width"], box["x"] + box["width"]) - max(other["x"], box["x"])
+            if overlap < 0.6 * min(other["width"], box["width"]):
+                continue
+            return candidate if not is_terminated(candidate["text"]) else None
+        return None
+
+    def _body_text_below(self, box: dict) -> bool:
+        """Whether a text item of the body lies below a box in its column on
+        the same page: the box is then not the last line of that page."""
+        for other, _ in self.doc.iterate_items():
+            if not isinstance(other, TextItem) or not (other.text or "").strip():
+                continue
+            if str(getattr(other, "label", "")).endswith(("page_header", "page_footer")):
+                continue
+            for obox in self._boxes(other):
+                if obox["page"] != box["page"] or obox["y"] < box["y"] + box["height"]:
+                    continue
+                if min(obox["x"] + obox["width"], box["x"] + box["width"]) - max(obox["x"], box["x"]) > 0:
+                    return True
+        return False
+
     def _is_description_item(self, item: TextItem, text: str) -> bool:
         """`resolved_on_timestamp : the time at which …`: a description-list
         entry whose term is set in a monospace face (`\\item[term]`)."""
@@ -743,6 +903,10 @@ class StructAdapter:
             self.report.invisible_items_dropped += 1
             return
         if self._split_merged_caption(item):
+            return
+        if self._split_stray_lead(item):
+            return
+        if self._split_side_column_tail(item):
             return
         if self._is_description_item(item, sanitize(item.text)):
             self._flush()
@@ -1709,21 +1873,29 @@ class StructAdapter:
             return previous + following
         return None
 
-    def _continuation_predecessor(self, index: int) -> tuple[dict | None, str]:
+    def _continuation_predecessor(self, index: int, before: int | None = None) -> tuple[dict | None, str]:
         """The block a lowercase-starting paragraph continues: the nearest
         unterminated paragraph or list item behind it (this page or the
         previous one), looking past floats, listings, list items, listing
         captions typeset as headings, and up to three complete paragraphs
         that belong to another column's flow. A figure whose caption is
-        unterminated and sits just above the paragraph is a split caption."""
+        unterminated and sits just above the paragraph is a split caption.
+        A paragraph standing inside a run of list entries on its page may
+        also look past the headings the layout model read between two
+        columns of one reference list, but only to a hyphen-ended entry of
+        that list. `before` restarts the search behind an earlier find."""
         block = self.blocks[index]
         skip = FLOAT_KINDS | {"furniture", "code"}
-        back = index - 1
+        back = (before if before is not None else index) - 1
         complete_skipped = 0
         entries_skipped = 0
+        asides_skipped = 0
         box = block["evidence"]["boxes"][0] if block["evidence"]["boxes"] else None
         prose_between = False
-        while back >= 0 and index - back <= (48 if entries_skipped else 16):
+        following = self.blocks[index + 1] if index + 1 < len(self.blocks) else None
+        in_entries = block["kind"] == "paragraph" and following is not None and following["kind"] == "list-item" and following["page"] == block["page"]
+        past_heading = False
+        while back >= 0 and index - back <= (48 if entries_skipped else (24 if past_heading or asides_skipped else 16)):
             candidate = self.blocks[back]
             if candidate["page"] is None or block["page"] is None:
                 break
@@ -1742,9 +1914,19 @@ class StructAdapter:
                 if CAPTION_LIKE_RE.match(candidate["text"]) or self._heading_belongs_to_float(back):
                     back -= 1
                     continue
+                if in_entries and candidate["page"] == block["page"]:
+                    past_heading = True
+                    back -= 1
+                    continue
                 break
             if kind not in ("paragraph", "list-item"):
                 break
+            if past_heading:
+                # beyond the headings only the list's own hyphen-ended entry can be the first half
+                if kind == "list-item" and candidate["page"] == block["page"] and candidate["text"].rstrip().endswith("-"):
+                    return candidate, kind
+                back -= 1
+                continue
             if kind == "list-item" and is_terminated(candidate["text"]):
                 # A reference list or an enumerated block between the halves is
                 # not another column's prose flow — it is a run the eye skips,
@@ -1757,6 +1939,15 @@ class StructAdapter:
                 back -= 1
                 continue
             if is_terminated(candidate["text"]):
+                candidate_box = candidate["evidence"]["boxes"][0] if candidate["evidence"]["boxes"] else None
+                if box is not None and candidate_box is not None and self._is_side_column(candidate_box, box):
+                    # a journal's first-page sidebar beside the article: matter the
+                    # eye skips, like a float, not the other column's prose flow
+                    asides_skipped += 1
+                    if asides_skipped > 8:
+                        break
+                    back -= 1
+                    continue
                 complete_skipped += 1
                 prose_between = True
                 if complete_skipped > 3:
@@ -1795,12 +1986,22 @@ class StructAdapter:
             if block["kind"] != "paragraph" or not LOWER_START_RE.match(block["text"].lstrip()):
                 index += 1
                 continue
+            if "side-column-aside" in (block["evidence"].get("signals") or []):
+                index += 1
+                continue  # the sidebar's own words, just cut from the body: not a continuation of it
             previous, how = self._continuation_predecessor(index)
             if previous is None:
                 index += 1
                 continue
             prev_text = previous["text"].rstrip()
             following = block["text"].lstrip()
+            if prev_text.endswith("-") and how != "caption" and not self._dehyphenate(prev_text, following)[1]:
+                # two hyphen-ended halves compete: the one whose fusion the paper attests wins
+                # (`com-` + `plex` over `higher-` + `plex`, the reference entry that lay between)
+                alternative, alternative_how = self._continuation_predecessor(index, before=self.blocks.index(previous))
+                if alternative is not None and alternative["text"].rstrip().endswith("-") and self._dehyphenate(alternative["text"].rstrip(), following)[1]:
+                    previous, how, prev_text = alternative, alternative_how, alternative["text"].rstrip()
+                    self.report.joins_attested_over_nearer += 1
             shift = len(block["text"]) - len(following)
             if prev_text.endswith("-"):
                 joined, dropped = self._dehyphenate(prev_text, following)
@@ -3636,6 +3837,7 @@ class StructAdapter:
             if not width or not height:
                 continue
             compact_block = re.sub(r"[^a-z0-9]", "", block["text"].lower())
+            page_compacts = [re.sub(r"[^a-z0-9]", "", other["text"].lower()) for other in self.blocks if other is not block and other["page"] == page_index and other["text"]]
             lines = []
             for line in layout["lines"]:
                 cx, cy = (line["xmin"] + line["xmax"]) / 2 / width, (line["ymin"] + line["ymax"]) / 2 / height
@@ -3650,6 +3852,8 @@ class StructAdapter:
                 compact = re.sub(r"[^a-z0-9]", "", text.lower())
                 if len(compact) < 12 or compact[:24] in compact_block or compact[-24:] in compact_block:
                     continue
+                if _line_words_present(text, compact_block) or any(_line_words_present(text, other) for other in page_compacts):
+                    continue  # a line of mathematics whose symbols the text layer orders differently, already carried here or by a neighbour
                 if any(re.sub(r"[^a-z0-9]", "", t.lower()) and re.sub(r"[^a-z0-9]", "", t.lower())[:24] in re.sub(r"[^a-z0-9]", "", other["text"].lower()) for other in self.blocks if other is not block and other["page"] == page_index for t in [text]):
                     continue  # the words live in another block (a caption, a note)
                 # anchor: the tail of the line above, located in the block text

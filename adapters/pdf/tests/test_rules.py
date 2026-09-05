@@ -22,6 +22,7 @@ from pdf2struct import (  # noqa: E402
     FIGURE_CAPTION_RE,
     TABLE_CAPTION_RE,
     StructAdapter,
+    _line_words_present,
     clean_caption,
     first_free_span,
     is_terminated,
@@ -72,6 +73,20 @@ class Joins(unittest.TestCase):
         self.assertTrue(is_terminated("as shown in prior work [85]."))
         self.assertTrue(is_terminated("the result holds.3"))
         self.assertTrue(is_terminated("we conclude:"))
+
+    def test_spaced_mathematics_does_not_end_a_sentence(self):
+        # the layout model writes `0 . 946` for a decimal: not a full stop and a note marker
+        self.assertFalse(is_terminated("reaches 0.977 accuracy and Cohen's κ = 0 . 946"))
+        # `( j )` closes a bracket in a formula, not a sentence
+        self.assertFalse(is_terminated("that the marginal extreme quantile Q Y ( j )"))
+        # prose parentheses and real note markers are unchanged
+        self.assertTrue(is_terminated("as shown in prior work (see Section 3)."))
+        self.assertTrue(is_terminated("the extreme quantile (Section 3)"))
+        self.assertTrue(is_terminated("was published recently. 3"))
+        self.assertTrue(is_terminated("with a value of 0.946."))
+        # a spaced bracket around a word is prose, not a formula
+        self.assertTrue(is_terminated("was observed across both conditions ( Fig.2 )"))
+        self.assertTrue(is_terminated("as reported before ( Smith et al. 2020 )"))
 
     def test_caption_like_blocks_are_floats(self):
         self.assertTrue(CAPTION_LIKE_RE.match("Listing 2 Supply of atomic token types"))
@@ -245,3 +260,330 @@ class GluedMarginStamps(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestoredLines(unittest.TestCase):
+    """`_restore_missing_lines`: a text-layer line the layout model did not
+    carry goes back into its paragraph; a line of mathematics whose symbols
+    the text layer merely orders differently is already there and stays out."""
+
+    WIDTH, HEIGHT = 600.0, 800.0
+
+    @staticmethod
+    def _line(text, top):
+        return {"xmin": 60.0, "xmax": 290.0, "ymin": top, "ymax": top + 10.0, "text": text}
+
+    def _run(self, block_text, lines, before=None):
+        adapter = StructAdapter.__new__(StructAdapter)
+        block = {"kind": "paragraph", "page": 4, "text": block_text, "inline": [],
+                 "evidence": {"boxes": [{"page": 4, "x": 0.09, "y": 0.30, "width": 0.40, "height": 0.10, "rotation": 0}],
+                              "pages": [4], "signals": ["docling-layout"]}}
+        adapter.blocks = [block]
+        if before is not None:
+            # the neighbour above, whose box the layout model let overlap the first line
+            adapter.blocks.insert(0, {"kind": "paragraph", "page": 4, "text": before, "inline": [],
+                                      "evidence": {"boxes": [{"page": 4, "x": 0.09, "y": 0.20, "width": 0.40, "height": 0.105, "rotation": 0}],
+                                                   "pages": [4], "signals": ["docling-layout"]}})
+        adapter.report = AdapterReport()
+        adapter._diagnostic = lambda *args, **kwargs: None
+        adapter.page_layout = [{"width": self.WIDTH, "height": self.HEIGHT, "lines": []} for _ in range(3)]
+        adapter.page_layout.append({"width": self.WIDTH, "height": self.HEIGHT, "lines": lines})
+        adapter._restore_missing_lines()
+        return block, adapter
+
+    def test_words_present_reads_words_not_characters(self):
+        block = "production rate E µ [Σ K t ] = ⟨ Σ loc K h z ⟩ µ ≡ Σ K ≤ Σ U . Here Σ K is the coarse-grained"
+        compact = "".join(ch for ch in block.lower() if ch.isalnum() and ch.isascii())
+        self.assertTrue(_line_words_present("tion rate Eµ [Σt ] = ⟨Σloc Kzh ⟩µ ≡ ΣK ≤ ΣU .", compact))
+        self.assertFalse(_line_words_present("On the Origin of Species by Means of Natural Selection", compact))
+        self.assertFalse(_line_words_present("E µ [Σ t ] ≡ Σ K", compact))
+
+    def test_a_mathematical_line_already_carried_is_not_restored(self):
+        block_text = ("Here Σ K is the coarse-grained and Σ U is the full mean entropy production rate of the probed region. "
+                      "The two coincide in the limit K h z → 1 supp( U Σ ) . In analogy to coarse-grained density estimators")
+        lines = [self._line("tion rate Eµ [Σt ] = ⟨Σloc Kzh ⟩µ ≡ ΣK ≤ ΣU .", 242.0),
+                 self._line("Here ΣK is the coarse-grained and ΣU is the full mean", 254.0),
+                 self._line("entropy production rate of the probed region. The two", 266.0),
+                 self._line("coincide in the limit Kzh → 1supp(UΣ ) . In analogy to", 278.0)]
+        before = ("Dissipation concentration inequalities.- For suitable U , J t realizes generalized currents, i.e., a trajectory "
+                  "estimator of the coarse-grained regional entropy production rate E µ [Σ K t ] = ⟨ Σ loc K h z ⟩ µ ≡ Σ K ≤ Σ U .")
+        block, adapter = self._run(block_text, lines, before=before)
+        self.assertTrue(block["text"].startswith("Here Σ K is"))
+        self.assertEqual(adapter.report.lines_restored_from_text_layer, 0)
+
+    def test_an_italic_title_the_layout_model_dropped_is_restored(self):
+        block_text = "The book that started it all was published in 1859 and it is still read today by many."
+        lines = [self._line("The book that started it all was published in 1859", 254.0),
+                 self._line("On the Origin of Species by Means of Natural Selection", 266.0),
+                 self._line("and it is still read today by many.", 278.0)]
+        block, adapter = self._run(block_text, lines)
+        self.assertIn("in 1859 On the Origin of Species by Means of Natural Selection and it", block["text"])
+        self.assertEqual(adapter.report.lines_restored_from_text_layer, 1)
+
+
+class StrayLeads(unittest.TestCase):
+    """`_split_stray_lead`: a stray word on one page glued by the layout model
+    to the paragraph that opens the next page is split off; a paragraph that
+    genuinely runs over a page break is left whole."""
+
+    @staticmethod
+    def _item(ref, text, prov):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, TextItem
+        return TextItem(self_ref=ref, label=DocItemLabel.TEXT, orig=text, text=text,
+                        prov=[ProvenanceItem(page_no=page, charspan=span,
+                                             bbox=BoundingBox(l=l, t=t, r=r, b=b, coord_origin=CoordOrigin.BOTTOMLEFT))
+                              for page, span, (l, t, r, b) in prov])
+
+    def _adapter(self, items):
+        from types import SimpleNamespace
+        adapter = StructAdapter.__new__(StructAdapter)
+        size = SimpleNamespace(width=612.0, height=792.0)
+        adapter.doc = SimpleNamespace(pages={61: SimpleNamespace(size=size), 62: SimpleNamespace(size=size)},
+                                      iterate_items=lambda **kwargs: [(item, 0) for item in items])
+        adapter.blocks, adapter._pending, adapter._ids = [], None, set()
+        adapter.report = AdapterReport()
+        adapter._runs_for = lambda item, text: []
+        return adapter
+
+    TEXT = "and Corollary 4.35 (Learning complexity from contraction complexity). Let G be a connected graph with n vertices."
+
+    def test_a_stray_word_before_the_next_page_is_split_off(self):
+        glued = self._item("#/texts/1369", self.TEXT, [(61, (0, 3), (90, 561, 107, 552)), (62, (4, len(self.TEXT)), (90, 748, 505, 725))])
+        below = self._item("#/texts/1362", "Moreover, the sequence can be constructed in polynomial time.", [(61, (0, 61), (90, 500, 430, 490))])
+        adapter = self._adapter([glued, below])
+        self.assertTrue(adapter._split_stray_lead(glued))
+        adapter._flush()
+        self.assertEqual([b["text"] for b in adapter.blocks], ["and", self.TEXT[4:]])
+        self.assertEqual(adapter.blocks[0]["evidence"]["boxes"][0]["page"], 61)
+        self.assertEqual(adapter.blocks[1]["page"], 62)
+        self.assertEqual(adapter.blocks[1]["evidence"]["pages"], [62])
+        self.assertEqual(adapter.report.stray_leads_split, 1)
+
+    def test_a_last_line_at_the_page_foot_stays_with_its_paragraph(self):
+        # the same shape, but nothing lies below the short first box: a paragraph running over the page break
+        glued = self._item("#/texts/1369", self.TEXT, [(61, (0, 3), (90, 61, 107, 52)), (62, (4, len(self.TEXT)), (90, 748, 505, 725))])
+        above = self._item("#/texts/1362", "Moreover, the sequence can be constructed in polynomial time.", [(61, (0, 61), (90, 500, 430, 490))])
+        adapter = self._adapter([glued, above])
+        self.assertFalse(adapter._split_stray_lead(glued))
+        self.assertEqual(adapter.blocks, [])
+
+    def test_a_long_first_box_is_not_a_stray_word(self):
+        text = "The tomography theorem for a fixed learning sequence " + self.TEXT
+        glued = self._item("#/texts/1369", text, [(61, (0, 52), (90, 561, 400, 552)), (62, (53, len(text)), (90, 748, 505, 725))])
+        below = self._item("#/texts/1362", "Moreover, the sequence can be constructed in polynomial time.", [(61, (0, 61), (90, 500, 430, 490))])
+        adapter = self._adapter([glued, below])
+        self.assertFalse(adapter._split_stray_lead(glued))
+
+
+class EntriesAcrossHeadings(unittest.TestCase):
+    """`_continuation_predecessor` for a paragraph standing inside a run of
+    reference entries: the layout model reads the acknowledgments between
+    the two columns of one bibliography, and the entry's tail must still
+    find its hyphen-ended head across those headings."""
+
+    @staticmethod
+    def _block(kind, text, page=9):
+        return {"kind": kind, "page": page, "text": text, "inline": [],
+                "evidence": {"boxes": [{"page": page, "x": 0.1, "y": 0.5, "width": 0.4, "height": 0.05, "rotation": 0}], "pages": [page]}}
+
+    def _blocks(self, tail_followed_by_entry=True, head_hyphenated=True):
+        blocks = [self._block("list-item", f"A. Author, A title of paper {n}, Journal 3, 23 (2021).") for n in range(3)]
+        blocks.append(self._block("list-item", "T. Varley and O. Sporns, Partial entropy decomposition reveals higher-" if head_hyphenated else "T. Varley and O. Sporns, Partial entropy decomposition (2023)."))
+        for title in ("Acknowledgments", "Author contributions", "Declaration of interests"):
+            blocks.append(self._block("heading", title))
+            blocks.append(self._block("paragraph", f"A complete sentence about the {title.lower()} of this work."))
+        blocks.append(self._block("paragraph", "order information structures in human brain activity, PNAS 120, e2300888120 (2023)."))
+        if tail_followed_by_entry:
+            blocks.append(self._block("list-item", "Q. Li and J. Malo, Functional connectivity via total correlation, Neurocomputing 571 (2023)."))
+        return blocks
+
+    def _find(self, blocks, index):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.blocks = blocks
+        return adapter._continuation_predecessor(index)
+
+    def test_an_entry_tail_finds_its_head_across_the_acknowledgments(self):
+        blocks = self._blocks()
+        found, how = self._find(blocks, len(blocks) - 2)
+        self.assertIs(found, blocks[3])
+        self.assertEqual(how, "list-item")
+
+    def test_a_paragraph_outside_the_list_still_stops_at_a_heading(self):
+        blocks = self._blocks(tail_followed_by_entry=False)
+        self.assertIsNone(self._find(blocks, len(blocks) - 1)[0])
+
+    def test_only_a_hyphen_ended_entry_is_reached_past_the_headings(self):
+        blocks = self._blocks(head_hyphenated=False)
+        self.assertIsNone(self._find(blocks, len(blocks) - 2)[0])
+
+
+class AttestedHalfWins(unittest.TestCase):
+    """`_join_split_paragraphs`: when the nearest hyphen-ended block does not
+    fuse into a word the paper uses and an earlier one does, the earlier one
+    is the sentence's first half."""
+
+    @staticmethod
+    def _block(kind, text, page=9):
+        return {"id": f"b-{kind}-{abs(hash(text)) % 10000}", "kind": kind, "page": page, "text": text, "inline": [],
+                "evidence": {"boxes": [{"page": page, "x": 0.1, "y": 0.5, "width": 0.4, "height": 0.05, "rotation": 0}],
+                             "pages": [page], "sourceIds": []}}
+
+    def _run(self, blocks, words):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.blocks = blocks
+        adapter.relationships = []
+        adapter.report = AdapterReport()
+        adapter._corpus_words = set(words)
+        adapter._join_split_paragraphs()
+        return adapter
+
+    def test_the_attested_fusion_wins_over_the_nearer_hyphen(self):
+        blocks = [self._block("paragraph", "provides a powerful framework for understanding com-")]
+        blocks += [self._block("list-item", f"A. Author, A title of paper {n}, Journal 3, 23 (2021).") for n in range(7)]
+        blocks.append(self._block("list-item", "T. Varley and O. Sporns, Partial entropy decomposition reveals higher-"))
+        blocks.append(self._block("paragraph", "plex brain function, where the two are both crucial and meaningful."))
+        adapter = self._run(blocks, {"complex", "brain", "function", "higher", "order"})
+        self.assertEqual(blocks[0]["text"], "provides a powerful framework for understanding complex brain function, where the two are both crucial and meaningful.")
+        self.assertTrue(blocks[-1]["text"].endswith("higher-"))
+        self.assertEqual(adapter.report.joins_attested_over_nearer, 1)
+
+    def test_the_nearer_hyphen_keeps_the_join_when_it_is_attested(self):
+        blocks = [self._block("paragraph", "provides a powerful framework for understanding com-")]
+        blocks += [self._block("list-item", f"A. Author, A title of paper {n}, Journal 3, 23 (2021).") for n in range(7)]
+        blocks.append(self._block("list-item", "T. Varley and O. Sporns, Partial entropy decomposition reveals higher-"))
+        blocks.append(self._block("paragraph", "order information structures in human brain activity, PNAS 120 (2023)."))
+        adapter = self._run(blocks, {"complex", "higherorder"})
+        self.assertTrue(blocks[-1]["text"].startswith("T. Varley") and blocks[-1]["text"].endswith("(2023)."))
+        self.assertTrue(blocks[0]["text"].endswith("com-"))
+        self.assertEqual(adapter.report.joins_attested_over_nearer, 0)
+
+
+class SideColumns(unittest.TestCase):
+    """A journal's first-page metadata sidebar is a narrow column beside the
+    article: text the layout model continued into it is cut off, and its
+    paragraphs do not spend the continuation search's prose budget. An
+    ordinary two-column flow is disjoint but equally wide, and is untouched."""
+
+    BODY = {"page": 1, "x": 0.324, "y": 0.673, "width": 0.616, "height": 0.206, "rotation": 0}
+    ASIDE = {"page": 2, "x": 0.059, "y": 0.123, "width": 0.247, "height": 0.023, "rotation": 0}
+    COLUMN_LEFT = {"page": 1, "x": 0.090, "y": 0.100, "width": 0.400, "height": 0.200, "rotation": 0}
+    COLUMN_RIGHT = {"page": 1, "x": 0.520, "y": 0.100, "width": 0.406, "height": 0.200, "rotation": 0}
+
+    def test_a_second_body_column_is_not_a_side_column(self):
+        self.assertTrue(StructAdapter._is_side_column(self.ASIDE, self.BODY))
+        self.assertFalse(StructAdapter._is_side_column(self.COLUMN_RIGHT, self.COLUMN_LEFT))
+        # narrow but overlapping the body horizontally: a short last line of the same column
+        self.assertFalse(StructAdapter._is_side_column({"page": 2, "x": 0.324, "y": 0.12, "width": 0.20, "height": 0.02}, self.BODY))
+
+    HEAD = ("Y. pestis is the etiological agent responsible for plague. Healthcare providers at the primary "
+            "care level frequently encounter difficulties due to inadequate professional knowledge and")
+    TAIL = "design, data collection and analysis, decision to publish, or preparation of the manuscript."
+
+    def _item(self, prov):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, TextItem
+        text = self.HEAD + " " + self.TAIL
+        return TextItem(self_ref="#/texts/22", label=DocItemLabel.TEXT, orig=text, text=text,
+                        prov=[ProvenanceItem(page_no=page, charspan=span,
+                                             bbox=BoundingBox(l=l, t=t, r=r, b=b, coord_origin=CoordOrigin.BOTTOMLEFT))
+                              for page, span, (l, t, r, b) in prov])
+
+    def _adapter(self):
+        from types import SimpleNamespace
+        adapter = StructAdapter.__new__(StructAdapter)
+        size = SimpleNamespace(width=612.0, height=792.0)
+        adapter.doc = SimpleNamespace(pages={1: SimpleNamespace(size=size), 2: SimpleNamespace(size=size)})
+        adapter.blocks, adapter._pending, adapter._ids = [], None, set()
+        adapter.report = AdapterReport()
+        adapter._runs_for = lambda item, text: []
+        return adapter
+
+    def test_the_cut_text_rejoins_the_open_entry_in_its_own_column(self):
+        split = len(self.HEAD) + 1
+        item = self._item([(1, (0, split - 1), (198, 792 * 0.327, 575, 792 * 0.12)),
+                           (2, (split, split + len(self.TAIL)), (36, 792 * 0.877, 187, 792 * 0.854))])
+        adapter = self._adapter()
+        funding = {"id": "b-0", "kind": "paragraph", "page": 1,
+                   "text": "Funding: This study was supported by a grant. The funders had no role in study", "inline": [],
+                   "evidence": {"boxes": [{"page": 1, "x": 0.059, "y": 0.85, "width": 0.25, "height": 0.05, "rotation": 0}],
+                                "pages": [1], "sourceIds": [], "signals": []}}
+        adapter.blocks = [funding]
+        self.assertTrue(adapter._split_side_column_tail(item))
+        self.assertTrue(funding["text"].endswith("no role in study " + self.TAIL))
+        self.assertEqual([b["text"] for b in adapter.blocks], [funding["text"], self.HEAD])
+
+    def test_a_closed_entry_in_the_column_does_not_take_the_text(self):
+        split = len(self.HEAD) + 1
+        item = self._item([(1, (0, split - 1), (198, 792 * 0.327, 575, 792 * 0.12)),
+                           (2, (split, split + len(self.TAIL)), (36, 792 * 0.877, 187, 792 * 0.854))])
+        adapter = self._adapter()
+        adapter.blocks = [{"id": "b-0", "kind": "paragraph", "page": 1, "text": "Copyright: an open access article.",
+                           "inline": [], "evidence": {"boxes": [{"page": 1, "x": 0.059, "y": 0.71, "width": 0.24, "height": 0.05, "rotation": 0}],
+                                                      "pages": [1], "sourceIds": [], "signals": []}}]
+        self.assertTrue(adapter._split_side_column_tail(item))
+        self.assertEqual([b["text"] for b in adapter.blocks][1:], [self.HEAD, self.TAIL])
+
+    def test_a_paragraph_continued_into_the_sidebar_is_cut(self):
+        split = len(self.HEAD) + 1
+        item = self._item([(1, (0, split - 1), (198, 792 * 0.327, 575, 792 * 0.12)),
+                           (2, (split, split + len(self.TAIL)), (36, 792 * 0.877, 187, 792 * 0.854))])
+        adapter = self._adapter()
+        self.assertTrue(adapter._split_side_column_tail(item))
+        self.assertEqual([b["text"] for b in adapter.blocks], [self.HEAD, self.TAIL])
+        self.assertEqual(adapter.blocks[1]["page"], 2)
+        self.assertEqual(adapter.report.side_column_tails_split, 1)
+        self.assertIn("side-column-aside", adapter.blocks[1]["evidence"]["signals"])
+
+    def test_the_cut_sidebar_text_is_not_rejoined_to_the_body(self):
+        # the sidebar's words start lowercase and the body's tail is unterminated:
+        # without the mark the post-pass join would put them straight back together
+        head = {"id": "b-1", "kind": "paragraph", "page": 1, "text": self.HEAD, "inline": [],
+                "evidence": {"boxes": [self.BODY], "pages": [1], "sourceIds": [], "signals": []}}
+        aside = {"id": "b-2", "kind": "paragraph", "page": 2, "text": self.TAIL, "inline": [],
+                 "evidence": {"boxes": [self.ASIDE], "pages": [2], "sourceIds": [], "signals": ["side-column-aside"]}}
+        adapter = self._adapter()
+        adapter.blocks = [head, aside]
+        adapter.relationships = []
+        adapter._corpus_words = set()
+        adapter._join_split_paragraphs()
+        self.assertEqual([b["text"] for b in adapter.blocks], [self.HEAD, self.TAIL])
+
+    def test_a_paragraph_crossing_to_the_next_column_is_kept_whole(self):
+        split = len(self.HEAD) + 1
+        item = self._item([(1, (0, split - 1), (55, 792 * 0.90, 300, 792 * 0.70)),
+                           (1, (split, split + len(self.TAIL)), (318, 792 * 0.90, 563, 792 * 0.86))])
+        adapter = self._adapter()
+        self.assertFalse(adapter._split_side_column_tail(item))
+        self.assertEqual(adapter.blocks, [])
+
+
+class SideColumnBudget(unittest.TestCase):
+    """`_continuation_predecessor`: the four sidebar entries of a PLOS first
+    page lie between the halves of one sentence and must not exhaust the
+    three-paragraph budget meant for another column's prose flow."""
+
+    @staticmethod
+    def _block(text, box, page):
+        return {"kind": "paragraph", "page": page, "text": text, "inline": [],
+                "evidence": {"boxes": [dict(box, page=page)], "pages": [page]}}
+
+    def _find(self, aside_width):
+        body = {"x": 0.324, "y": 0.49, "width": 0.616, "height": 0.20, "rotation": 0}
+        aside = {"x": 0.059, "y": 0.12, "width": aside_width, "height": 0.05, "rotation": 0}
+        blocks = [self._block("Real-time monitoring with portable gamma detectors was applied without workflow "
+                              "disruption. Feasibility analyses indicated that, for diagnostic procedures, a", body, 1)]
+        for label in ("Data availability statement", "Funding", "Competing interests", "Abbreviations"):
+            blocks.append(self._block(f"{label}: a complete sentence of the journal's own matter.", aside, 2))
+        blocks.append(self._block("single detector can be sufficient for reliable extravasation identification.",
+                                  dict(body, y=0.12), 2))
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.blocks = blocks
+        return blocks, adapter._continuation_predecessor(len(blocks) - 1)
+
+    def test_sidebar_entries_do_not_spend_the_prose_budget(self):
+        blocks, (found, how) = self._find(0.247)
+        self.assertIs(found, blocks[0])
+        self.assertEqual(how, "paragraph")
+
+    def test_four_body_width_paragraphs_still_stop_the_search(self):
+        _, (found, _) = self._find(0.616)
+        self.assertIsNone(found)
