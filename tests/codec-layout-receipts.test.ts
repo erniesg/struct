@@ -1,3 +1,4 @@
+import { MAX_STRUCT_DOCUMENT_ITEMS } from '../src/document/codec/parsers'
 import { describe, expect, it } from 'vitest'
 import { strFromU8, unzipSync } from 'fflate'
 import { runInNewContext } from 'node:vm'
@@ -217,7 +218,7 @@ describe('STRUCT page and receipt integrity', () => {
     (field) => {
       const value = validDocument() as any
       let ownKeyReads = 0
-      value[field] = new Proxy(new Array(100_001), {
+      value[field] = new Proxy(new Array(MAX_STRUCT_DOCUMENT_ITEMS + 1), {
         ownKeys() {
           ownKeyReads += 1
           throw new Error('oversized array keys were materialized')

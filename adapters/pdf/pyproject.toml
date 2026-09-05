@@ -1,0 +1,15 @@
+[project]
+name = "struct-pdf-adapter"
+version = "0.0.0"
+description = "Reference PDF -> StructDocument adapter for @erniesg/struct (Docling extraction, source signals, evaluator)."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+  "docling==2.126.0",
+  "latex2mathml",
+  "pypdf",
+]
+
+[tool.uv]
+# The adapter is a local tool, not a distributable package.
+package = false

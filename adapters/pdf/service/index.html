@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdf2epub</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf7; --fg: #1b1a17; --muted: #6b6863; --line: #e2ded5;
+    --card: #ffffff; --accent: #2f5d50; --bad: #a13d2d; --warn: #8a6d1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16171a; --fg:#e9e6df; --muted:#9a978f; --line:#2c2e33;
+            --card:#1e2024; --accent:#7fb3a1; --bad:#e08b78; --warn:#d9bd72; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  main { max-width: 62rem; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 1.75rem; font-size: .9rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
+  #drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 2.25rem 1rem;
+          text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+  #drop.hot { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  #drop strong { display:block; font-size:1.05rem; margin-bottom:.3rem; }
+  #drop span { color: var(--muted); font-size:.87rem; }
+  label.profile { display:inline-flex; align-items:center; gap:.4rem; margin-right:1.1rem;
+                  font-size:.9rem; color:var(--muted); }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .job { border:1px solid var(--line); border-radius:10px; background:var(--card);
+         padding:.95rem 1.1rem; margin-bottom:.75rem; }
+  .job h3 { margin:0; font-size:1rem; font-weight:600; word-break:break-all; }
+  .meta { color:var(--muted); font-size:.82rem; margin-top:.15rem; }
+  .pill { font-size:.72rem; letter-spacing:.04em; text-transform:uppercase;
+          padding:.18rem .5rem; border-radius:99px; border:1px solid var(--line); white-space:nowrap; }
+  .pill.queued { color: var(--muted); }
+  .pill.running { color: var(--warn); border-color: var(--warn); }
+  .pill.done { color: var(--accent); border-color: var(--accent); }
+  .pill.failed { color: var(--bad); border-color: var(--bad); }
+  .bar { height:3px; background:var(--line); border-radius:2px; overflow:hidden; margin-top:.7rem; }
+  .bar i { display:block; height:100%; width:35%; background:var(--warn);
+           animation: slide 1.4s ease-in-out infinite; }
+  @keyframes slide { 0%{margin-left:-35%} 100%{margin-left:100%} }
+  a.dl { display:inline-block; margin:.55rem .5rem 0 0; padding:.4rem .75rem; border-radius:7px;
+         border:1px solid var(--accent); color:var(--accent); text-decoration:none; font-size:.86rem; }
+  a.dl:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  ul.crit { list-style:none; padding:0; margin:.7rem 0 0; font-size:.85rem; }
+  ul.crit li { display:flex; gap:.5rem; padding:.13rem 0; color:var(--muted); }
+  ul.crit li b { font-weight:600; width:1.1rem; flex:none; text-align:center; }
+  .pass b { color: var(--accent); } .fail b { color: var(--bad); }
+  .nums { font-size:.83rem; color:var(--muted); margin-top:.55rem; }
+  .nums code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--fg); }
+  details { margin-top:.6rem; } summary { cursor:pointer; font-size:.83rem; color:var(--muted); }
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:7px; padding:.7rem;
+        overflow:auto; font-size:.78rem; max-height:20rem; }
+  .err { color: var(--bad); font-size:.86rem; margin-top:.4rem; }
+  button { font: inherit; padding:.45rem .9rem; border-radius:7px; border:1px solid var(--line);
+           background:var(--card); color:var(--fg); cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>pdf2epub</h1>
+  <p class="sub">A scholarly PDF becomes one EPUB per reMarkable profile, through
+    <code>adapters/pdf</code>. One job runs at a time; the first pass over a new
+    paper spends most of its time in Docling.</p>
+
+  <div class="card">
+    <div id="drop">
+      <strong>Drop a PDF here</strong>
+      <span>or click to choose one &middot; <span id="limits">…</span></span>
+      <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+    </div>
+    <div style="margin-top:.9rem" class="row">
+      <div>
+        <label class="profile"><input type="checkbox" value="paperPro" checked> Paper Pro</label>
+        <label class="profile"><input type="checkbox" value="paperProMove" checked> Paper Pro Move</label>
+        <label class="profile"><input type="checkbox" value="mobile"> mobile</label>
+      </div>
+      <div id="queue" class="meta"></div>
+    </div>
+    <div id="upload-error" class="err" hidden></div>
+  </div>
+
+  <div id="jobs"></div>
+</main>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s)
+const drop = $('#drop'), input = $('#file'), jobsEl = $('#jobs'), errEl = $('#upload-error')
+let timer = null
+
+function profiles () {
+  return [...document.querySelectorAll('.profile input:checked')].map(i => i.value).join(',')
+}
+
+drop.addEventListener('click', () => input.click())
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('hot') })
+drop.addEventListener('dragleave', () => drop.classList.remove('hot'))
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('hot')
+  if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0])
+})
+input.addEventListener('change', () => { if (input.files.length) upload(input.files[0]) })
+
+async function upload (file) {
+  errEl.hidden = true
+  if (!profiles()) { show('Pick at least one profile.'); return }
+  const body = new FormData()
+  body.append('file', file)
+  body.append('profiles', profiles())
+  const response = await fetch('/api/jobs', { method: 'POST', body })
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}))
+    show(detail.detail || `Upload failed (${response.status}).`)
+    return
+  }
+  input.value = ''
+  refresh()
+}
+
+function show (message) { errEl.textContent = message; errEl.hidden = false }
+
+function fmtBytes (n) {
+  if (!n && n !== 0) return ''
+  return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB'
+}
+
+function criteriaList (criteria) {
+  if (!criteria || !criteria.length) return ''
+  return '<ul class="crit">' + criteria.map(c => {
+    const mark = c.verdict === 'pass' ? '✓' : c.verdict === 'fail' ? '✗' : '–'
+    return `<li class="${c.verdict}"><b>${mark}</b><span>${c.title}</span></li>`
+  }).join('') + '</ul>'
+}
+
+function jobCard (job) {
+  const s = job.summary || {}
+  const files = (job.files || []).map(f =>
+    `<a class="dl" href="/api/jobs/${job.id}/file/${encodeURIComponent(f.name)}">${f.label} · ${fmtBytes(f.bytes)}</a>`
+  ).join('')
+  const nums = s.status && s.status !== 'failed' ? `<div class="nums">
+      text coverage <code>${(s.textCoverage ?? 0).toFixed(4)}</code> ·
+      figures <code>${(s.figures || []).join('/')}</code> ·
+      tables <code>${(s.tables || []).join('/')}</code> ·
+      links <code>${(s.links || []).join('/')}</code> ·
+      notes <code>${(s.notes || []).join('/')}</code> ·
+      furniture leaks <code>${s.furnitureLeaks ?? '–'}</code> ·
+      epubcheck <code>${s.epubcheckAvailable === false ? 'not installed' : (s.epubcheckErrors ?? '–') + ' errors'}</code>
+    </div>` : ''
+  return `<div class="job">
+    <div class="row">
+      <div>
+        <h3>${job.originalName || job.stem}</h3>
+        <div class="meta">${job.pages} pages · ${fmtBytes(job.bytes)} · ${job.profiles.join(', ')}${job.seconds ? ' · ' + job.seconds + 's' : ''}</div>
+      </div>
+      <span class="pill ${job.status}">${job.status}${job.status === 'queued' && job.position > 1 ? ' · ' + job.position : ''}</span>
+    </div>
+    ${job.status === 'running' || job.status === 'queued' ? '<div class="bar"><i></i></div>' : ''}
+    ${job.message ? `<div class="err">${job.message}</div>` : ''}
+    ${files}
+    ${criteriaList(s.criteria)}
+    ${nums}
+    ${job.status === 'done' || job.status === 'failed'
+      ? `<details><summary>run log</summary><pre id="log-${job.id}">loading…</pre></details>` : ''}
+  </div>`
+}
+
+async function refresh () {
+  const response = await fetch('/api/jobs')
+  if (response.status === 401) { location.reload(); return }
+  const data = await response.json()
+  $('#queue').textContent = data.busy || data.queued
+    ? `${data.queued} queued${data.busy ? ', one running' : ''}` : 'idle'
+  jobsEl.innerHTML = data.jobs.map(jobCard).join('') ||
+    '<p class="sub">No conversions yet.</p>'
+  for (const details of jobsEl.querySelectorAll('details')) {
+    details.addEventListener('toggle', async () => {
+      if (!details.open) return
+      const pre = details.querySelector('pre')
+      const id = pre.id.slice(4)
+      pre.textContent = await (await fetch(`/api/jobs/${id}/log`)).text()
+    }, { once: true })
+  }
+  const active = data.jobs.some(j => j.status === 'queued' || j.status === 'running')
+  clearTimeout(timer)
+  timer = setTimeout(refresh, active ? 3000 : 20000)
+}
+
+fetch('/health').then(r => r.json()).then(h => {
+  $('#limits').textContent =
+    `up to ${Math.round(h.limits.maxBytes / 1048576)} MB and ${h.limits.maxPages} pages`
+})
+refresh()
+</script>
+</body>
+</html>

@@ -153,8 +153,10 @@ export const MAX_STRUCT_ASSETS = 512
 export const MAX_STRUCT_ASSET_BYTES_TOTAL = 128 * 1024 * 1024
 export const MAX_STRUCT_RECOVERY_ISSUES = 10_000
 export const MAX_STRUCT_RECOVERY_PAGES = 100_000
-export const MAX_STRUCT_DOCUMENT_ITEMS = 100_000
+export const MAX_STRUCT_DOCUMENT_ITEMS = 1_000_000
 const MAX_STRUCT_PUBLICATION_TEXT_BYTES = 16 * 1024 * 1024
+const NODE_BOUND_MESSAGE =
+  'publication input exceeds the structural node bound'
 
 function parseBox(value: unknown, path: string): StructBox {
   const parsed = object(value, path, [
@@ -1424,6 +1426,7 @@ function preflightPublicationText(
         value,
         path,
         MAX_STRUCT_DOCUMENT_ITEMS - state.nodes,
+        NODE_BOUND_MESSAGE,
       ).entries())
         preflightPublicationText(entry, `${path}[${index}]`, state, depth + 1)
       return
@@ -1432,6 +1435,7 @@ function preflightPublicationText(
       value,
       path,
       MAX_STRUCT_DOCUMENT_ITEMS - state.nodes,
+      NODE_BOUND_MESSAGE,
     )) {
       if (key === 'bytes') continue
       preflightPublicationText(entry, `${path}.${key}`, state, depth + 1)
@@ -1467,7 +1471,12 @@ function snapshotPublicationValue(
   state.active.add(value)
   try {
     if (Array.isArray(value))
-      return array(value, path, MAX_STRUCT_DOCUMENT_ITEMS - state.nodes).map(
+      return array(
+        value,
+        path,
+        MAX_STRUCT_DOCUMENT_ITEMS - state.nodes,
+        NODE_BOUND_MESSAGE,
+      ).map(
         (entry, index) =>
           snapshotPublicationValue(
             entry,
@@ -1477,12 +1486,15 @@ function snapshotPublicationValue(
           ),
       )
     return copyRecord(
-      dataEntries(value, path, MAX_STRUCT_DOCUMENT_ITEMS - state.nodes).map(
-        ([key, entry]) => [
-          key,
-          snapshotPublicationValue(entry, `${path}.${key}`, state, depth + 1),
-        ],
-      ),
+      dataEntries(
+        value,
+        path,
+        MAX_STRUCT_DOCUMENT_ITEMS - state.nodes,
+        NODE_BOUND_MESSAGE,
+      ).map(([key, entry]) => [
+        key,
+        snapshotPublicationValue(entry, `${path}.${key}`, state, depth + 1),
+      ]),
     )
   } finally {
     state.active.delete(value)

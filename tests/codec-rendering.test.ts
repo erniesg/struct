@@ -1281,7 +1281,7 @@ describe('STRUCT publication rendering', () => {
     expect(() => decodeStructDocument(value)).not.toThrow()
   })
 
-  it('does not plan discarded inline runs on a real table block', () => {
+  it('plans a table block\'s inline runs as its caption within budget', () => {
     const value = validDocument() as any
     const runCount = 5_000
     value.blocks[0].kind = 'table'
@@ -1299,7 +1299,7 @@ describe('STRUCT publication rendering', () => {
     const decoded = decodeStructDocument(value)
     const xhtml = renderPublicationXhtml(decoded)
     expect(xhtml).toContain('<table>')
-    expect(xhtml).not.toContain('x'.repeat(runCount))
+    expect(xhtml).toContain(`<figcaption>${'x'.repeat(runCount)}</figcaption><table>`)
   })
 
   it('rejects duplicate metadata authors at strict, direct, and EPUB boundaries', async () => {

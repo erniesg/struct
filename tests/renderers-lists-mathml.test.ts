@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { strFromU8, unzipSync } from "fflate";
 import { buildStructEpub } from "../src/renderers/epub";
-import { renderPublicationXhtml, safeMathMl } from "../src/renderers/xhtml";
+import { renderPublicationXhtml } from "../src/renderers/xhtml";
+import { safeMathMl } from "../src/renderers/mathml";
 import { evidence, seal, validDocument } from "./codec-fixtures";
 
 function block(

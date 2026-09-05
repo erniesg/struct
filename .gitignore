@@ -141,3 +141,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# adapters/pdf service and benchmark run output
+adapters/pdf/service/data/
+adapters/pdf/bench/results/

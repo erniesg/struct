@@ -17,6 +17,7 @@ import {
   type RenderedPublicationPlan,
 } from "./xhtml-plan";
 import { normalizeStructDocumentForRenderer } from "./ingress";
+import { safeMathMl } from "./mathml";
 import { verifyStructReceipt } from "../receipt";
 
 export type StructXhtmlOptions = {
@@ -247,7 +248,15 @@ function renderBlock(
   const id = attribute(block.id);
   const sourceAnchors = renderSourceObservationAnchors(block);
   if (block.kind === "table" && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`;
+    // A table's block text is its caption; papers set it above the table.
+    const caption = renderInline(
+      document,
+      publicationPlan.sourceByKey.get(`block:${blockIndex}`)!,
+      emittedRelationshipIds,
+      publicationPlan,
+    );
+    const figcaption = caption ? `<figcaption>${caption}</figcaption>` : "";
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${figcaption}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`;
   }
   const content = renderInline(
     document,
@@ -297,7 +306,12 @@ function renderBlock(
           `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
       )
       .join(" ");
-    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${content}${backlinks ? ` ${backlinks}` : ""}</p></aside>`;
+    // The note's own label (the marker as printed in the source) leads the
+    // note so a reader can tell notes apart when they render in the flow.
+    const label = block.label
+      ? `<span class="note-label">${text(block.label)}</span> `
+      : "";
+    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${label}${content}${backlinks ? ` ${backlinks}` : ""}</p></aside>`;
   }
   if (block.kind === "code") {
     return `<pre id="${id}" data-struct-id="${id}">${sourceAnchors}<code>${content}</code></pre>`;
@@ -306,27 +320,6 @@ function renderBlock(
     ? ' role="doc-biblioentry" data-semantic-role="bibliography-entry"'
     : "";
   return `<p id="${id}" data-struct-id="${id}"${bibliographyEntry}>${sourceAnchors}${content}</p>`;
-}
-
-const MATHML_OPEN = /^<math(?:\s[^<>]*)?>/u;
-
-/**
- * Accept a MathML fragment only when it is a single `<math>` element with no
- * script or foreign-object payload; well-formedness is enforced by the EPUB
- * builder, which fails closed on any malformed XHTML.
- */
-export function safeMathMl(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  return (
-    trimmed === value &&
-    MATHML_OPEN.test(trimmed) &&
-    trimmed.endsWith("</math>") &&
-    !/<\/math>[\s\S]*<math/u.test(trimmed) &&
-    !/<(?:script|iframe|object|embed|style|link|meta)\b/iu.test(trimmed) &&
-    !/\bon[a-z]+\s*=/iu.test(trimmed) &&
-    !/javascript:/iu.test(trimmed)
-  );
 }
 
 /**

@@ -11,10 +11,13 @@ freezes the package-level decisions without duplicating that protocol verbatim.
 Struct owns source-neutral `StructDocument` types/schema/codecs/migrations,
 stable IDs/relationships/reading order, source-neutral diagnostics/recovery and
 semantic receipts, the `StructBundle` wire schema and integrity verification,
-and deterministic XHTML/reflowable EPUB rendering. It must not import or own
-Ernie.SG, Aether, Rucksack, UI, storage, transport, providers, credentials,
-extraction, editorial/release state, or source-specific recovery wording.
-Document/schema modules must not depend on renderers.
+and deterministic XHTML/reflowable EPUB rendering. The package must not import
+or own Ernie.SG, Aether, Rucksack, UI, storage, transport, providers,
+credentials, extraction, editorial/release state, or source-specific recovery
+wording. Document/schema modules must not depend on renderers. The repository
+hosts the reference PDF extraction adapter under `adapters/pdf/` outside the
+package boundary ([ADR-0002](./docs/adr/0002-pdf-adapter-in-repository.md));
+package sources never import it.
 
 Source-neutral recovery utilities emit facts, categories, and machine-readable
 status only. Applications own source-specific and workflow-specific user copy.
