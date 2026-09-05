@@ -3,12 +3,25 @@
 `@erniesg/struct` is the source-neutral semantic-document and deterministic
 reflowable-publication package. It owns `StructDocument` codecs, stable IDs and
 relationships, reading order, source-neutral diagnostics/recovery facts,
-semantic receipts, and deterministic XHTML/reflowable EPUB output. It does not
-own acquisition, PDF/DOCX/URL extraction, private reconstruction,
-source-specific recovery wording, editorial decisions, approvals, release
-records, application UI, providers, or public routes. Ernie.SG owns its
-source-specific acquisition, reconstruction, editorial, and public-delivery
-responsibilities. Credentials and deployment authority stay at each owning
+semantic receipts, and deterministic XHTML/reflowable EPUB output. The package
+does not own acquisition, private reconstruction, source-specific recovery
+wording, editorial decisions, approvals, release records, application UI,
+providers, or public routes. Ernie.SG owns its source-specific acquisition,
+reconstruction, editorial, and public-delivery responsibilities.
+
+This **repository** additionally hosts the reference PDF adapter in
+[`adapters/pdf/`](./adapters/pdf/README.md) ([ADR-0002](./docs/adr/0002-pdf-adapter-in-repository.md)):
+Docling extraction plus glyph-level source signals map a scholarly PDF into a
+`StructDocument`, and the package renders the EPUBs for reMarkable Paper Pro
+and Paper Pro Move. The adapter lives outside the package boundary (not in
+`files` or the export map) and consumes only the public paths from `dist/`.
+
+```bash
+npm ci && npm run build
+uv venv --python 3.12 ~/.venvs/docling && source ~/.venvs/docling/bin/activate
+uv pip install docling==2.126.0 latex2mathml pypdf
+python adapters/pdf/pdf2epub.py paper.pdf --out out/ --profiles paperPro,paperProMove
+``` Credentials and deployment authority stay at each owning
 application/adapter boundary; Struct never receives them. Aether may consume a
 verified, pinned bundle but owns visual composition and derivatives. Rucksack
 remains generic orchestration and owns none of these domain models.
