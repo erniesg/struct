@@ -340,6 +340,8 @@ class AdapterReport:
     stray_leads_split: int = 0
     side_column_tails_split: int = 0
     table_notes_split: int = 0
+    caption_cross_references_kept: int = 0
+    figure_foot_lines_absorbed: int = 0
     tables_from_open_rule_box: int = 0
     description_items: int = 0
     tables_as_entry_lists: int = 0
@@ -1037,9 +1039,67 @@ class StructAdapter:
         share = page_text.font_share(box)
         return share["total"] >= 10 and 0.1 <= share["mono"] < 0.8
 
+    def _figure_foot_line(self, item: TextItem) -> bool:
+        """`Prototypes: cortical L5 · hippocampal CA1 · cerebellar Purkinje`:
+        one line of text standing on the foot of a caption-less picture (its
+        box overlapping the picture by at least half its height) with a
+        `Figure N` caption directly under it is the figure's own text, a
+        panel legend the layout model left outside the picture, not a
+        paragraph. It belongs to the crop and leaves the flow; the caption
+        then stands next to its figure."""
+        prov = getattr(item, "prov", None) or []
+        if len(prov) != 1:
+            return False
+        box = self._box(item)
+        if box is None or box["height"] > 0.016 or box["width"] < 0.05:
+            return False
+        text = sanitize(item.text).strip()
+        if len(text.split()) < 3 or CAPTION_LIKE_RE.match(text) or PAGE_NUMBER_TEXT_RE.match(text):
+            return False
+        pictures, captions = self._foot_line_index()
+        on_picture = False
+        for pbox in pictures.get(box["page"], []):
+            x_overlap = min(pbox["x"] + pbox["width"], box["x"] + box["width"]) - max(pbox["x"], box["x"])
+            y_overlap = min(pbox["y"] + pbox["height"], box["y"] + box["height"]) - max(pbox["y"], box["y"])
+            if x_overlap >= 0.8 * box["width"] and y_overlap >= 0.5 * box["height"]:
+                on_picture = True
+                break
+        if not on_picture:
+            return False
+        for ref, cbox in captions.get(box["page"], []):
+            if ref == item.self_ref:
+                continue
+            x_overlap = min(cbox["x"] + cbox["width"], box["x"] + box["width"]) - max(cbox["x"], box["x"])
+            if x_overlap > 0 and -0.005 <= cbox["y"] - (box["y"] + box["height"]) <= 0.03:
+                self.report.figure_foot_lines_absorbed += 1
+                return True
+        return False
+
+    def _foot_line_index(self) -> tuple[dict, dict]:
+        """Per page: the boxes of the caption-less pictures, and of every
+        text item that opens as a `Figure N` caption; built once per document."""
+        index = getattr(self, "_foot_line_boxes", None)
+        if index is not None:
+            return index
+        pictures: dict[int, list] = {}
+        captions: dict[int, list] = {}
+        for other, _ in self.doc.iterate_items():
+            if isinstance(other, PictureItem) and not getattr(other, "captions", None):
+                pbox = self._box(other)
+                if pbox is not None:
+                    pictures.setdefault(pbox["page"], []).append(pbox)
+            elif isinstance(other, TextItem) and FIGURE_CAPTION_RE.match(sanitize(other.text).strip()):
+                cbox = self._box(other)
+                if cbox is not None:
+                    captions.setdefault(cbox["page"], []).append((other.self_ref, cbox))
+        self._foot_line_boxes = (pictures, captions)
+        return self._foot_line_boxes
+
     def _emit_paragraph(self, item: TextItem) -> None:
         if not VISIBLE_RE.search(sanitize(item.text)):
             self.report.invisible_items_dropped += 1
+            return
+        if self._figure_foot_line(item):
             return
         if self._split_merged_caption(item):
             return
@@ -1895,6 +1955,12 @@ class StructAdapter:
                 self._flush()
                 text = sanitize(item.text)
                 embedded = EMBEDDED_CAPTION_RE.search(text) if not FIGURE_CAPTION_RE.match(text.strip()) else None
+                if embedded and embedded.start() > 0 and not text[embedded.end() :].strip():
+                    # `… The families are drawn in Figure 3.`: a `Figure N`
+                    # that closes the caption's last sentence with nothing
+                    # after it is a cross-reference, not a second caption
+                    embedded = None
+                    self.report.caption_cross_references_kept += 1
                 if embedded and embedded.start() > 0:
                     # the layout model glued the artwork's own text (a code
                     # listing inside the figure) to the caption: the head stays
@@ -2404,7 +2470,11 @@ class StructAdapter:
                             and neighbour["id"] not in owned
                             and neighbour["page"] == block["page"]
                             and FIGURE_CAPTION_RE.match(neighbour["text"])
-                            and len(neighbour["text"]) < 1200
+                            # a paragraph opening `Figure N` is a caption only
+                            # when short; a block the layout model labelled a
+                            # caption is one at any length (a journal's
+                            # 1,700-character panel-by-panel legend)
+                            and (neighbour["kind"] == "caption" or len(neighbour["text"]) < 1200)
                         ):
                             block["text"] = clean_caption(neighbour["text"])
                             block["inline"] = neighbour.get("inline", []) if block["text"] == neighbour["text"] else []

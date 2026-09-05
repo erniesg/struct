@@ -715,6 +715,149 @@ class TableNoteTails(unittest.TestCase):
         self.assertEqual(adapter.report.joins_fused_words, 1)
 
 
+class FigureFootLines(unittest.TestCase):
+    """`_figure_foot_line`: one line of text standing on the foot of a
+    caption-less picture with the figure's `Figure N` caption directly under
+    it is the figure's own text and leaves the flow."""
+
+    LEGEND = "Prototypes: cortical L5 · hippocampal CA1 · cerebellar Purkinje"
+    CAPTION = "Figure 1: The delay-signature principle and the integrator neuron. a, Neurons A and B project to a common target P."
+    PICTURE_BOX = (99, 719, 514, 330)   # page 8, bottom-left coords: y 0.09 .. 0.58
+    LEGEND_BOX = (103, 337, 302, 329)   # one line, its lower fifth below the picture's foot
+    CAPTION_BOX = (97, 315, 516, 115)   # directly under the legend
+
+    @staticmethod
+    def _text(ref, text, box, label=None):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, TextItem
+        l, t, r, b = box
+        return TextItem(self_ref=ref, label=label or DocItemLabel.TEXT, orig=text, text=text,
+                        prov=[ProvenanceItem(page_no=8, charspan=(0, len(text)),
+                                             bbox=BoundingBox(l=l, t=t, r=r, b=b, coord_origin=CoordOrigin.BOTTOMLEFT))])
+
+    @staticmethod
+    def _picture(box):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, PictureItem, ProvenanceItem
+        l, t, r, b = box
+        return PictureItem(self_ref="#/pictures/0", label=DocItemLabel.PICTURE,
+                           prov=[ProvenanceItem(page_no=8, charspan=(0, 0),
+                                                bbox=BoundingBox(l=l, t=t, r=r, b=b, coord_origin=CoordOrigin.BOTTOMLEFT))])
+
+    def _adapter(self, items):
+        from types import SimpleNamespace
+        adapter = StructAdapter.__new__(StructAdapter)
+        size = SimpleNamespace(width=612.0, height=792.0)
+        adapter.doc = SimpleNamespace(pages={8: SimpleNamespace(size=size)},
+                                      iterate_items=lambda **kwargs: [(item, 0) for item in items])
+        adapter.blocks, adapter._pending, adapter._ids = [], None, set()
+        adapter.report = AdapterReport()
+        return adapter
+
+    def test_the_legend_on_the_picture_foot_is_figure_text(self):
+        legend = self._text("#/texts/172", self.LEGEND, self.LEGEND_BOX)
+        caption = self._text("#/texts/173", self.CAPTION, self.CAPTION_BOX)
+        adapter = self._adapter([self._picture(self.PICTURE_BOX), legend, caption])
+        self.assertTrue(adapter._figure_foot_line(legend))
+        self.assertEqual(adapter.report.figure_foot_lines_absorbed, 1)
+
+    def test_a_line_below_the_picture_is_a_paragraph(self):
+        legend = self._text("#/texts/172", self.LEGEND, (103, 326, 302, 318))  # wholly under the picture's foot
+        caption = self._text("#/texts/173", self.CAPTION, (97, 305, 516, 115))
+        adapter = self._adapter([self._picture(self.PICTURE_BOX), legend, caption])
+        self.assertFalse(adapter._figure_foot_line(legend))
+
+    def test_without_a_caption_under_it_the_line_stays(self):
+        legend = self._text("#/texts/172", self.LEGEND, self.LEGEND_BOX)
+        prose = self._text("#/texts/173", "The transition is monotonic in dispersion, as the next section shows.", self.CAPTION_BOX)
+        adapter = self._adapter([self._picture(self.PICTURE_BOX), legend, prose])
+        self.assertFalse(adapter._figure_foot_line(legend))
+
+    def test_a_captioned_picture_keeps_its_neighbours(self):
+        from docling_core.types.doc import RefItem
+        picture = self._picture(self.PICTURE_BOX)
+        picture.captions = [RefItem(cref="#/texts/170")]
+        legend = self._text("#/texts/172", self.LEGEND, self.LEGEND_BOX)
+        caption = self._text("#/texts/173", self.CAPTION, self.CAPTION_BOX)
+        adapter = self._adapter([picture, legend, caption])
+        self.assertFalse(adapter._figure_foot_line(legend))
+
+    def test_a_caption_or_page_number_on_the_foot_is_not_absorbed(self):
+        caption = self._text("#/texts/173", self.CAPTION, self.CAPTION_BOX)
+        for text in ("Table 9: Performance of the instruct models", "30", "Prototypes: cortical"):
+            line = self._text("#/texts/172", text, self.LEGEND_BOX)
+            adapter = self._adapter([self._picture(self.PICTURE_BOX), line, caption])
+            self.assertFalse(adapter._figure_foot_line(line), text)
+
+
+class CaptionCrossReferences(unittest.TestCase):
+    """A `Figure N.` that closes a caption's last sentence with nothing after
+    it is a cross-reference (`… The families are drawn in Figure 3.`), not a
+    second caption to cut off; a `Figure N` with a body after it still is."""
+
+    TABLE = ("Table 1: Scaling of graph parameters on example families. A family is listed as small if the "
+             "parameter is constant or logarithmic in the number of vertices, and as large otherwise. "
+             "The families are drawn in Figure 3.")
+
+    @staticmethod
+    def _caption(text):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, ProvenanceItem, TextItem
+        return TextItem(self_ref="#/texts/263", label=DocItemLabel.CAPTION, orig=text, text=text,
+                        prov=[ProvenanceItem(page_no=17, charspan=(0, len(text)),
+                                             bbox=BoundingBox(l=92, t=530, r=520, b=500, coord_origin=CoordOrigin.BOTTOMLEFT))])
+
+    def _adapter(self):
+        from types import SimpleNamespace
+        adapter = StructAdapter.__new__(StructAdapter)
+        size = SimpleNamespace(width=612.0, height=792.0)
+        adapter.doc = SimpleNamespace(pages={17: SimpleNamespace(size=size)}, iterate_items=lambda **kwargs: [])
+        adapter.blocks, adapter._pending, adapter._ids, adapter._caption_refs = [], None, set(), set()
+        adapter.report = AdapterReport()
+        adapter._runs_for = lambda item, text: []
+        return adapter
+
+    def test_a_closing_cross_reference_stays_in_the_caption(self):
+        adapter = self._adapter()
+        adapter._emit(self._caption(self.TABLE), None)
+        self.assertEqual([(b["kind"], b["text"]) for b in adapter.blocks], [("caption", self.TABLE)])
+        self.assertEqual(adapter.report.caption_cross_references_kept, 1)
+
+    def test_an_embedded_caption_with_a_body_is_still_cut(self):
+        adapter = self._adapter()
+        text = "Continuous warping Modality segmentation Fig. 10. Overview of the pipeline on two modalities."
+        adapter._emit(self._caption(text), None)
+        self.assertEqual([(b["kind"], b["text"]) for b in adapter.blocks],
+                         [("paragraph", "Continuous warping Modality segmentation"), ("caption", "Fig. 10. Overview of the pipeline on two modalities.")])
+
+
+class LongOrphanCaptions(unittest.TestCase):
+    """`_adopt_orphan_captions`: a caption-less figure adopts the adjacent
+    block the layout model labelled a caption whatever its length; a
+    paragraph opening `Figure N` is only taken when it is short."""
+
+    LONG = "Figure 1: The delay-signature principle and the integrator neuron. " + "a, Neurons A and B project to a common target P; A takes the longer path. " * 24
+
+    def _adapter(self, neighbour_kind):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.report = AdapterReport()
+        adapter.relationships, adapter._attached_caption_boxes = [], {}
+        figure = {"id": "f", "kind": "figure", "page": 8, "text": "", "inline": [], "evidence": {"boxes": [{"page": 8, "x": 0.16, "y": 0.09, "width": 0.68, "height": 0.49, "rotation": 0}], "signals": []}}
+        caption = {"id": "c", "kind": neighbour_kind, "page": 8, "text": self.LONG, "inline": [], "evidence": {"boxes": [{"page": 8, "x": 0.16, "y": 0.60, "width": 0.69, "height": 0.25, "rotation": 0}], "signals": []}}
+        adapter.blocks = [figure, caption]
+        return adapter
+
+    def test_a_long_labelled_caption_is_adopted(self):
+        self.assertGreater(len(self.LONG), 1200)
+        adapter = self._adapter("caption")
+        adapter._adopt_orphan_captions()
+        self.assertEqual([b["kind"] for b in adapter.blocks], ["figure"])
+        self.assertEqual(adapter.blocks[0]["label"], "Figure 1")
+        self.assertEqual(adapter.report.captions_adopted, 1)
+
+    def test_a_long_paragraph_opening_figure_n_is_not(self):
+        adapter = self._adapter("paragraph")
+        adapter._adopt_orphan_captions()
+        self.assertEqual([b["kind"] for b in adapter.blocks], ["figure", "paragraph"])
+
+
 class FusedWordAttestation(unittest.TestCase):
     """`_fuse_words`: the fused word must occur in the paper letter for
     letter. `LLMAgents` (a heading the layout model ran together) does not
