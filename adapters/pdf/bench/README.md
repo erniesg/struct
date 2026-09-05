@@ -69,6 +69,25 @@ Reading it:
 - **Nothing failed to produce parseable JSON except by truncation.** Format
   compliance is not the differentiator any more; geometric reasoning is.
 
+### Where the difficulty actually is
+
+Two figures on a page is solved. Everything interesting happens above that:
+
+```
+model             2 figures   3 figures   4+ figures
+claude-opus-5        47/47        8/8         5/5
+gpt-5                47/47        8/8         5/5
+gpt-5-mini           47/47        8/8         5/5
+claude-sonnet-5      47/47        7/8         5/5
+gpt-5-nano           47/47        6/8         3/5
+claude-haiku-4-5     45/47        4/8         4/5
+```
+
+Nine of the sixty pages were missed by at least one model, and **no page was
+missed by all six** — which is the check that matters for the gold: if a page
+were mislabelled, every model would fail it together. The hardest pages are the
+three-figure ones where a caption sits between two candidate regions.
+
 The honest caveat: these pages are the ones where the gold is *unambiguous*,
 because that is the only place ground truth exists without hand labelling. The
 pages the pipeline actually fails on are harder than these by construction, so

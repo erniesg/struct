@@ -330,6 +330,7 @@ class AdapterReport:
     description_items: int = 0
     tables_as_entry_lists: int = 0
     glued_tails_stripped: int = 0
+    glued_heads_stripped: int = 0
     caption_sides_fixed: int = 0
     notes_linked_in_cells: int = 0
     tables_from_rule_box: int = 0
@@ -1860,6 +1861,51 @@ class StructAdapter:
             block["text"] = head
             block["inline"] = [run for run in block["inline"] if run["end"] <= len(block["text"])]
             self.report.glued_tails_stripped += 1
+
+    def _strip_glued_heads(self) -> None:
+        """The mirror of `_strip_glued_tails`: the layout model sometimes puts a
+        margin stamp — usually a page or line number sitting alone at the page
+        edge — in front of a paragraph's first line, and the number is then read
+        as part of the sentence ("63 lower revenue bound, this algorithm ...").
+
+        Decided by geometry, never by wording: the paragraph must own a separate
+        provenance box that is tiny, in an edge band, and nowhere near the box
+        that carries the prose, and the text must open with a bare number. The
+        number and that box are cut; nothing else about the paragraph changes.
+        """
+        for block in self.blocks:
+            if block["kind"] != "paragraph" or len(block["text"]) < 60:
+                continue
+            boxes = block["evidence"]["boxes"]
+            if len(boxes) < 2:
+                continue
+            head, body = boxes[0], boxes[1]
+            if head["page"] != body["page"]:
+                continue
+            if head["width"] >= 0.05 or head["height"] >= 0.03:
+                continue  # a real line of text, not a stamp
+            in_edge_band = (
+                head["x"] < 0.12
+                or head["x"] + head["width"] > 0.88
+                or head["y"] < 0.09
+                or head["y"] + head["height"] > 0.91
+            )
+            if not in_edge_band:
+                continue
+            if abs(head["y"] - body["y"]) <= 0.05 and abs(head["x"] - body["x"]) <= 0.2:
+                continue  # adjacent to the prose: a drop cap or an equation number, not furniture
+            match = re.match(r"^(\d{1,4})\s+(?=\S)", block["text"])
+            if not match:
+                continue
+            cut = match.end()
+            block["text"] = block["text"][cut:]
+            block["inline"] = [
+                {**run, "start": max(run["start"] - cut, 0), "end": run["end"] - cut}
+                for run in block["inline"]
+                if run["end"] > cut
+            ]
+            block["evidence"]["boxes"] = boxes[1:]
+            self.report.glued_heads_stripped += 1
 
     def _demote_repeated_edge_text(self) -> None:
         """Spec 042 rule: short text repeated on three or more pages inside the
@@ -3782,6 +3828,7 @@ class StructAdapter:
         self._demote_repeated_edge_text()
         self._demote_heading_running_heads()
         self._strip_glued_tails()
+        self._strip_glued_heads()
         self._join_split_paragraphs()
         self._link_notes()
         self._merge_subpanel_figures()

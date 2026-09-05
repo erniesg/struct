@@ -259,15 +259,21 @@ def _run_job(job_id: str) -> None:
         state["status"] = "done"
     else:
         state["status"] = "failed"
-        state["message"] = message or report.get("message") or _tail(paths.log, 400) or f"exit {returncode}"
+        state["message"] = ANSI.sub(
+            "", message or report.get("message") or _tail(paths.log, 400) or f"exit {returncode}"
+        ).strip()
     state["files"] = files
     state["summary"] = _summarize(report, _scorecard(paths.work / "corpus-report.json")) if report else None
     _write_state(paths.root, state)
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+
 def _tail(path: Path, limit: int) -> str:
+    """The converter's log, with the colour codes Docling writes taken out."""
     try:
-        return path.read_text(errors="replace")[-limit:].strip()
+        return ANSI.sub("", path.read_text(errors="replace"))[-limit:].strip()
     except OSError:
         return ""
 

@@ -17,6 +17,7 @@ from evaluate import (  # noqa: E402
     lowercase_start_paragraphs,
 )
 from pdf2struct import (  # noqa: E402
+    AdapterReport,
     CAPTION_LIKE_RE,
     FIGURE_CAPTION_RE,
     TABLE_CAPTION_RE,
@@ -149,6 +150,59 @@ class Evaluator(unittest.TestCase):
 
     def test_body_numbers_come_from_the_draft(self):
         self.assertEqual(_number_paragraphs_in_body(None), {})
+
+
+class GluedMarginStamps(unittest.TestCase):
+    """`_strip_glued_heads`: a margin stamp the layout model put in front of a
+    paragraph is cut, and anything that is not one is left alone."""
+
+    @staticmethod
+    def _paragraph(text, boxes, inline=None):
+        return {
+            "kind": "paragraph",
+            "page": 7,
+            "text": text,
+            "inline": inline or [],
+            "evidence": {"boxes": boxes},
+        }
+
+    @staticmethod
+    def _run(adapter_blocks):
+        adapter = StructAdapter.__new__(StructAdapter)
+        adapter.blocks = adapter_blocks
+        adapter.report = AdapterReport()
+        adapter._strip_glued_heads()
+        return adapter
+
+    STAMP = {"page": 7, "x": 0.905, "y": 0.169, "width": 0.015, "height": 0.011, "rotation": 0}
+    PROSE = {"page": 7, "x": 0.080, "y": 0.585, "width": 0.410, "height": 0.060, "rotation": 0}
+    TEXT = "63 lower revenue bound, this algorithm first attempts to solve, given multiples of ten."
+
+    def test_edge_stamp_in_front_of_a_paragraph_is_cut(self):
+        block = self._paragraph(self.TEXT, [self.STAMP, self.PROSE],
+                                inline=[{"start": 3, "end": 8, "style": "italic"}])
+        adapter = self._run([block])
+        self.assertTrue(block["text"].startswith("lower revenue bound"))
+        self.assertEqual(block["evidence"]["boxes"], [self.PROSE])
+        self.assertEqual(adapter.report.glued_heads_stripped, 1)
+        self.assertEqual(block["inline"], [{"start": 0, "end": 5, "style": "italic"}])
+
+    def test_a_number_the_paragraph_owns_is_kept(self):
+        block = self._paragraph(self.TEXT, [dict(self.PROSE, x=0.080, y=0.585), self.PROSE])
+        self._run([block])
+        self.assertTrue(block["text"].startswith("63 lower"))
+
+    def test_a_stamp_beside_the_prose_is_kept(self):
+        beside = dict(self.STAMP, x=0.080, y=0.585)
+        block = self._paragraph(self.TEXT, [beside, self.PROSE])
+        self._run([block])
+        self.assertTrue(block["text"].startswith("63 lower"))
+
+    def test_a_paragraph_starting_with_a_word_is_kept(self):
+        block = self._paragraph("Sixty-three lower revenue bounds, this algorithm first attempts to solve them.",
+                                [self.STAMP, self.PROSE])
+        self._run([block])
+        self.assertTrue(block["text"].startswith("Sixty-three"))
 
 
 if __name__ == "__main__":
