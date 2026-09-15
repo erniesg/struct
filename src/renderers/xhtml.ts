@@ -1,3 +1,4 @@
+import { mathFontStyles, MATH_FONT_CSS_HREF } from "./math-font";
 import type {
   StructBlock,
   StructDocument,
@@ -13,6 +14,7 @@ import {
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
+  type RenderedBlockEntry,
   type RenderedInlineSourcePlan,
   type RenderedPublicationPlan,
 } from "./xhtml-plan";
@@ -23,6 +25,8 @@ import { verifyStructReceipt } from "../receipt";
 export type StructXhtmlOptions = {
   embedStyles?: boolean;
   styles?: string;
+  /** Embed the portable math font by default; EPUB uses the packaged stylesheet. */
+  mathFont?: "embedded" | "external";
 };
 
 const DEFAULT_STYLES = `body { font-family: serif; line-height: 1.5; margin: 5%; }
@@ -71,7 +75,8 @@ function renderInline(
         }
         return rendered;
       };
-      let rendered = styled(text(segmentValue));
+      const atom = owners.find((run) => run.mathml !== undefined);
+      let rendered = styled(atom?.mathml ?? text(segmentValue));
       const semanticOwnerIndex = owners.findIndex(
         (run) => run.semanticRole && run.relationshipId,
       );
@@ -311,6 +316,13 @@ function renderBlock(
     const label = block.label
       ? `<span class="note-label">${text(block.label)}</span> `
       : "";
+    const body = publicationPlan.noteBodies.get(block.id);
+    if (body) {
+      const children = renderBlocks(
+        document, emittedRelationshipIds, publicationPlan, body,
+      );
+      return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${label}${content}</p>${children}${backlinks ? `<p class="note-backlinks">${backlinks}</p>` : ""}</aside>`;
+    }
     return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${label}${content}${backlinks ? ` ${backlinks}` : ""}</p></aside>`;
   }
   if (block.kind === "code") {
@@ -331,6 +343,7 @@ function renderBlocks(
   document: StructDocument,
   emittedRelationshipIds: Set<string>,
   publicationPlan: RenderedPublicationPlan,
+  entries: readonly RenderedBlockEntry[] = publicationPlan.topLevelBlocks,
 ) {
   const rendered: string[] = [];
   let openList: { tag: "ol" | "ul"; listId: string | null } | null = null;
@@ -340,7 +353,7 @@ function renderBlocks(
       openList = null;
     }
   };
-  for (const [blockIndex, block] of document.blocks.entries()) {
+  for (const [blockIndex, block] of entries) {
     if (block.kind === "furniture") continue;
     if (block.kind === "list-item") {
       const listId =
@@ -402,17 +415,24 @@ export function renderPublicationXhtml(
       ? ` dir="${document.metadata.baseDirection}"`
       : "";
   const styles = options.styles ?? DEFAULT_STYLES;
+  const authors = renderAuthors(document, emittedRelationshipIds, publicationPlan);
+  const body = renderBlocks(document, emittedRelationshipIds, publicationPlan);
+  const mathStyles = body.includes("<math")
+    ? options.mathFont === "external"
+      ? `<link rel="stylesheet" type="text/css" href="${MATH_FONT_CSS_HREF}" />`
+      : `<style data-struct-math-font="STIX Two Math">${text(mathFontStyles("embedded"))}</style>`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}" lang="${attribute(language)}"${direction}>
 <head>
   <meta charset="utf-8" />
   <title>${text(document.metadata.title)}</title>
-  ${options.embedStyles ? `<style>${text(styles)}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
+  ${options.embedStyles ? `<style>${text(styles)}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}${mathStyles ? `\n  ${mathStyles}` : ""}
 </head>
 <body>
-  <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ""}${renderAuthors(document, emittedRelationshipIds, publicationPlan)}</header>
-  ${renderBlocks(document, emittedRelationshipIds, publicationPlan)}
+  <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ""}${authors}</header>
+  ${body}
 </body>
 </html>
 `;

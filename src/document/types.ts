@@ -101,6 +101,8 @@ export type StructInline = {
   italic?: boolean
   verticalAlign?: 'superscript' | 'subscript'
   compactMathAtom?: boolean
+  /** 0.2.0: validated inline presentation MathML replacing this fallback range. */
+  mathml?: string
   semanticRole?:
     | 'citation'
     | 'cross-reference'
@@ -160,6 +162,8 @@ export type StructBlock = {
   evidence: StructEvidence
   /** Exact #198 source anchors resolved to this rendered block by #200. */
   sourceObservationAnchorIds?: string[]
+  /** 0.2.0: ordered additional body blocks owned exclusively by this note. */
+  noteBodyBlockIds?: string[]
   table?: StructTable
   fallbackAssetIds?: string[]
   furniture?: StructFurnitureEvidence

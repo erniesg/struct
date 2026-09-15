@@ -152,3 +152,49 @@ must prove zero allocation and zero start for each of those evidence failures.
 The actual current package paths and the intended first-release surface are
 listed in [API.md](./API.md). `./bundle` is unavailable until S-03 completes;
 no documentation in this contract makes it a current runtime capability.
+
+## Optional semantic bodies in document schema 0.2.0
+
+`StructBlock.noteBodyBlockIds?: string[]` assigns an ordered, nonempty list of
+additional body blocks to a footnote or endnote. The note's existing `text` and
+`inline` remain its opening paragraph; an empty opening is permitted. Children
+remain ordinary entries in `document.blocks`, retain their own evidence, page
+membership, IDs, source anchors, assets and relationships, and contribute to
+conservation counts exactly once. Each child has one owner and cannot be a
+note, furniture, the owner itself, or another container. The array's order is
+the publication order within the note. It does not change physical page order.
+The renderer emits each child once inside the owning aside, suppresses it from
+top-level flow, groups child lists independently, places backlinks at the end,
+and omits child headings from the publication-wide TOC. Note bodies may contain
+references to other standalone notes; note-reference relationships still target
+the note container. Backlink order retains document relationship order.
+
+`StructInline.mathml?: string` is a bounded, presentation-only MathML replacement
+for the nonempty UTF-16 `[start,end)` range in the original text. It is supported
+where inline text is rendered, including table cells and note bodies. The
+original fallback text remains unchanged and digest-bound; MathML markup is not
+added to source text conservation counts. The atom is emitted once, with no
+visible duplicate of its replaced text. Atom ranges cannot overlap or split a
+surrogate pair. Other intersecting inline ranges must enclose the complete atom;
+semantic-role or relationship-ID ranges cannot intersect an atom. Enclosing
+style and ordinary hyperlink ranges remain supported. Producers encode internal
+scripts and styles in MathML rather than retaining partial inline ranges.
+
+The private document-layer validator in `src/document/mathml.ts` declares the
+accepted presentation element and attribute profile. It requires a single
+`math` root with the MathML namespace, `display` absent or `inline`, valid XML,
+valid character references, and the declared operator arities and table
+structure. It disallows foreign namespaces, active content, links, IDs, style
+attributes, processing instructions, DTDs and entity declarations. Unsupported
+payloads fail ingress without sanitization or implicit fallback. Limits are
+256 KiB UTF-8, 64 element levels (including the root), and 4,096 elements per
+atom, in addition to document and publication-output budgets. Accepted bytes are
+preserved exactly. Existing display-equation `attributes.mathml` behavior is
+unchanged by this inline profile.
+
+Both fields are rejected in schema 0.1.0. Their absence preserves existing 0.2.0
+serialization and receipt digests; no defaults are inserted. The existing
+semantic digest covers the fields, including child order and MathML bytes.
+This is compatibility for existing documents: older strict decoders reject
+newly extended documents. It is not a promise that older consumers understand
+these new semantics.

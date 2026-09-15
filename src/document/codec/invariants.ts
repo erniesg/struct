@@ -575,6 +575,56 @@ function validateConsultationBinding(document: StructDocument) {
     )
 }
 
+/** Keep the flat evidence graph while assigning each note child one owner. */
+function validateSemanticBodies(document: StructDocument) {
+  const blocks = new Map(document.blocks.map((block) => [block.id, block]))
+  const owners = new Map<string, string>()
+  for (const [index, block] of document.blocks.entries()) {
+    const path = `$.blocks[${index}]`
+    if (
+      document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION &&
+      (block.noteBodyBlockIds !== undefined ||
+        block.inline.some((run) => run.mathml !== undefined) ||
+        block.table?.cells.some((cell) =>
+          cell.inline.some((run) => run.mathml !== undefined),
+        ))
+    )
+      fail(
+        'SCHEMA_VERSION',
+        path,
+        'semantic note bodies and inline MathML require 0.2.0',
+      )
+    if (block.noteBodyBlockIds === undefined) continue
+    if (
+      !['footnote', 'endnote'].includes(block.kind) ||
+      block.noteBodyBlockIds.length === 0
+    )
+      fail(
+        'REFERENCE',
+        `${path}.noteBodyBlockIds`,
+        'only notes may own a nonempty body block list',
+      )
+    for (const [childIndex, childId] of block.noteBodyBlockIds.entries()) {
+      const childPath = `${path}.noteBodyBlockIds[${childIndex}]`
+      const child = blocks.get(childId)
+      if (
+        !child ||
+        childId === block.id ||
+        ['footnote', 'endnote', 'furniture'].includes(child.kind) ||
+        child.noteBodyBlockIds !== undefined
+      )
+        fail(
+          'REFERENCE',
+          childPath,
+          'note body must reference a non-note, non-furniture child block',
+        )
+      if (owners.has(childId))
+        fail('REFERENCE', childPath, 'note body block must have exactly one owner')
+      owners.set(childId, block.id)
+    }
+  }
+}
+
 export function validateStructDocument(
   document: StructDocument,
   _input: DataObject,
@@ -615,6 +665,7 @@ export function validateStructDocument(
   }
   validateConservation(document)
   validateReferences(document)
+  validateSemanticBodies(document)
   validatePages(document)
   validateConsultationBinding(document)
   validateDigest(document)

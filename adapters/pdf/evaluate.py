@@ -596,14 +596,18 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
 
 def epubcheck(epub: Path) -> dict:
     try:
-        result = subprocess.run(["epubcheck", str(epub)], capture_output=True, text=True)
+        result = subprocess.run(["epubcheck", str(epub)], capture_output=True, text=True, timeout=120)
     except FileNotFoundError:
-        return {"available": False, "errors": None, "warnings": None}
+        return {"available": False, "returncode": None, "errors": None, "warnings": None, "code": "EPUBCHECK_UNAVAILABLE"}
+    except subprocess.TimeoutExpired:
+        return {"available": True, "returncode": None, "errors": None, "warnings": None, "code": "EPUBCHECK_TIMEOUT"}
+    except OSError:
+        return {"available": True, "returncode": None, "errors": None, "warnings": None, "code": "EPUBCHECK_EXEC_FAILED"}
     errors = len(re.findall(r"^ERROR", result.stdout + result.stderr, re.M))
     fatal = len(re.findall(r"^FATAL", result.stdout + result.stderr, re.M))
     warnings = len(re.findall(r"^WARNING", result.stdout + result.stderr, re.M))
     messages = [line for line in (result.stdout + result.stderr).splitlines() if line.startswith(("ERROR", "FATAL", "WARNING"))][:20]
-    return {"available": True, "errors": errors + fatal, "warnings": warnings, "messages": messages}
+    return {"available": True, "returncode": result.returncode, "errors": errors + fatal, "warnings": warnings, "messages": messages}
 
 
 if __name__ == "__main__":  # pragma: no cover

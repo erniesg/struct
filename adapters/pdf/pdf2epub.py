@@ -37,8 +37,62 @@ sys.path.insert(0, str(HERE))
 from evaluate import epubcheck, evaluate  # noqa: E402
 from pdf_links import attach_words, extract_links, page_layout_lines, page_text_lines, word_boxes  # noqa: E402
 from pdf_text import SourceText  # noqa: E402
+from source_raster import SourceRaster, SourceRasterError  # noqa: E402
+from verify_outputs import check_cache, check_source_binding, iter_uris, required_metrics, reuse_cache_problems, sha256  # noqa: E402
 
 PROFILE_SUFFIX = {"paperPro": "paperpro", "paperProMove": "papermove", "mobile": "mobile"}
+
+
+def atomic_json(path: Path, value: dict) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(value, indent=1) + "\n")
+    temporary.replace(path)
+
+
+def write_reuse_manifests(out_root: Path, pdfs: list[Path], documents: list[dict]) -> None:
+    """Bind fresh cache bytes and every referenced image for a later replay."""
+    paths = [out_root / "source-report.json", out_root / "cache-manifest.json"]
+    # Invalidate stale evidence before fresh cache validation or publication.
+    for path in paths:
+        path.unlink(missing_ok=True)
+    by_name = {pdf.name: pdf for pdf in pdfs}
+    source_docs = []
+    cache_docs = []
+    problems = []
+    for document in documents:
+        pdf = by_name[document["basename"]]
+        source_docs.append(document)
+        stem = pdf.stem
+        cache = out_root / stem / f"{stem}.docling.json"
+        cache_json = json.loads(cache.read_text())
+        assets = {}
+        for uri in iter_uris(cache_json):
+            if uri.startswith("data:") or uri.startswith("file://"):
+                raise ValueError("fresh cache has unsupported image URI scheme")
+            target = Path(uri)
+            if not target.is_absolute():
+                target = cache.parent / target
+            target = target.resolve()
+            if not target.is_file():
+                raise ValueError(f"fresh cache image is missing: {uri}")
+            assets[str(target)] = {"path": str(target), "sha256": sha256(target)}
+        entry = {"basename": pdf.name, "sha256": document["sha256"], "byteLength": document["byteLength"],
+                 "sourcePath": str(pdf.absolute()), "cache": {"path": str(cache.relative_to(out_root)),
+                 "originalSha256": sha256(cache), "relocatedSha256": sha256(cache)}, "assets": list(assets.values())}
+        check_source_binding(document, entry, [], f"fresh/{stem}", problems, pdf)
+        required_metrics(document, f"fresh/{stem}", problems)
+        check_cache(out_root, "fresh", document, entry, problems)
+        cache_docs.append(entry)
+    if not documents or len(documents) != len(pdfs) or problems:
+        raise ValueError("; ".join(problems) or "fresh manifest document set is incomplete")
+    try:
+        atomic_json(paths[0], {"schemaVersion": "pdf-source-report-1", "documents": source_docs})
+        atomic_json(paths[1], {"schemaVersion": "pdf-cache-manifest-1", "documents": cache_docs})
+    except BaseException:
+        for path in paths:
+            path.unlink(missing_ok=True)
+            path.with_name(path.name + ".tmp").unlink(missing_ok=True)
+        raise
 
 
 def convert(pdf: Path, out_dir: Path, formula: bool, reuse_json: bool):
@@ -46,7 +100,12 @@ def convert(pdf: Path, out_dir: Path, formula: bool, reuse_json: bool):
 
     json_path = out_dir / f"{pdf.stem}.docling.json"
     if reuse_json and json_path.exists():
+        failures = reuse_cache_problems(out_dir.parent, pdf, json_path)
+        if failures:
+            raise ValueError("; ".join(failures))
         return DoclingDocument.load_from_json(json_path), 0.0
+    if reuse_json:
+        raise ValueError(f"{pdf.name}: cache file is missing")
 
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -67,6 +126,29 @@ def convert(pdf: Path, out_dir: Path, formula: bool, reuse_json: bool):
 
 
 def process(pdf: Path, out_root: Path, profiles: list[str], formula: bool, reuse_json: bool, run_epubcheck: bool, struct_dir: str | None) -> dict:
+    """All source consumers share one private snapshot, including evaluation."""
+    identity = lambda path: (path.stat().st_dev, path.stat().st_ino, path.stat().st_size, path.stat().st_mtime_ns, path.stat().st_ctime_ns)
+    try:
+        original_identity = identity(pdf)
+        with SourceRaster(pdf) as source_raster:
+            snapshot = source_raster.snapshot_path
+            sha = source_raster.source_sha256
+            byte_length = snapshot.stat().st_size
+            document = _process_snapshot(snapshot, out_root, profiles, formula, reuse_json, run_epubcheck, struct_dir, source_raster)
+            if identity(pdf) != original_identity or sha256(pdf) != sha:
+                document = {"basename": pdf.name, "sha256": sha, "byteLength": byte_length, "code": "SOURCE_CHANGED", "message": "input PDF changed during processing", "pipeline": "docling-struct-v1"}
+            elif document.get("sha256") != sha or document.get("byteLength", byte_length) != byte_length:
+                document = {"basename": pdf.name, "sha256": sha, "byteLength": byte_length, "code": "SOURCE_CHANGED", "message": "source consumer binding mismatch", "pipeline": "docling-struct-v1"}
+            document["byteLength"] = byte_length
+    except (SourceRasterError, OSError) as error:
+        document = {"basename": pdf.name, "code": "SOURCE_RASTER_FAILED", "message": str(error)[:600], "pipeline": "docling-struct-v1"}
+    out_dir = out_root / pdf.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    atomic_json(out_dir / f"{pdf.stem}.report.json", document)
+    return document
+
+
+def _process_snapshot(pdf: Path, out_root: Path, profiles: list[str], formula: bool, reuse_json: bool, run_epubcheck: bool, struct_dir: str | None, source_raster: SourceRaster) -> dict:
     from pdf2struct import to_struct_draft
 
     out_dir = out_root / pdf.stem
@@ -80,9 +162,14 @@ def process(pdf: Path, out_root: Path, profiles: list[str], formula: bool, reuse
     links, sizes = extract_links(pdf)
     boxes = word_boxes(pdf)
     attach_words(links, boxes, sizes)
-    source_text = SourceText(pdf)
-    draft, adapter = to_struct_draft(doc, pdf, sha, links, boxes, page_text_lines(pdf), source_text, page_layout_lines(pdf))
-    source_text.close()
+    try:
+        source_text = SourceText(pdf)
+        try:
+            draft, adapter = to_struct_draft(doc, pdf, sha, links, boxes, page_text_lines(pdf), source_text, page_layout_lines(pdf), source_raster)
+        finally:
+            source_text.close()
+    except SourceRasterError as error:
+        return {"basename": pdf.name, "sha256": sha, "code": "SOURCE_RASTER_FAILED", "message": str(error)[:600], "pipeline": "docling-struct-v1"}
     draft_path = out_dir / f"{pdf.stem}.struct-draft.json"
     draft_path.write_text(json.dumps(draft, ensure_ascii=False))
     command = ["node", str(HERE / "render.mjs"), str(draft_path), "--out", str(out_dir), "--profiles", ",".join(profiles)]
@@ -93,12 +180,17 @@ def process(pdf: Path, out_root: Path, profiles: list[str], formula: bool, reuse
         render_report = json.loads(rendered.stdout.strip().splitlines()[-1]) if rendered.stdout.strip() else {"errors": [{"stage": "render", "message": rendered.stderr[-800:]}], "profiles": []}
     except json.JSONDecodeError:
         render_report = {"errors": [{"stage": "render", "message": (rendered.stdout + rendered.stderr)[-800:]}], "profiles": []}
+    render_report["returncode"] = rendered.returncode
+    (out_dir / "render-report.json").write_text(json.dumps(render_report, indent=1))
     build_report = asdict(adapter)
     build_report["convert_seconds"] = round(convert_seconds, 1)
     build_report["render"] = render_report
     build_report["struct_ready"] = draft["recovery"]["status"] == "ready"
-    primary = next((p for p in render_report.get("profiles", []) if p["id"] == profiles[0]), None)
-    if primary is None:
+    profile_ids = [p.get("id") for p in render_report.get("profiles", []) if isinstance(p, dict)]
+    primary = next((p for p in render_report.get("profiles", []) if p.get("id") == profiles[0]), None)
+    expected_files = {profile: f"{pdf.stem}-{PROFILE_SUFFIX[profile]}.epub" for profile in profiles}
+    safe_profiles = all(profile.get("fileName") == expected_files.get(profile.get("id")) and (out_dir / profile["fileName"]).resolve().parent == out_dir.resolve() for profile in render_report.get("profiles", []) if isinstance(profile, dict))
+    if rendered.returncode != 0 or render_report.get("errors") or primary is None or set(profile_ids) != set(profiles) or len(profile_ids) != len(profiles) or not safe_profiles:
         document = {
             "basename": pdf.name,
             "sha256": sha,
@@ -106,20 +198,22 @@ def process(pdf: Path, out_root: Path, profiles: list[str], formula: bool, reuse
             "pageCount": len(doc.pages),
             "pipeline": "docling-struct-v1",
             "code": "STRUCT_RENDER_REFUSED",
-            "message": "; ".join(f"{e.get('stage')}: {e.get('message')}" for e in render_report.get("errors", []))[:600],
+            "message": "; ".join(f"{e.get('stage')}: {e.get('message')}" for e in render_report.get("errors", []))[:600] or "renderer returned incomplete profiles or a nonzero status",
             "build": build_report,
         }
-        (out_dir / f"{pdf.stem}.report.json").write_text(json.dumps(document, indent=1))
         return document
     epub_path = out_dir / primary["fileName"]
     if run_epubcheck:
-        check = epubcheck(epub_path)
-        build_report["epubcheck"] = check
-        build_report["epubcheck_errors"] = check.get("errors") or 0
+        checks = {profile["id"]: epubcheck(out_dir / profile["fileName"]) for profile in render_report["profiles"]}
+        build_report["epubcheck"] = checks[profiles[0]]
+        build_report["epubchecks"] = checks
+        build_report["epubcheck_errors"] = sum(check.get("errors") or 0 for check in checks.values())
+        if any(not check.get("available") or check.get("returncode") != 0 for check in checks.values()):
+            document = {"basename": pdf.name, "sha256": sha, "byteLength": pdf.stat().st_size, "pageCount": len(doc.pages), "pipeline": "docling-struct-v1", "code": "EPUBCHECK_FAILED", "message": "EPUBCheck was unavailable or rejected an output", "build": build_report}
+            return document
     document = evaluate(pdf, epub_path, build_report, draft_path)
     document["pipeline"] = "docling-struct-v1"
     document["seconds"] = round(time.time() - started, 1)
-    (out_dir / f"{pdf.stem}.report.json").write_text(json.dumps(document, indent=1))
     return document
 
 
@@ -136,6 +230,10 @@ def main() -> int:
     args = parser.parse_args()
 
     profiles = [p.strip() for p in args.profiles.split(",") if p.strip()]
+    if not profiles:
+        parser.error("at least one profile is required")
+    if len(profiles) != len(set(profiles)):
+        parser.error("duplicate profiles are not allowed")
     unknown = [p for p in profiles if p not in PROFILE_SUFFIX]
     if unknown:
         parser.error(f"unknown profile(s): {', '.join(unknown)}")
@@ -146,8 +244,14 @@ def main() -> int:
             pdfs.extend(sorted(p for p in path.iterdir() if p.suffix.lower() == ".pdf"))
         else:
             pdfs.append(path)
+    stems = [pdf.stem for pdf in pdfs]
+    if len(stems) != len(set(stems)):
+        parser.error("duplicate PDF stems would overwrite output directories")
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
+    if not args.reuse_json:
+        for name in ("source-report.json", "cache-manifest.json"):
+            (out_root / name).unlink(missing_ok=True)
 
     documents = []
     if args.workers > 1:
@@ -165,6 +269,14 @@ def main() -> int:
     documents.sort(key=lambda d: d["basename"])
     corpus = {"schemaVersion": "docling-struct-report-1.0.0", "privacy": "basenames-hashes-counts-diagnostic-codes-only", "documents": documents}
     (out_root / "corpus-report.json").write_text(json.dumps(corpus, indent=1))
+    if any(document.get("code") for document in documents):
+        return 1
+    if not args.reuse_json:
+        try:
+            write_reuse_manifests(out_root, pdfs, documents)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(f"FAIL manifest generation: {type(error).__name__}: {error}", file=sys.stderr)
+            return 1
     return 0
 
 
