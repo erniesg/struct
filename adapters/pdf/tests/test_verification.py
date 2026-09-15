@@ -113,9 +113,11 @@ class OutputVerification(unittest.TestCase):
                 report["documents"][0][field] = value
                 self.save(run / target, report)
                 result = self.result(run, baseline, output)
-                self.assertIn("tuning/paper: source hash or byteLength is missing or not bound across reports", result["problems"])
                 if field == "sourcePath":
+                    # the hash and length still agree: only the missing path is a problem
                     self.assertIn("tuning/paper: sourcePath is missing or invalid", result["problems"])
+                else:
+                    self.assertIn("tuning/paper: source hash or byteLength is missing or not bound across reports", result["problems"])
 
     def test_allows_declared_source_and_image_symlinks(self):
         run, baseline, output, pdf = self.make_fixture()

@@ -21,10 +21,10 @@ from urllib.parse import urlsplit, urlunsplit
 from pdf_links import WORD_RE, attach_words, extract_links, group_wrapped_links, normalize_uri, page_layout_lines, page_text_lines, word_boxes
 
 # `Figure 15 shows …` is a sentence: the word after the label must be capitalised
-CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
-CAPTION_TAIL_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*(\d+(?:\.\d+)*)(?!\d)\s*[.,;:)]*\s*$", re.IGNORECASE)
-OUTPUT_CAPTION_RE = re.compile(r"^\W*(?:\d{1,3}\s+)?(Figure|Fig\.?|Table)\s*(\d+(?:\.\d+)*)(?![\d])(?!\.\d)", re.IGNORECASE)
-DRAFT_FIGURE_CAPTION_RE = re.compile(r"^(Figure|Fig\.?)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+CAPTION_TAIL_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*[.,;:)]*\s*$", re.IGNORECASE)
+OUTPUT_CAPTION_RE = re.compile(r"^\W*(?:\d{1,3}\s+)?(Figure|Fig\.?|Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?![\d])(?!\.\d)", re.IGNORECASE)
+DRAFT_FIGURE_CAPTION_RE = re.compile(r"^(Figure|Fig\.?)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
 
 
 def _label_key(label: str) -> tuple:

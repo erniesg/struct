@@ -51,7 +51,9 @@ TERMINAL_RE = re.compile(r"[.!?:;\"”’)\]…]$")
 CITATION_TAIL_RE = re.compile(r"(?:\s*(?:\[[\d,\s–\-;]+\]|\([A-Z][^()]{0,80}?\d{4}[a-z]?\)|\(\d{4}[a-z]?\)))+$")
 ABBREVIATION_END_RE = re.compile(r"(?:\bet al|\be\.g|\bi\.e|\bcf|\bvs|\bFig|\bEq|\bNo|\bSec|\bTab|\bref)\.$", re.IGNORECASE)
 FLOAT_KINDS = {"figure", "table", "caption", "equation", "footnote", "furniture"}
-CAPTION_LIKE_RE = re.compile(r"^(?:(?:Extended\s+Data\s+)?(?:Figure|Fig\.?)|Table|Listing|Algorithm|Program|Example|Box)\s*\d+[A-Za-z]?\b", re.IGNORECASE)
+# appendix floats carry a letter before the number (`Figure A2`, `Table B.1`)
+CAPTION_LIKE_RE = re.compile(r"^(?:(?:Extended\s+Data\s+)?(?:Figure|Fig\.?)|Table|Listing|Algorithm|Program|Example|Box)\s*(?:[A-Z]\.?)?\d+[A-Za-z]?\b", re.IGNORECASE)
+FIGURE_OWNER_RE = re.compile(r"^(?:Extended\s+Data\s+)?(?:Figure|Fig\.?)\s*(?:[A-Z]\.?)?\d+", re.IGNORECASE)
 SUBCAPTION_RE = re.compile(r"^\(?[a-z]\)\s*\S", re.IGNORECASE)
 TRAILING_MARKER_RE = re.compile(r"(?:(?<!\d)\.|[!?:;\"”’)\]])\s?(?:\d{1,3}|[*†‡§¶]{1,3})$")
 LOWER_START_RE = re.compile(r"^[a-zß-ÿ]")
@@ -101,9 +103,9 @@ PROSE_LIKE_RE = re.compile(r"[a-z]{3,}[.!?]\s+[A-Z]|[a-z]{4,}\s+[a-z]{4,}\s+[a-z
 # `Figure 15 shows …` / `Table 22 shows …` are sentences, not captions: the
 # word after the label must be capitalised
 # the label may be chapter-numbered (`Fig. 2.3`); the separator dot is never a digit's
-FIGURE_CAPTION_RE = re.compile(r"^((?:Extended\s+Data\s+)?(?:Figure|Fig\.?))\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
-TABLE_CAPTION_RE = re.compile(r"^(Table)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
-EMBEDDED_CAPTION_RE = re.compile(r"(?<![A-Za-z])((?:Extended\s+Data\s+)?(?:Figure|Fig\.))\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+FIGURE_CAPTION_RE = re.compile(r"^((?:Extended\s+Data\s+)?(?:Figure|Fig\.?))\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+TABLE_CAPTION_RE = re.compile(r"^(Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+EMBEDDED_CAPTION_RE = re.compile(r"(?<![A-Za-z])((?:Extended\s+Data\s+)?(?:Figure|Fig\.))\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
 
 
 def sanitize(value: str) -> str:
@@ -1640,7 +1642,7 @@ class StructAdapter:
             if caption_box:
                 self._attached_caption_boxes[block["id"]] = caption_box
                 break
-        label_match = re.match(r"^Table\s*(\d+(?:\.\d+)*)", caption or "", re.IGNORECASE)
+        label_match = re.match(r"^Table\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)", caption or "", re.IGNORECASE)
         if label_match:
             block["label"] = f"Table {label_match.group(1)}"
         usable = bool(grid) and any(cell.text.strip() for row in grid for cell in row)
@@ -4601,9 +4603,10 @@ class StructAdapter:
                 if not anchors or x - anchors[-1] > .02:
                     anchors.append(x)
             # A one-column prose box often indents headings and paragraphs, and
-            # more than three x-clusters are a box of prose and formula
-            # fragments, not columns: one column, one row per block in reading order.
-            if row_bands and (max(map(len, row_bands)) == 1 or len(anchors) > 3):
+            # more than three x-clusters with most rows holding one block are a box
+            # of prose and formula fragments, not columns: one column, one row per
+            # block in reading order.
+            if row_bands and (max(map(len, row_bands)) == 1 or (len(anchors) > 3 and sum(len(band) >= 2 for band in row_bands) < 0.6 * len(row_bands))):
                 row_bands = [[member] for member in items]
                 anchors = [min(anchors)]
             cells = []
@@ -5001,7 +5004,10 @@ class StructAdapter:
         if not pictures:
             # labels alone mark where the artwork is, not where it ends: the drawing
             # (a legend row, a frame's top) runs on until blank rows or the edge
-            rows = self._pixel_rows(page, x0, x1)
+            try:
+                rows = self._pixel_rows(page, x0, x1)
+            except SourceRasterError:
+                rows = None
             if rows is not None:
                 _, nonwhite, height = rows
                 gap = max(3, int(0.008 * height))
@@ -5063,7 +5069,7 @@ class StructAdapter:
         while changed:
             changed = False
             for block in list(self.blocks):
-                if block["kind"] != "figure" or not FIGURE_CAPTION_RE.match(block["text"]) or not block["evidence"]["boxes"] or block["page"] is None:
+                if block["kind"] != "figure" or not (FIGURE_CAPTION_RE.match(block["text"]) or FIGURE_OWNER_RE.match(block["text"])) or not block["evidence"]["boxes"] or block["page"] is None:
                     continue
                 fbox = block["evidence"]["boxes"][0]
                 group = [block]
@@ -5111,6 +5117,12 @@ class StructAdapter:
                             if (box["y"] >= uy1 and cap_center < box["y"] and cap_center > uy1 - 0.01) or (box["y"] + box["height"] <= uy0 and cap_center > box["y"] + box["height"] and cap_center < uy0 + 0.01):
                                 continue  # the candidate lies beyond this figure's own caption
                         if vertical_gap > 0 and not self._gap_is_figure_like(block["page"], uy0, uy1, box, min(ux0, box["x"]), max(ux1, box["x"] + box["width"])):
+                            continue
+                        # a line of text apart from the artwork is not its label unless it is a
+                        # sub-caption: a section number and heading over a chart, an author line
+                        # over a first-page figure (a label run joined into one paragraph that
+                        # reaches into the picture is not apart from it)
+                        if candidate["kind"] in ("paragraph", "heading", "list-item") and not encloses and vertical_gap > 0.015 and not SUBCAPTION_RE.match(candidate["text"]):
                             continue
                         # a line set in the body's size or larger, apart from the artwork,
                         # is an author or affiliation line over a first-page figure, not a label
