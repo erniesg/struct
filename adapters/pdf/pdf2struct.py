@@ -3185,6 +3185,17 @@ class StructAdapter:
                 "fallbackAssetIds": [asset_id],
             }
             self._attached_caption_boxes[upper["id"]] = {"page": page, "x": box["x"], "y": round(caption_top, 5), "width": box["width"], "height": round(caption_bottom - caption_top, 5), "rotation": 0}
+            remainder = self._page_image(page)
+            if remainder is not None:
+                width, height = remainder.size
+                remainder = remainder.crop((int(box["x"] * width), int((caption_bottom + 0.002) * height), int((box["x"] + box["width"]) * width), int((box["y"] + box["height"]) * height)))
+            if remainder is not None and not self._has_ink(remainder):
+                # nothing but white (or a page number) under the caption: the upper part was the whole figure
+                self.assets = [a for a in self.assets if a["id"] not in set(block.get("fallbackAssetIds", []))]
+                self.blocks[index - 1] = upper
+                self.report.figures_with_caption += 1
+                self.report.captions_read_from_source += 1
+                continue
             self._recrop_figure(block, box["x"], caption_bottom + 0.002, box["x"] + box["width"], box["y"] + box["height"])
             self.blocks.insert(index - 1, upper)
             self.report.figures += 1
