@@ -49,8 +49,13 @@ def _normalize(text: str) -> str:
         .replace("‘", "'")
         .replace("“", '"')
         .replace("”", '"')
+        .replace("ﬀ", "ff")
         .replace("ﬁ", "fi")
         .replace("ﬂ", "fl")
+        .replace("ﬃ", "ffi")
+        .replace("ﬄ", "ffl")
+        .replace("ﬅ", "st")
+        .replace("ﬆ", "st")
         .replace("­", "")
         .replace("–", "-")
         .replace("—", "-")
@@ -80,18 +85,45 @@ def _tokens(text: str) -> list[str]:
 # or a lettered / roman-numbered item opens lowercase by convention; the label
 # must be followed by a capitalised or numbered word, so `i. e.,` is not one
 ENUMERATED_LABEL_RE = re.compile(r"^(?:\(?[a-z]\)|\(?(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\)|(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\.)\s+[A-Z0-9]")
+# a run-in heading the paper itself sets apart (`a. Coupled cluster theory:`), recognised only
+# when the words carry the source's own emphasis
+RUN_IN_HEAD_RE = re.compile(r"^[a-z][.)]\s+\S.*[:.]$")
 
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6][^>]*>\s*(references|bibliography|works cited)\b", re.IGNORECASE)
 
 
-def _lowercase_starts(body_html: str) -> int:
+def _lowercase_starts(body_html: str, display_lines: set[str] | None = None) -> int:
     """Prose paragraphs that begin lowercase, ignoring bibliography entries
     (authors such as `nostalgebraist`) and the `where …` sentence that
     conventionally follows a display equation."""
-    return len(lowercase_start_paragraphs(body_html))
+    return len(lowercase_start_paragraphs(body_html, display_lines))
 
 
-def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
+def display_line_ids(struct_draft: Path | None) -> set[str]:
+    """Blocks the paper sets as a display line: one line, centred in the text
+    block and narrower than the body (an aphorism between two rules, a
+    definition set apart). Such a line opens lowercase by design."""
+    draft = _load_draft(struct_draft)
+    if draft is None:
+        return set()
+    paragraphs = [b for b in draft.get("blocks", []) if b.get("kind") == "paragraph" and (b.get("evidence", {}).get("boxes") or [])]
+    if len(paragraphs) < 5:
+        return set()
+    lefts = sorted(b["evidence"]["boxes"][0]["x"] for b in paragraphs)
+    rights = sorted(b["evidence"]["boxes"][0]["x"] + b["evidence"]["boxes"][0]["width"] for b in paragraphs)
+    left, right = lefts[len(lefts) // 2], rights[len(rights) // 2]
+    found = set()
+    for block in paragraphs:
+        boxes = block["evidence"]["boxes"]
+        box = boxes[0]
+        if len(boxes) != 1 or box["height"] > 0.02 or box["width"] > 0.8 * max(right - left, 1e-6):
+            continue
+        if abs((box["x"] - left) - (right - (box["x"] + box["width"]))) <= 0.02:
+            found.add(block["id"])
+    return found
+
+
+def lowercase_start_paragraphs(body_html: str, display_lines: set[str] | None = None) -> list[tuple[str, str]]:
     """(previous element text, paragraph text) for every prose paragraph that
     begins with a plain lowercase word where a broken join is possible: not
     after a heading (keyword lists), not after an equation (`where …`), not
@@ -102,6 +134,7 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
     scope = re.sub(r"<aside[^>]*>.*?</aside>", "", scope, flags=re.S)
     found = []
     previous_kind, previous_text = "", ""
+    float_kinds = {"figure", "table"}
     for match in re.finditer(r"<(p|h[1-6]|figure|pre|li|table)\b([^>]*)>(.*?)</\1>", scope, re.S):
         tag, attributes, inner = match.group(1), match.group(2), match.group(3)
         text = _strip(inner).strip()
@@ -109,7 +142,11 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
         if tag == "figure" and ('class="equation"' in attributes or 'alt="Equation' in inner or 'src="images/equation-' in inner):
             kind = "equation"
         before_kind, before = previous_kind, previous_text
-        previous_kind, previous_text = kind, text
+        # a float between the two halves is not the predecessor a reader sees
+        # (a figure that moved to the head of the page between an equation and
+        # the sentence it continues)
+        if kind not in float_kinds:
+            previous_kind, previous_text = kind, text
         if tag != "p" or len(text) <= 40 or not LOWER_START.match(text):
             continue
         if before_kind in ("equation", "h1", "h2", "h3", "h4", "h5", "h6"):
@@ -120,12 +157,18 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
             continue  # `vec2vec is`, `iCoT (…)`, `e.g.`: a name, not a fragment
         if before.rstrip().endswith(":"):
             continue  # an item under a colon-terminated lead-in, not a broken join
+        identifier = re.search(r'\sid="([^"]+)"', attributes)
+        if before.rstrip().endswith(";") and identifier and identifier.group(1) in (display_lines or set()):
+            continue  # a centred display line after a semicolon: the paper sets it apart
         if re.match(r"^[a-z](?:\s?[a-z0-9]){0,2}\s+(?:[a-z]|\d|[=<>≤≥∈∼∈])", text):
             continue  # inline math symbol such as "s t represents" or "a = b"
         if re.match(r"^[a-z_][\w.]*\s*(?:=|:=|←|→|:)\s", text):
             continue  # a template or assignment line such as "message = {* *} …", not a sentence fragment
         if ENUMERATED_LABEL_RE.match(text):
             continue  # `b) Operator Mapping Choice:`, `ii. Column diameter …`: an enumerated label opens lowercase by convention
+        head = re.match(r"\s*<(em|strong)>(.*?)</\1>", inner, re.S)
+        if head and RUN_IN_HEAD_RE.match(_strip(head.group(2)).strip()):
+            continue  # `a. Coupled cluster theory:` set in italic: a run-in heading, whose own typography says so
         if len(text.split()) <= 12 and len(re.findall(r"<a\b", inner)) >= 2:
             continue  # `globe Project page github Code cube Model`: a row of links under the title, not prose
         found.append((before, text))
@@ -486,7 +529,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
 
     paragraphs = [_strip(p).strip() for p in re.findall(r"<p(?:\s[^>]*)?>(.*?)</p>", body_html, re.S)]
     prose = [p for p in paragraphs if len(p) > 40]
-    lowercase_starts = _lowercase_starts(body_html)
+    lowercase_starts = _lowercase_starts(body_html, display_line_ids(struct_draft))
     edge_numbers = set()
     for page in pages:
         for line in page[:6] + page[-6:]:

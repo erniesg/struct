@@ -37,11 +37,15 @@ MATH_RE = re.compile(
     re.IGNORECASE,
 )
 BOLD_RE = re.compile(
-    r"bold|black|heavy|semibold|demibold|extrabold|ultrabold|CMBX|CMSSBX|CMBSY|(?<![A-Za-z])CMB(?![A-Za-z])|-B(?![A-Za-z])|(?<![A-Za-z])Bd(?![A-Za-z])",
+    # URW/Nimbus writes bold `Medi` (`NimbusRomNo9L-Medi`, `-MediItal`) and CM-super `SFBX`;
+    # `Medium` is a weight of its own and is not bold
+    r"bold|black|heavy|semibold|demibold|extrabold|ultrabold|CMBX|CMSSBX|CMBSY|SFBX|Demi|Medi(?!um)|"
+    r"(?<![A-Za-z])CMB(?![A-Za-z])|-B(?![A-Za-z])|(?<![A-Za-z])Bd(?![A-Za-z])",
     re.IGNORECASE,
 )
 ITALIC_RE = re.compile(
-    r"italic|oblique|slanted|-It(?![A-Za-z])|Ital|CMTI|CMSL|CMSSI|CMITT|LMRomanSlant|(?<![A-Za-z])It(?![A-Za-z])",
+    # `NimbusMonL-ReguObli`, `NimbusRomNo9L-Regu-Slant_167`, CM-super `SFTI`, bold italic `CMBXTI`
+    r"italic|oblique|obli|slanted|slant_|-It(?![A-Za-z])|Ital|CM\w*TI|CMSL|CMSSI|SFTI|LMRomanSlant|(?<![A-Za-z])It(?![A-Za-z])",
     re.IGNORECASE,
 )
 MARKER_CHAR_RE = re.compile(r"[0-9*†‡§¶‖#,a-z]")
