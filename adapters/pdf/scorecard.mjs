@@ -294,9 +294,12 @@ export const SUCCESS_CRITERIA = [
         extra.push('FURNITURE_CONTAMINATION')
       }
       const blockers = blockersFrom(document, this.codes, extra)
+      // a paper that sets no furniture at all (no line in the page's outer
+      // bands, measured on the source) has nothing to exclude
       const accounted =
         (completeness.furnitureExcludedRunCount ?? 0) > 0 ||
-        count(document, 'REPEATED_MARGIN_TEXT') > 0
+        count(document, 'REPEATED_MARGIN_TEXT') > 0 ||
+        completeness.sourceFurnitureCandidateLines === 0
       const applicable = pageCount > 1
       const pass = blockers.length === 0 && (accounted || pageCount <= 2)
       if (applicable && !pass && blockers.length === 0) {

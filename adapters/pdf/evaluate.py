@@ -197,6 +197,28 @@ def _running_lines(pages: list[list[str]], layout: list[dict] | None = None) -> 
     return {key for key, count in counter.items() if count >= 3}
 
 
+def _furniture_candidate_lines(layout: list[dict]) -> int | None:
+    """Source lines where page furniture can stand: the outer 6 % above and
+    below the body, the outer 7 % beside it, and a bare number in the outer
+    tenth. Zero means the paper sets no running head, footer, page number or
+    margin stamp, so there is nothing for the flow to exclude."""
+    if not layout:
+        return None
+    found = 0
+    for page in layout:
+        height, width = page.get("height") or 0, page.get("width") or 0
+        if not height or not width:
+            continue
+        for line in page["lines"]:
+            cy = (line["ymin"] + line["ymax"]) / 2 / height
+            cx = (line["xmin"] + line["xmax"]) / 2 / width
+            if cy <= 0.06 or cy >= 0.94 or cx <= 0.07 or cx >= 0.93:
+                found += 1
+            elif (cy <= 0.10 or cy >= 0.90) and PAGE_NUMBER_RE.match(line["text"]):
+                found += 1
+    return found
+
+
 def _load_draft(struct_draft: Path | None) -> dict | None:
     if not struct_draft or not struct_draft.exists():
         return None
@@ -337,7 +359,8 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
     pages = page_text_lines(pdf)
     all_lines = [line for page in pages for line in page]
     labels = _caption_labels(all_lines)
-    running = _running_lines(pages, page_layout_lines(pdf))
+    layout = page_layout_lines(pdf)
+    running = _running_lines(pages, layout)
     links, sizes = extract_links(pdf)
     attach_words(links, word_boxes(pdf), sizes)
     group_wrapped_links(links)
@@ -563,6 +586,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "ocrRequiredPages": [1] if diagnostics.get("OCR_REQUIRED") else [],
         "furnitureExcludedRunCount": len(running) + build_report.get("furniture_blocks", 0),
         "furnitureContaminationCount": furniture_hits,
+        "sourceFurnitureCandidateLines": _furniture_candidate_lines(layout),
         "equationCount": formulas,
         "internalLinkAnnotations": internal_links,
     }
