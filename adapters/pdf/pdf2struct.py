@@ -4706,6 +4706,20 @@ class StructAdapter:
             index = position + 1  # continue right after the recovered block; absorbed members shifted the rest up
 
     # ------------------------------------------------------------ panel bands
+    def _union_covers_text(self, page: int, x0: float, y0: float, x1: float, y1: float, members: list[dict]) -> bool:
+        """True when a block of body text that is not artwork (not figure-like,
+        not one of the members) has a box centred inside the region."""
+        for other in self.blocks:
+            if other["page"] != page or any(other is m for m in members) or other["kind"] not in ("paragraph", "heading", "list-item", "caption", "footnote"):
+                continue
+            if self._figure_like(other):
+                continue
+            for box in other["evidence"]["boxes"]:
+                cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                if box["page"] == page and x0 + 0.005 < cx < x1 - 0.005 and y0 + 0.005 < cy < y1 - 0.005:
+                    return True
+        return False
+
     def _figure_like(self, block: dict) -> bool:
         """Blocks that belong to a figure's artwork when they sit beside it:
         caption-less pictures, sub-captions, chart labels, short labels."""
@@ -4862,7 +4876,9 @@ class StructAdapter:
                             and cy1 >= uy1 - 0.02
                             and (cx1 - cx0) * (cy1 - cy0) <= 1.6 * max((ux1 - ux0) * (uy1 - uy0), 1e-6)
                         )
-                        if encloses or (candidate["kind"] == "figure" and len(page_boxes) > 1):
+                        if len(page_boxes) > 1:
+                            # every box of the candidate on this page: a label run the
+                            # walk joined into one paragraph reaches past its first line
                             box = {"page": block["page"], "x": cx0, "y": cy0, "width": cx1 - cx0, "height": cy1 - cy0, "rotation": 0}
                         if not ((candidate["kind"] == "figure" and not candidate["text"]) or self._figure_like(candidate) or encloses):
                             continue  # a paragraph whose box encloses the picture is the picture's own text layer
@@ -4879,11 +4895,12 @@ class StructAdapter:
                                 continue  # the candidate lies beyond this figure's own caption
                         if vertical_gap > 0 and not self._gap_is_figure_like(block["page"], uy0, uy1, box, min(ux0, box["x"]), max(ux1, box["x"] + box["width"])):
                             continue
-                        # Short prose is weak evidence: a separated label must
-                        # stay within the artwork's column and close to it.
-                        if candidate["kind"] in ("paragraph", "heading", "list-item") and not encloses and vertical_gap > 0.015:
-                            if not SUBCAPTION_RE.match(candidate["text"]):
-                                continue
+                        # a label reached across body text is not the picture's own
+                        # (an affiliation line over the abstract beside a first-page figure)
+                        if candidate["kind"] != "figure" and not encloses and self._union_covers_text(
+                            block["page"], min(ux0, box["x"]), min(uy0, box["y"]), max(ux1, box["x"] + box["width"]), max(uy1, box["y"] + box["height"]), group + [candidate]
+                        ):
+                            continue
                         stacked = overlap >= 0.3 * min(ux1 - ux0, box["width"]) and vertical_gap <= 0.1
                         if stacked or (v_overlap >= 0.3 * min(uy1 - uy0, box["height"]) and horizontal_gap <= 0.05):
                             group.append(candidate)
