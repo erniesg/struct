@@ -2827,6 +2827,18 @@ class StructAdapter:
                 union.append({"page": page, "x": round(x0, 5), "y": round(y0, 5), "width": round(x1 - x0, 5), "height": round(y1 - y0, 5), "rotation": 0})
             return union
 
+        def union_by_band(boxes):
+            """Furniture merged on one page keeps a box per edge band: a running
+            head, a footer and a margin stamp unioned would cover the page."""
+            if len(boxes) <= 8:
+                return boxes
+            by_band: dict[tuple, list[dict]] = {}
+            for box in boxes:
+                margin = box["x"] + box["width"] <= 0.08 or box["x"] >= 0.92
+                band = "margin" if margin else ("top" if box["y"] + box["height"] / 2 < 0.5 else "bottom")
+                by_band.setdefault((box["page"], band), []).append(box)
+            return [united for group in by_band.values() for united in union_by_page(group)]
+
         large = len(self.blocks) + len(self.assets) > 1500
         for block in self.blocks:
             if block["id"] in note_ids:
@@ -2859,14 +2871,14 @@ class StructAdapter:
                 merged.append(block)
                 continue
             existing["text"] = f"{existing['text']} {block['text']}".strip()
-            existing["evidence"]["boxes"] = union_by_page(existing["evidence"]["boxes"] + block["evidence"]["boxes"])
+            existing["evidence"]["boxes"] = union_by_band(existing["evidence"]["boxes"] + block["evidence"]["boxes"])
             existing["evidence"]["pages"] = sorted(set(existing["evidence"]["pages"] + block["evidence"]["pages"]))
             existing["evidence"]["sourceIds"] = list(dict.fromkeys(existing["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))[:2 if large else 8]
             if not large:
                 existing["evidence"]["signals"] = list(dict.fromkeys(existing["evidence"].get("signals", []) + block["evidence"].get("signals", [])))
             furniture = existing.get("furniture")
             if furniture:
-                furniture["boxes"] = union_by_page(furniture["boxes"] + block.get("furniture", {}).get("boxes", []))
+                furniture["boxes"] = union_by_band(furniture["boxes"] + block.get("furniture", {}).get("boxes", []))
                 furniture["evidence"] = list(dict.fromkeys(furniture["evidence"] + block.get("furniture", {}).get("evidence", [])))[:6]
                 furniture["normalizedText"] = f"{furniture.get('normalizedText', '')} {block.get('furniture', {}).get('normalizedText', '')}".strip()[:300]
             self.report.furniture_blocks_merged += 1
