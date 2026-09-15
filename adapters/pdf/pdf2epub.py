@@ -100,9 +100,13 @@ def convert(pdf: Path, out_dir: Path, formula: bool, reuse_json: bool):
 
     json_path = out_dir / f"{pdf.stem}.docling.json"
     if reuse_json and json_path.exists():
-        failures = reuse_cache_problems(out_dir.parent, pdf, json_path)
-        if failures:
-            raise ValueError("; ".join(failures))
+        root = out_dir.parent
+        # a run written by this CLI binds its caches; an unbound cache from an
+        # older run (no manifests at all) is reused as it is
+        if (root / "cache-manifest.json").exists() or (root / "source-report.json").exists():
+            failures = reuse_cache_problems(root, pdf, json_path)
+            if failures:
+                raise ValueError("; ".join(failures))
         return DoclingDocument.load_from_json(json_path), 0.0
     if reuse_json:
         raise ValueError(f"{pdf.name}: cache file is missing")
@@ -158,7 +162,7 @@ def _process_snapshot(pdf: Path, out_root: Path, profiles: list[str], formula: b
     try:
         doc, convert_seconds = convert(pdf, out_dir, formula, reuse_json)
     except Exception as error:
-        return {"basename": pdf.name, "sha256": sha, "code": "AUDIT_FAILED", "message": f"docling conversion failed: {type(error).__name__}", "pipeline": "docling-struct-v1"}
+        return {"basename": pdf.name, "sha256": sha, "code": "AUDIT_FAILED", "message": f"docling conversion failed: {type(error).__name__}: {str(error)[:300]}", "pipeline": "docling-struct-v1"}
     links, sizes = extract_links(pdf)
     boxes = word_boxes(pdf)
     attach_words(links, boxes, sizes)
