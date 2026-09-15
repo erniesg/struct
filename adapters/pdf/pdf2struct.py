@@ -1490,6 +1490,16 @@ class StructAdapter:
         )
         return asset_id
 
+    def _caption_links(self, item, caption: str) -> list[dict]:
+        """The hyperlinks of a float's attached caption (`Data source:
+        https://www.swebench.com/`), located in the caption text it renders."""
+        runs: list[dict] = []
+        for ref in getattr(item, "captions", []):
+            caption_item = ref.resolve(self.doc)
+            if isinstance(caption_item, TextItem) and caption:
+                runs += [run for run in self._runs_for(caption_item, caption) if run.get("href") and run not in runs]
+        return runs
+
     def _emit_picture(self, item: PictureItem) -> None:
         caption = self._caption_text(item)
         box = self._box(item)
@@ -1520,6 +1530,7 @@ class StructAdapter:
         label_match = FIGURE_CAPTION_RE.match(caption or "")
         label = canonical_figure_label(label_match) if label_match else None
         block = self._new_block("figure", item, caption, **({"label": label} if label else {}))
+        block["inline"] = self._caption_links(item, block["text"])
         if box and image is not None:
             block["evidence"]["boxes"] = [box]
         block["evidence"]["sourceIds"] = list(dict.fromkeys(block["evidence"]["sourceIds"] + [self._source_id(ref.resolve(self.doc)) for ref in item.captions]))
@@ -1747,6 +1758,7 @@ class StructAdapter:
             block["table"] = {"rows": rows, "columns": columns, "cells": cells, "semantic": "verified"}
             # struct renders the table block's text as the caption above the table
             block["text"] = caption
+            block["inline"] = self._caption_links(item, caption)
             self.report.tables_semantic += 1
         else:
             image = None
