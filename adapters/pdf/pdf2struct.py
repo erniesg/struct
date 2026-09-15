@@ -3305,7 +3305,8 @@ class StructAdapter:
                 "height": int(pil_image.height),
                 "bytes": base64.b64encode(data).decode("ascii"),
                 "sourceObjectIds": list(source_ids),
-                "evidence": {**evidence, "sourceIds": list(source_ids)},
+                # its own lists: caption boxes later added to the block are not the crop's
+                "evidence": {**evidence, "boxes": [dict(box) for box in evidence.get("boxes", [])], "pages": list(evidence.get("pages", [])), "signals": list(evidence.get("signals", [])), "sourceIds": list(source_ids)},
                 "fallback": "source-region",
             }
         )
