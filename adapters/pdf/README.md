@@ -39,6 +39,64 @@ number-only lines in a row) are dropped as figure content. Pages the layout
 model dropped are recovered from the text layer. The graph is compacted for
 struct's node budget and dangling references are pruned.
 
+## Where rules live
+
+`pdf2struct.py` is the orchestrator: `StructAdapter` keeps the adapter's state
+(blocks, assets, relationships, diagnostics, the report), walks the Docling tree
+and runs the recovery passes in order in `build()`. The rules are methods of
+mixin classes, one module per concern, composed into `StructAdapter`; they read
+and write the adapter's state through `self`. A new rule goes into the module
+for its concern, and only its call goes into `build()`. `pdf2struct` re-exports
+the shared names, so `from pdf2struct import StructAdapter, FIGURE_CAPTION_RE`
+and patching `pdf2struct.StructAdapter._<rule>` keep working.
+
+- `adapter_common.py` — shared regexes and pure text helpers (sentence
+  termination, caption labels, footnote markers, link visible-text matching); no
+  adapter state.
+- `rules_prose.py` (`ProseRules`) — paragraphs and headings: emission, splitting
+  items the layout model merged (a caption under a paragraph, a stray lead word,
+  a side-column tail, a first line merged across a page), joins across column,
+  page and float breaks, dehyphenation and attested-word fusion, glued tails.
+- `rules_notes.py` (`NoteRules`) — footnotes, note markers located by superscript
+  glyphs or text, `footnote` relationships, note placement, table notes cut from
+  the paragraph before their table.
+- `rules_links.py` (`LinkRules`) — URI annotations mapped onto items and table
+  cells, `href` and bold/italic runs, textless author icons.
+- `rules_furniture.py` (`FurnitureRules`) — running heads, footers, edge page
+  numbers, repeated edge-band text, margin stamps, content rescued from the
+  furniture layer.
+- `rules_captions.py` (`CaptionRules`) — which float a `Figure N` / `Table N`
+  caption belongs to: adoption by adjacency, geometry, page break and caption
+  side; captions read from the text layer; label-only captions completed.
+- `rules_figures.py` (`FigureRules`) — picture emission, what a crop absorbs
+  (panels, sub-captions, chart labels) and must not cross, sub-panel merging,
+  artwork recovered beside an orphan caption or sub-caption.
+- `rules_tables.py` (`TableRules`) — cell grids, bibliography grids as entry
+  lists, tables recovered beside an orphan `Table N`, continued tables, and
+  `_table_from_blocks` (text blocks in a region to rows and columns).
+- `rules_ruled_boxes.py` (`RuledBoxRules`) — drawn rules, frames and shaded boxes
+  beside a caption, read as a text table or a figure crop.
+- `rules_code_equations.py` (`CodeEquationRules`) — code items checked against
+  glyph faces, monospace listings, equation blocks (MathML or crop), split
+  listings rejoined.
+- `rules_text_layer.py` (`TextLayerRules`) — text-layer words and lines in a
+  region, restored lines and clauses, dropped regions and pages, OCR of an
+  undecodable region.
+- `rules_assets.py` (`AssetRules`) — crops from the original PDF raster, PNG
+  asset records, ink tests.
+- `rules_graph.py` (`GraphRules`) — absorbing blocks, provenance compaction,
+  pruning dangling references.
+
+Passes that already lived apart stay where they are, called from `build()` or
+from a rule: `layout_normalization.py` (impossible cross-page items, before the
+walk), `figure_recovery.py` (sideways captions, picture galleries, caption
+columns, caption evidence), `source_tables.py` (glyph cell grids, caption
+reconciliation), `note_bodies.py`, `internal_links.py`, `equation_recovery.py`
+with `equation_geometry.py` and `equation_matrix.py`, `ocr_region.py`, and
+`inline_offsets.py` (UTF-16 offsets at emission). `inline_equations.py` is
+tested but not yet called by the adapter. Source signals come from
+`pdf_text.py`, `pdf_links.py` and `source_raster.py`.
+
 ## Usage
 
 ```bash
