@@ -197,6 +197,28 @@ def _running_lines(pages: list[list[str]], layout: list[dict] | None = None) -> 
     return {key for key, count in counter.items() if count >= 3}
 
 
+def _undecodable_text_regions(layout: list[dict]) -> dict[int, list[tuple[float, float, float, float]]]:
+    """Boxes of the text-layer lines that cannot be decoded (glyphs without a
+    Unicode map read `Recen work has demons ra ed`), in runs of at least five
+    such lines on a page. Their words are not a ground truth the rendition can
+    be held to; the adapter reads such regions from the page image."""
+    from ocr_region import short_word_share
+
+    regions: dict[int, list[tuple[float, float, float, float]]] = {}
+    for page_index, page in enumerate(layout, start=1):
+        height, width = page.get("height") or 0, page.get("width") or 0
+        if not height or not width:
+            continue
+        broken = []
+        for line in page["lines"]:
+            share = short_word_share(line["text"])
+            if share is not None and share > 0.45:
+                broken.append((line["xmin"] / width, line["ymin"] / height, line["xmax"] / width, line["ymax"] / height))
+        if len(broken) >= 5:
+            regions[page_index] = broken
+    return regions
+
+
 def _furniture_candidate_lines(layout: list[dict]) -> int | None:
     """Source lines where page furniture can stand: the outer 6 % above and
     below the body, the outer 7 % beside it, and a bare number in the outer
@@ -494,6 +516,9 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
             previous_line = line
     source_words.update(rejoined)
     excluded_regions = _figure_boxes(struct_draft)
+    undecodable = _undecodable_text_regions(layout)
+    for page_index, boxes in undecodable.items():
+        excluded_regions.setdefault(page_index, []).extend(boxes)
     for page_index, boxes in _edge_furniture_boxes(struct_draft).items():
         excluded_regions.setdefault(page_index, []).extend(boxes)
     outside = _words_outside_figures(pdf, excluded_regions, sizes)
@@ -587,6 +612,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "furnitureExcludedRunCount": len(running) + build_report.get("furniture_blocks", 0),
         "furnitureContaminationCount": furniture_hits,
         "sourceFurnitureCandidateLines": _furniture_candidate_lines(layout),
+        "undecodableSourceLines": sum(len(boxes) for boxes in undecodable.values()),
         "equationCount": formulas,
         "internalLinkAnnotations": internal_links,
     }

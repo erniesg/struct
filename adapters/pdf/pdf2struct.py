@@ -333,6 +333,7 @@ class AdapterReport:
     pages_recovered_from_text_layer: int = 0
     footnotes_with_marker: int = 0
     orphan_figure_captions: int = 0
+    ocr_text_regions: int = 0
     edge_page_numbers_dropped: int = 0
     invisible_items_dropped: int = 0
     tick_label_runs_dropped: int = 0
@@ -1503,6 +1504,56 @@ class StructAdapter:
                 runs += [run for run in self._runs_for(caption_item, caption) if run.get("href") and run not in runs]
         return runs
 
+    def _emit_undecodable_text_region(self, item, box: dict) -> bool:
+        """A caption-less picture over lines of prose whose text layer cannot be
+        decoded (glyphs without a Unicode map) is text the layout model could not
+        read: Tesseract reads the region from the page and each paragraph it
+        finds becomes a paragraph block. False (a figure after all) when the
+        lines are not prose, the text layer reads fine, or OCR is unavailable."""
+        from ocr_region import ocr_paragraphs, short_word_share, undecodable_lines
+
+        page = box["page"]
+        if not 0 < page <= len(self.page_layout) or page not in self.doc.pages:
+            return False
+        layout = self.page_layout[page - 1]
+        width, height = layout.get("width") or 0, layout.get("height") or 0
+        if not width or not height:
+            return False
+        lines = [
+            line["text"] for line in layout["lines"]
+            if box["x"] <= (line["xmin"] + line["xmax"]) / 2 / width <= box["x"] + box["width"]
+            and box["y"] <= (line["ymin"] + line["ymax"]) / 2 / height <= box["y"] + box["height"]
+            and (line["xmax"] - line["xmin"]) / width >= 0.6 * box["width"]
+        ]
+        if not undecodable_lines(lines):
+            return False
+        size = self.doc.pages[page].size
+        paragraphs = ocr_paragraphs(self.pdf_path, page, box, size.width, size.height)
+        if not paragraphs:
+            self._diagnostic("warning", "text", "Undecodable text region kept as an image", "the text layer cannot be decoded and OCR is unavailable", item)
+            return False
+        texts = []
+        for paragraph in paragraphs:
+            text = paragraph[0]
+            for line in paragraph[1:]:
+                joined, fused = self._dehyphenate(text, line)
+                text = joined if fused else f"{text} {line}"
+            texts.append(sanitize(text))
+        share = short_word_share(" ".join(texts))
+        if share is None or share > 0.35:
+            return False  # OCR read no more prose than the text layer
+        self._flush()
+        for text in texts:
+            block = self._new_block("paragraph", item, text)
+            block["evidence"]["boxes"] = [dict(box)]
+            block["evidence"]["confidence"] = 0.8
+            block["evidence"]["signals"] = ["ocr-undecodable-text-layer"]
+            self.blocks.append(block)
+            self.report.paragraphs += 1
+        self.report.ocr_text_regions += 1
+        self._diagnostic("info", "text", "Text region read by OCR", f"{len(texts)} paragraphs whose text layer cannot be decoded", item)
+        return True
+
     def _emit_picture(self, item: PictureItem) -> None:
         caption = self._caption_text(item)
         box = self._box(item)
@@ -1512,6 +1563,8 @@ class StructAdapter:
             self._figure_caption_below.append(caption_boxes[0]["y"] >= box["y"] + box["height"] * 0.5)
         if not caption and box and box["width"] * box["height"] < 0.01:
             self.report.decorative_pictures_skipped += 1
+            return
+        if not caption and box and self._emit_undecodable_text_region(item, box):
             return
         self._flush()
         self.report.figures += 1
@@ -3274,33 +3327,53 @@ class StructAdapter:
                     break
 
     def _complete_short_captions(self) -> None:
-        """An orphan caption that is only its label (`Fig. 7.`) lost the rest
-        of its words to neighbouring blocks (`ARM-CL`, `… runtime
-        illustration: …` glued to a diagram letter). The caption's lines in
-        the text layer, read from the label down while the line spacing holds,
-        give the whole caption; the blocks whose words it holds are absorbed."""
+        """A caption that is only its label (`Fig. 7.`, `Figure 5.`), orphan or
+        attached to its figure, lost the rest of its words to neighbouring
+        blocks (`ARM-CL`, `… runtime illustration: …` glued to a diagram
+        letter, `LEFT:` / `Two small models …` / `⋆`). The caption's lines on
+        the page, read from the label down while the line spacing holds, give
+        the whole caption; the blocks whose words it holds, and stray symbols
+        inside it, are absorbed. Glyph lines are read before the text layer,
+        which cannot always decode the glyphs."""
         for block in list(self.blocks):
-            if block["kind"] not in ("caption", "paragraph") or block["page"] is None or not block["evidence"]["boxes"]:
+            if block not in self.blocks or block["page"] is None or not block["evidence"]["boxes"]:
                 continue
             match = FIGURE_CAPTION_RE.match(block["text"])
             if not match or len(block["text"].strip()) > len(match.group(0)) + 12:
                 continue
-            if any(f["kind"] == "figure" and f.get("label") == canonical_figure_label(match) for f in self.blocks):
+            if block["kind"] == "figure":
+                cbox = self._attached_caption_boxes.get(block["id"])
+                if cbox is None or cbox["page"] != block["page"]:
+                    continue
+            elif block["kind"] in ("caption", "paragraph"):
+                if any(f["kind"] == "figure" and f.get("label") == canonical_figure_label(match) for f in self.blocks):
+                    continue
+                cbox = block["evidence"]["boxes"][0]
+            else:
                 continue
-            page, cbox = block["page"], block["evidence"]["boxes"][0]
+            page = block["page"]
             # the caption's column: the widest body block starting at its left edge
             widths = [b["evidence"]["boxes"][0]["width"] for b in self.blocks
                       if b["page"] == page and b["kind"] == "paragraph" and b["evidence"]["boxes"] and abs(b["evidence"]["boxes"][0]["x"] - cbox["x"]) <= 0.02]
             x1 = min(1.0, cbox["x"] + max(widths + [0.3]) + 0.005)
-            lines = [line for line in self._lines_in(page, cbox["x"] - 0.005, cbox["y"] - 0.003, x1, cbox["y"] + 0.12) if line[1] > cbox["y"]]
-            if not lines or not lines[0][2].startswith(match.group(0).strip().split()[0]):
+            label_word = match.group(0).strip().split()[0]
+            kept = None
+            for lines in (self._glyph_lines_in(page, cbox["x"] - 0.005, cbox["y"] - 0.003, x1, cbox["y"] + 0.12),
+                          self._lines_in(page, cbox["x"] - 0.005, cbox["y"] - 0.003, x1, cbox["y"] + 0.12)):
+                lines = [line for line in lines if line[1] > cbox["y"]]
+                if not lines or not lines[0][2].startswith(label_word):
+                    continue
+                kept = [lines[0]]
+                for line in lines[1:]:
+                    previous = kept[-1]
+                    if line[0] - previous[1] > 0.8 * (previous[1] - previous[0]):
+                        break
+                    kept.append(line)
+                break
+            if not kept:
                 continue
-            kept = [lines[0]]
-            for line in lines[1:]:
-                previous = kept[-1]
-                if line[0] - previous[1] > 0.8 * (previous[1] - previous[0]):
-                    break
-                kept.append(line)
+            # a caption spanning both columns reaches past the column estimate
+            x1 = max([x1] + [line[3] + 0.005 for line in kept if len(line) > 3])
             text = sanitize(" ".join(line[2] for line in kept))
             if len(text) <= len(block["text"]) or not FIGURE_CAPTION_RE.match(text):
                 continue
@@ -3310,20 +3383,42 @@ class StructAdapter:
             for other in self.blocks:
                 if other is block or other["page"] != page or other["kind"] not in ("paragraph", "caption", "heading") or not other["evidence"]["boxes"]:
                     continue
-                if not any(obox["page"] == page and obox["y"] + obox["height"] >= top and obox["y"] <= bottom and obox["x"] <= x1 and obox["x"] + obox["width"] >= cbox["x"] - 0.005
-                           for obox in other["evidence"]["boxes"]):
+                inside = [obox for obox in other["evidence"]["boxes"] if obox["page"] == page and obox["y"] + obox["height"] >= top and obox["y"] <= bottom
+                          and obox["x"] <= x1 and obox["x"] + obox["width"] >= cbox["x"] - 0.005]
+                if not inside:
                     continue
                 words = re.sub(r"\W", "", other["text"]).casefold()
                 # a diagram letter the layout model glued in front may precede the words
                 if len(words) >= 3 and any(words[cut:] and words[cut:] in compact for cut in (0, 1, 2)):
                     absorbed.append(other)
-            block["text"] = text
+                elif len(words) <= 2 and all(top - 0.003 <= obox["y"] and obox["y"] + obox["height"] <= bottom + 0.003 for obox in inside) and len(inside) == len(other["evidence"]["boxes"]):
+                    absorbed.append(other)  # a stray symbol (`⋆`, `).`) of the caption's own line
+            block["text"] = clean_caption(text) if block["kind"] == "figure" else text
             block["inline"] = []
-            block["evidence"]["boxes"] = [{"page": page, "x": cbox["x"], "y": round(top, 5), "width": round(x1 - cbox["x"], 5), "height": round(bottom - top, 5), "rotation": 0}]
+            caption_box = {"page": page, "x": cbox["x"], "y": round(top, 5), "width": round(x1 - cbox["x"], 5), "height": round(bottom - top, 5), "rotation": 0}
+            if block["kind"] == "figure":
+                self._attached_caption_boxes[block["id"]] = caption_box
+            else:
+                block["evidence"]["boxes"] = [caption_box]
             block["evidence"]["sourceIds"] = list(dict.fromkeys(block["evidence"]["sourceIds"] + [sid for other in absorbed for sid in other["evidence"]["sourceIds"]]))
             block["evidence"].setdefault("signals", []).append("caption-completed-from-source")
             for other in absorbed:
                 self._absorb_block(other)
+
+    def _glyph_lines_in(self, page: int, x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float, str]]:
+        """Visible glyph lines (docling-parse) starting inside a region, as (top, bottom, text, right), top to bottom."""
+        page_text = self._page_text(page)
+        if page_text is None:
+            return []
+        found = []
+        for line in page_text.lines:
+            if line.height <= 0 or not line.text.strip():
+                continue
+            top, bottom = 1 - line.t / page_text.height, 1 - line.b / page_text.height
+            left = line.l / page_text.width
+            if x0 <= left <= x1 and y0 <= (top + bottom) / 2 <= y1:
+                found.append((top, bottom, line.text.strip(), line.r / page_text.width))
+        return sorted(found)
 
     def _recover_uncaptured_figures(self) -> None:
         """An orphan `Figure N` caption with no figure beside it means the layout
