@@ -3244,6 +3244,33 @@ class StructAdapter:
                 self.report.table_captions_read_from_source += 1
                 break
 
+    def _drop_duplicate_captions(self) -> None:
+        """A `Figure N` caption left in the flow after its figure took the same
+        words, or their first line (read once from the layout model, once from
+        the text layer), is the figure's own caption a second time: the figure
+        keeps the whole caption and the block is absorbed."""
+        compact = lambda text: re.sub(r"\W", "", text).casefold()
+        owners = {}
+        for block in self.blocks:
+            if block["kind"] == "figure" and block.get("label") and block["text"]:
+                owners.setdefault(block["label"], []).append(block)
+        for block in list(self.blocks):
+            if block["kind"] not in ("caption", "paragraph"):
+                continue
+            match = FIGURE_CAPTION_RE.match(block["text"])
+            if not match:
+                continue
+            words = compact(block["text"])
+            for owner in owners.get(canonical_figure_label(match), []):
+                held = compact(owner["text"])
+                if abs((owner["page"] or 0) - (block["page"] or 0)) <= 1 and len(held) >= 12 and words.startswith(held):
+                    if len(words) > len(held):
+                        # the figure read only the caption's first line: the block has all of it
+                        owner["text"], owner["inline"] = clean_caption(block["text"]), (block.get("inline", []) if clean_caption(block["text"]) == block["text"] else [])
+                    owner["evidence"]["sourceIds"] = list(dict.fromkeys(owner["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))
+                    self._absorb_block(block)
+                    break
+
     def _complete_short_captions(self) -> None:
         """An orphan caption that is only its label (`Fig. 7.`) lost the rest
         of its words to neighbouring blocks (`ARM-CL`, `… runtime
@@ -4845,20 +4872,33 @@ class StructAdapter:
     # ------------------------------------------------------------ panel bands
     def _set_at_body_size(self, block: dict) -> bool:
         """True when the block's glyphs are at least as tall as the body text
-        of its page (median glyph height inside its long paragraphs)."""
+        (median glyph height inside the long paragraphs of its page, or of the
+        whole paper when its page has none, a page of figures)."""
         page_text = self._page_text(block["page"])
         if page_text is None or not block["evidence"]["boxes"]:
             return False
 
-        def heights(boxes: list[dict]) -> list[float]:
-            return [char.height for box in boxes if box["page"] == block["page"] for char in page_text.chars
-                    if char.text.strip() and not char.superscript and page_text._inside(char, box)]
+        def heights(page: int, boxes: list[dict]) -> list[float]:
+            text = self._page_text(page)
+            if text is None:
+                return []
+            return [char.height for box in boxes if box["page"] == page for char in text.chars
+                    if char.text.strip() and not char.superscript and text._inside(char, box)]
 
-        own = heights(block["evidence"]["boxes"])
-        body = heights([box for other in self.blocks if other["page"] == block["page"] and other["kind"] == "paragraph" and len(other["text"]) >= 200 for box in other["evidence"]["boxes"]])
+        def body_size(page: int | None) -> float | None:
+            cache = self.__dict__.setdefault("_body_size_cache", {})
+            if page not in cache:
+                pages = [page] if page is not None else sorted({b["page"] for b in self.blocks if b["page"] is not None})
+                found = [h for p in pages for other in self.blocks if other["page"] == p and other["kind"] == "paragraph" and len(other["text"]) >= 200
+                         for h in heights(p, other["evidence"]["boxes"])]
+                cache[page] = statistics.median(found) if found else None
+            return cache[page]
+
+        own = heights(block["page"], block["evidence"]["boxes"])
+        body = body_size(block["page"]) or body_size(None)
         if not own or not body:
             return False
-        return statistics.median(own) >= 0.95 * statistics.median(body)
+        return statistics.median(own) >= 0.95 * body
 
     def _union_covers_text(self, page: int, x0: float, y0: float, x1: float, y1: float, members: list[dict]) -> bool:
         """True when a block of body text that is not artwork (not figure-like,
@@ -5560,6 +5600,7 @@ class StructAdapter:
         self._fold_panels_by_geometry()
         self._join_split_paragraphs()  # captions adopted above may now claim their continuation
         self._merge_continued_tables()
+        self._drop_duplicate_captions()
         self._rejoin_split_listings()
         from note_bodies import recover_note_bodies
         recover_note_bodies(self)
