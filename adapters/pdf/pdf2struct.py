@@ -2622,11 +2622,13 @@ class StructAdapter:
                     if figure["kind"] != "figure" or not figure.get("fallbackAssetIds"):
                         continue
                     for fbox in figure["evidence"]["boxes"]:
-                        if (fbox["page"] == box["page"] and box["x"] >= fbox["x"] - 0.004
-                            and box["x"] + box["width"] <= fbox["x"] + fbox["width"] + 0.004
-                            and box["y"] >= fbox["y"] - 0.004
-                            and box["y"] + box["height"] <= fbox["y"] + fbox["height"] + 0.004):
-                            owner = figure
+                        # an axis title sits just outside the detected picture, as the
+                        # text-line rule below allows (0.02 beside, 0.04 under)
+                        if (fbox["page"] == box["page"] and box["x"] >= fbox["x"] - 0.02
+                            and box["x"] + box["width"] <= fbox["x"] + fbox["width"] + 0.02
+                            and box["y"] >= fbox["y"] - 0.02
+                            and box["y"] + box["height"] <= fbox["y"] + fbox["height"] + 0.04):
+                            owner, owner_box = figure, fbox
                             break
                 if owner is None:
                     continue
@@ -2643,6 +2645,13 @@ class StructAdapter:
                 block["evidence"]["boxes"] = [b for b in block["evidence"]["boxes"] if b != box]
                 block["evidence"]["pages"] = sorted({b["page"] for b in block["evidence"]["boxes"]})
                 owner["evidence"]["sourceIds"] = list(dict.fromkeys(owner["evidence"]["sourceIds"] + [sid]))
+                if not (box["x"] >= owner_box["x"] and box["y"] >= owner_box["y"]
+                        and box["x"] + box["width"] <= owner_box["x"] + owner_box["width"]
+                        and box["y"] + box["height"] <= owner_box["y"] + owner_box["height"]):
+                    # the label cut from the prose must still be seen: widen the crop to it
+                    self._recrop_figure(owner, min(owner_box["x"], box["x"]) - 0.002, min(owner_box["y"], box["y"]) - 0.002,
+                                        max(owner_box["x"] + owner_box["width"], box["x"] + box["width"]) + 0.002,
+                                        max(owner_box["y"] + owner_box["height"], box["y"] + box["height"]) + 0.002)
                 owner["evidence"].setdefault("signals", []).append("glued-label-retained-in-crop")
                 self.report.glued_tails_stripped += 1
         furniture_texts = {
