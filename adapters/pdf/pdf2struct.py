@@ -1717,8 +1717,7 @@ class StructAdapter:
             # Reconstruct only when native glyphs attest the same columns and
             # conserve the extracted text, while exposing additional rows.
             if table_box:
-                from source_tables import grid_from_source
-                from collections import Counter
+                from source_tables import grid_from_source, split_collapsed_rows
                 source_page = self._page_text(block["page"])
                 source_cell_boxes = []
                 if source_page:
@@ -1727,23 +1726,22 @@ class StructAdapter:
                             box = source_cell.bbox.to_bottom_left_origin(source_page.height)
                             source_cell_boxes.append((box.l, box.t, box.r, box.b, source_cell.start_row_offset_idx))
                 source_grid = grid_from_source(self._page_text(block["page"]), (table_box["x"], table_box["y"], table_box["x"] + table_box["width"], table_box["y"] + table_box["height"]), block["evidence"]["sourceIds"], require_anchors=True, cell_boxes=source_cell_boxes)
-                if source_grid and source_grid["columns"] == columns and source_grid["rows"] > rows:
-                    old_chars = Counter(ch.casefold() for cell in cells for ch in cell["text"] if ch.isalnum())
-                    new_chars = Counter(ch.casefold() for cell in source_grid["cells"] for ch in cell["text"] if ch.isalnum())
-                    if old_chars and sum((old_chars - new_chars).values()) <= .01 * sum(old_chars.values()) and sum((new_chars - old_chars).values()) <= .01 * sum(new_chars.values()):
-                        from source_tables import migrate_cell_runs
-                        migration_sources = []
-                        for old in cells:
-                            source_cell = next((c for c in item.data.table_cells if c.start_row_offset_idx == old["row"] and c.start_col_offset_idx == old["column"]), None)
-                            evidence = old["evidence"]
-                            if source_cell and source_cell.bbox and source_page:
-                                bounds = source_cell.bbox.to_bottom_left_origin(source_page.height)
-                                evidence = {**evidence, "boxes": [{"page": block["page"], "x": bounds.l/source_page.width, "y": 1-bounds.t/source_page.height, "width": (bounds.r-bounds.l)/source_page.width, "height": (bounds.t-bounds.b)/source_page.height}]}
-                            migration_sources.append({**old, "evidence": evidence})
-                        unresolved = migrate_cell_runs(migration_sources, source_grid["cells"])
-                        if unresolved:
-                            self._diagnostic("warning", "tables", "Source grid link migration ambiguous", f"{len(unresolved)} inline runs could not be placed uniquely; retaining the extracted grid", item)
-                            source_grid = {"cells": cells, "rows": rows}
+                split = split_collapsed_rows(cells, source_grid) if source_grid and source_grid["columns"] == columns and source_grid["rows"] > rows else None
+                if split is not None:
+                    source_grid = {**source_grid, "cells": split}
+                    from source_tables import migrate_cell_runs
+                    migration_sources = []
+                    for old in cells:
+                        source_cell = next((c for c in item.data.table_cells if c.start_row_offset_idx == old["row"] and c.start_col_offset_idx == old["column"]), None)
+                        evidence = old["evidence"]
+                        if source_cell and source_cell.bbox and source_page:
+                            bounds = source_cell.bbox.to_bottom_left_origin(source_page.height)
+                            evidence = {**evidence, "boxes": [{"page": block["page"], "x": bounds.l/source_page.width, "y": 1-bounds.t/source_page.height, "width": (bounds.r-bounds.l)/source_page.width, "height": (bounds.t-bounds.b)/source_page.height}]}
+                        migration_sources.append({**old, "evidence": evidence})
+                    unresolved = migrate_cell_runs(migration_sources, source_grid["cells"])
+                    if unresolved:
+                        self._diagnostic("warning", "tables", "Source grid link migration ambiguous", f"{len(unresolved)} inline runs could not be placed uniquely; retaining the extracted grid", item)
+                    else:
                         cells, rows = source_grid["cells"], source_grid["rows"]
                         block["evidence"].setdefault("signals", []).append("source-grid-repaired-collapsed-rows")
             block["table"] = {"rows": rows, "columns": columns, "cells": cells, "semantic": "verified"}
@@ -1809,7 +1807,9 @@ class StructAdapter:
         if page_text is not None and box is not None:
             share = page_text.font_share(box)
             if share["total"] >= 10 and share["mono"] < 0.5:
-                if share["math"] >= 0.35:
+                # forty words of prose between the symbols are a paragraph with
+                # inline mathematics (a worked solution), not one display formula
+                if share["math"] >= 0.35 and len(re.findall(r"[A-Za-z]{3,}", text)) < 40:
                     self.report.code_relabelled_equation += 1
                     self._emit_formula(item, prefer_image=True)
                     return
@@ -1835,7 +1835,7 @@ class StructAdapter:
         block = self._new_block("equation", item, latex, label="Equation")
         mathml = recovered.mathml if recovered else None
         if mathml:
-            block["text"] = sanitize(recovered.text)
+            block["text"] = latex or sanitize(recovered.text)
             block["evidence"]["signals"].append("source-glyph-equation-structure")
         if mathml:
             block["attributes"] = {"mathml": mathml}
@@ -1845,7 +1845,8 @@ class StructAdapter:
             # transcript as evidence, but never treat its visual order as a
             # parsed expression. The original-page crop carries the notation.
             if recovered:
-                block["text"] = sanitize(recovered.text)
+                # the layout model's text keeps word spaces the glyph transcript can lose
+                block["text"] = latex or sanitize(recovered.text)
                 block["evidence"]["signals"].append("source-glyph-equation-transcript")
             crop = recovered.box if recovered else box
             asset_id = None
@@ -4379,6 +4380,10 @@ class StructAdapter:
         if not source_grid and not grids and getattr(self, "source_text", None):
             from source_tables import prose_grid_from_source
             source_grid = prose_grid_from_source(self._page_text(caption["page"]), region, caption["evidence"]["sourceIds"])
+        # glyph text of a PDF that sets no space glyphs runs its words together
+        # (`BytheMartingaleConvergenceTheorem`); the blocks' own text is kept then
+        if source_grid and sum(len(cell["text"].split()) for cell in source_grid["cells"]) < 0.8 * sum(len(b["text"].split()) for b in text_members):
+            source_grid = None
         if source_grid and not grids:
             cells, rows, columns = source_grid["cells"], source_grid["rows"], source_grid["columns"]
         elif len(grids) == 1 and not text_members:
@@ -4419,14 +4424,24 @@ class StructAdapter:
                 x = member["evidence"]["boxes"][0]["x"]
                 if not anchors or x - anchors[-1] > .02:
                     anchors.append(x)
-            # A one-column prose box often indents headings and paragraphs.
-            if row_bands and max(map(len, row_bands)) == 1:
+            # A one-column prose box often indents headings and paragraphs, and
+            # more than three x-clusters are a box of prose and formula
+            # fragments, not columns: one column, one row per block in reading order.
+            if row_bands and (max(map(len, row_bands)) == 1 or len(anchors) > 3):
+                row_bands = [[member] for member in items]
                 anchors = [min(anchors)]
             cells = []
             for row, band in enumerate(row_bands):
                 for member in band:
                     box = member["evidence"]["boxes"][0]
                     column = min(range(len(anchors)), key=lambda c: abs(anchors[c] - box["x"]))
+                    shared = next((cell for cell in cells if cell["row"] == row and cell["column"] == column), None)
+                    if shared is not None:
+                        # two blocks in one cell: the later one continues its text
+                        offset = len(shared["text"]) + 1
+                        shared["text"] = f"{shared['text']} {member['text']}"
+                        shared["inline"] += [{**run, "start": run["start"] + offset, "end": run["end"] + offset} for run in member.get("inline", [])]
+                        continue
                     cells.append({
                         "id": f"c{row}-{column}", "text": member["text"],
                         "row": row, "column": column, "rowSpan": 1, "columnSpan": 1,

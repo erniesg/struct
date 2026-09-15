@@ -328,3 +328,37 @@ class RecoveredInlineOccurrences(unittest.TestCase):
         cells=[dict(text='same',inline=[],evidence=original['evidence'])for _ in range(2)]
         self.assertEqual(len(migrate_cell_runs([original],cells)),1)
         self.assertTrue(all(not c['inline']for c in cells))
+
+
+class SplitCollapsedRowsTests(unittest.TestCase):
+    @staticmethod
+    def cells(rows):
+        return [dict(id=f'c{r}-{c}', text=text, row=r, column=c, rowSpan=1, columnSpan=1, headerScope=None, inline=[], evidence={})
+                for r, row in enumerate(rows) for c, text in enumerate(row) if text is not None]
+
+    def test_collapsed_records_split_by_a_value_column(self):
+        from source_tables import split_collapsed_rows
+        extracted = self.cells([['Quantity', 'Value'], ['same-day pairs cross-day pairs', '0.805 0.800']])
+        source = dict(rows=3, columns=2, cells=self.cells([['Quan', 'tity Value'], ['same-day pairs', '0.805'], ['cross-day pairs', '0.800']]))
+        split = split_collapsed_rows(extracted, source)
+        self.assertIsNotNone(split)
+        self.assertEqual([c['text'] for c in split if c['row'] == 0], ['Quantity', 'Value'])  # extracted header kept
+        self.assertEqual(sorted((c['row'], c['text']) for c in split if c['column'] == 1 and c['row']), [(1, '0.805'), (2, '0.800')])
+
+    def test_wrapped_label_lines_are_not_records(self):
+        from source_tables import split_collapsed_rows
+        extracted = self.cells([['Model', 'Story'], ['MEGATRON- CNTRL-8B', 'she was driving. all of a sudden']])
+        source = dict(rows=3, columns=2, cells=self.cells([['Model', 'Story'], ['MEGATRON-', 'she was driving. all'], ['CNTRL-8B', 'of a sudden']]))
+        self.assertIsNone(split_collapsed_rows(extracted, source))
+
+    def test_prose_rows_without_a_value_column_are_kept(self):
+        from source_tables import split_collapsed_rows
+        extracted = self.cells([['Domain', 'Task'], ['Creative writing', 'Content writing Polishing']])
+        source = dict(rows=3, columns=2, cells=self.cells([['Domain', 'Task'], ['Creative', 'Content writing'], ['writing', 'Polishing']]))
+        self.assertIsNone(split_collapsed_rows(extracted, source))
+
+    def test_a_column_shift_is_refused(self):
+        from source_tables import split_collapsed_rows
+        extracted = self.cells([['M1', 'M2', 'cos'], ['gra. gtr', 'clip', '0.78 0.73']])
+        source = dict(rows=3, columns=3, cells=self.cells([['M1', 'M2', 'cos'], ['gra.', '0.78', None], ['gtr', 'clip', '0.73']]))
+        self.assertIsNone(split_collapsed_rows(extracted, source))

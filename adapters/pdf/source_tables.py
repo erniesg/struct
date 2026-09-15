@@ -6,6 +6,7 @@ or document name supplies semantic content.
 """
 from __future__ import annotations
 
+import re
 import statistics
 from pdf_text import Line
 
@@ -119,10 +120,56 @@ def grid_from_source(page, region, source_ids=(), *, require_anchors=False, cell
         labels = [cell for cell in group if cell["column"] == 0]
         if len(row_ids) > 1 and len(labels) == 1 and any(ch.isalpha() for ch in labels[0]["text"]):
             label = labels[0]
+            if any(cell is not label and cell["row"] == row_ids[0] and cell["column"] == 0 for cell in cells):
+                continue  # the group's first row already has its own label cell
             label["row"] = row_ids[0]
             label["id"] = f"c{row_ids[0]}-0"
             label["rowSpan"] = row_ids[-1] - row_ids[0] + 1
     return dict(rows=len(rows),columns=len(edges)-1,cells=cells,semantic='source-preserved')
+
+
+def _alnum(text):
+    return "".join(ch.casefold() for ch in text if ch.isalnum())
+
+
+def split_collapsed_rows(extracted_cells, source_grid):
+    """Accept a glyph grid only as the extracted grid with collapsed rows split.
+
+    The layout model sometimes puts several records in one row (`0.805 0.800`
+    in one cell). A glyph grid can separate them, but the same glyph grid also
+    cuts a wrapped label into one row per line. The split is accepted only when
+    it conserves every column's text in order, keeps the header's words, never
+    separates a hyphenated word, and a value column (a digit in every body
+    row, at most four words) gives each new row its own record. The extracted
+    header cells are kept, since column gaps measured on the body can cut a
+    header word. Returns the cells to use, or None.
+    """
+    columns = source_grid["columns"]
+    cells = source_grid["cells"]
+
+    def column_texts(grid_cells):
+        return [_alnum("".join(c["text"] for c in sorted(grid_cells, key=lambda c: c["row"]) if c["column"] == column and c["row"] > 0))
+                for column in range(columns)]
+
+    def header_text(grid_cells):
+        return _alnum("".join(c["text"] for c in sorted(grid_cells, key=lambda c: c["column"]) if c["row"] == 0))
+
+    if header_text(extracted_cells) != header_text(cells) or column_texts(extracted_cells) != column_texts(cells):
+        return None
+    origins = {(c["row"], c["column"]): c for c in cells}
+    for (row, column), cell in origins.items():
+        below = origins.get((row + cell["rowSpan"], column))
+        if row > 0 and cell["text"].rstrip().endswith("-") and below is not None and below["text"].strip():
+            return None
+    body_rows = range(1, source_grid["rows"])
+
+    def is_value(cell):
+        return cell is not None and re.search(r"\d", cell["text"]) and len(cell["text"].split()) <= 4
+
+    if not any(all(is_value(origins.get((row, column))) for row in body_rows) for column in range(columns)):
+        return None
+    header = [dict(c) for c in extracted_cells if c["row"] == 0]
+    return header + [c for c in cells if c["row"] > 0]
 
 
 def reconcile_table_captions(adapter):
