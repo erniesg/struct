@@ -219,6 +219,41 @@ def _undecodable_text_regions(layout: list[dict]) -> dict[int, list[tuple[float,
     return regions
 
 
+def _table_labels_without_text_rows(pdf: Path, struct_draft: Path | None, candidates: set[str], sizes: dict[int, tuple[float, float]]) -> set[str]:
+    """The `Table N` labels, rendered as images, whose draft region on the page
+    holds fewer than three rows of two or more text-layer words: a chart or a
+    picture the author captioned as a table, not a grid of text left unread."""
+    draft = _load_draft(struct_draft)
+    if not candidates or draft is None:
+        return set()
+    pages = word_boxes(pdf)
+    found = set()
+    for block in draft.get("blocks", []):
+        label = OUTPUT_CAPTION_RE.match(block.get("text") or "")
+        if block.get("kind") != "figure" or not block.get("fallbackAssetIds") or not label or not label.group(1).lower().startswith("t") or label.group(2) not in candidates:
+            continue
+        boxes = block.get("evidence", {}).get("boxes") or []
+        if not boxes or boxes[0]["page"] > len(pages):
+            continue
+        box = boxes[0]
+        width, height = sizes.get(box["page"], (0.0, 0.0))
+        if not width or not height:
+            continue
+        centres = sorted(((y0 + y1) / 2 / height) for x0, y0, x1, y1, _ in pages[box["page"] - 1]
+                         if box["x"] <= (x0 + x1) / 2 / width <= box["x"] + box["width"] and box["y"] <= (y0 + y1) / 2 / height <= box["y"] + box["height"])
+        rows: list[int] = []
+        previous = None
+        for centre in centres:
+            if previous is not None and centre - previous <= 0.004:
+                rows[-1] += 1
+            else:
+                rows.append(1)
+            previous = centre
+        if sum(count >= 2 for count in rows) < 3:
+            found.add(label.group(2))
+    return found
+
+
 def _furniture_candidate_lines(layout: list[dict]) -> int | None:
     """Source lines where page furniture can stand: the outer 6 % above and
     below the body, the outer 7 % beside it, and a bare number in the outer
@@ -424,6 +459,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
     body_html = re.sub(r"<aside[^>]*>.*?</aside>", "", body_html, flags=re.S)
 
     out_labels = {"figure": set(), "table": set()}
+    table_images: set[str] = set()
     # a figure label counts only when its <figure> carries an image; a table
     # label counts from a <caption> or the caption paragraph that follows a
     # rendered <table> (struct renders table captions as separate blocks)
@@ -434,12 +470,19 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
             label = OUTPUT_CAPTION_RE.match(_strip(caption.group(1)))
             if label and not label.group(1).lower().startswith("t"):
                 out_labels["figure"].add(label.group(2))
+            elif label:
+                table_images.add(label.group(2))
         if "<table" in inner:
             for text in re.findall(r"<caption>(.*?)</caption>", inner, re.S) + re.findall(r"<figcaption>(.*?)</figcaption>", inner, re.S) + ([trailing] if trailing else []):
                 label = OUTPUT_CAPTION_RE.match(_strip(text))
                 if label and label.group(1).lower().startswith("t"):
                     out_labels["table"].add(label.group(2))
     mapped_uris = {uri for uri in expected_uris if uri in out_hrefs}
+    # a `Table N` the author set as a chart (a line plot captioned `Table 7`)
+    # is an image in the source too: rendered as a captioned image whose page
+    # region holds no rows of text-layer words, it is the table's structure
+    charts = _table_labels_without_text_rows(pdf, struct_draft, table_images & (labels["table"] - out_labels["table"]), sizes)
+    out_labels["table"] |= charts
 
     paragraphs = [_strip(p).strip() for p in re.findall(r"<p(?:\s[^>]*)?>(.*?)</p>", body_html, re.S)]
     prose = [p for p in paragraphs if len(p) > 40]
@@ -613,6 +656,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "furnitureContaminationCount": furniture_hits,
         "sourceFurnitureCandidateLines": _furniture_candidate_lines(layout),
         "undecodableSourceLines": sum(len(boxes) for boxes in undecodable.values()),
+        "tableLabelledImages": len(charts),
         "equationCount": formulas,
         "internalLinkAnnotations": internal_links,
     }
