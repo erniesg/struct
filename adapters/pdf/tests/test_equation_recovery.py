@@ -124,8 +124,10 @@ class EquationRecoveryTests(unittest.TestCase):
         a._crop_asset=Mock(return_value='asset-original');a._diagnostic=Mock();a.blocks=[]
         a.report=SimpleNamespace(formulas_mathml=0,formulas_image=0,formulas_text=0)
         a._emit_formula(SimpleNamespace(text='x=1'))
-        self.assertNotIn('attributes',a.blocks[0])
+        self.assertNotIn('mathml',a.blocks[0].get('attributes',{}))
         self.assertEqual(a.blocks[0]['fallbackAssetIds'],['asset-original'])
+        # the crop is the formula: the transcript is data, not a visible caption
+        self.assertEqual((a.blocks[0]['text'],a.blocks[0]['attributes']['transcript']),('','x=1'))
         self.assertIn('left operand',a._diagnostic.call_args.args[3])
 
     def test_emitter_uses_original_page_crop_and_reports_unresolved_structure(self):
@@ -141,7 +143,7 @@ class EquationRecoveryTests(unittest.TestCase):
         a._emit_formula(item)
         item.get_image.assert_not_called()
         self.assertEqual(a.blocks[0]['fallbackAssetIds'],['asset-original'])
-        self.assertNotIn('attributes',a.blocks[0])
+        self.assertNotIn('mathml',a.blocks[0].get('attributes',{}))
         self.assertIn('left operand',a._diagnostic.call_args.args[3])
         self.assertEqual(a.report.formulas_image,1)
 

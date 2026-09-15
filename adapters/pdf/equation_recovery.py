@@ -106,7 +106,8 @@ def _sequence(chars, depth=0):
     # numerator. Delimiter font names do not determine its text style.
     body_sizes = [_size(c) for c in chars if not _extension(c) and c.text not in '()[]{}']
     main_size = max(body_sizes or sizes)
-    base = [c for c in chars if _extension(c) or _size(c) >= .8 * main_size]
+    # strictly larger than 0.8: an 8 pt glyph beside 10 pt glyphs is a script
+    base = [c for c in chars if _extension(c) or _size(c) > .8 * main_size]
     if not base:
         raise ValueError('no stable expression baseline')
     body = [c for c in base if not _extension(c)]
@@ -118,6 +119,11 @@ def _sequence(chars, depth=0):
     # Distinct full-sized lines indicate fractions, limits or a matrix.
     if max(c.cy for c in body) - min(c.cy for c in body) > .48 * main_size:
         raise ValueError('multiple expression baselines require structural recovery')
+    # a base glyph well above or below the main baseline is a script the sizes
+    # did not reveal: no MathML is better than a flattened superscript
+    for char in body:
+        if not getattr(char, 'xml', None) and char.text not in '()[]{}|' and abs(char.cy - baseline) > .3 * main_size:
+            raise ValueError('raised or lowered glyph not recognised as a script')
     base.sort(key=lambda c: c.l)
     scripts = [c for c in chars if c not in base]
     attached = {id(c): {'sub': [], 'sup': []} for c in base}
@@ -166,6 +172,40 @@ def _sequence(chars, depth=0):
         texts.append(text)
         previous_right = max([char.r] + [c.r for c in groups["sub"] + groups["sup"]])
     return _row(parts), ''.join(texts)
+
+
+def _merge_numbers(mathml: str) -> str:
+    """One `<mn>` per number: `4.160` is set glyph by glyph (`<mn>4</mn><mo>.</mo>
+    <mn>1</mn>…`), which renders with operator spacing inside an equation number.
+    Only consecutive children of one row merge, so script and fraction arities hold."""
+    from xml.etree import ElementTree as ET
+    namespace = "http://www.w3.org/1998/Math/MathML"
+    ET.register_namespace("", namespace)
+    try:
+        root = ET.fromstring(mathml)
+    except ET.ParseError:
+        return mathml
+    tag = lambda element, name: element.tag == f"{{{namespace}}}{name}"
+    for row in root.iter(f"{{{namespace}}}mrow"):
+        children = list(row)
+        merged = []
+        for child in children:
+            previous = merged[-1] if merged else None
+            before = merged[-2] if len(merged) > 1 else None
+            if tag(child, "mn") and not child.attrib and previous is not None and tag(previous, "mn") and not previous.attrib:
+                previous.text = (previous.text or "") + (child.text or "")
+                continue
+            if (tag(child, "mn") and not child.attrib and previous is not None and tag(previous, "mo") and (previous.text or "") == "."
+                    and not previous.attrib and before is not None and tag(before, "mn") and not before.attrib):
+                before.text = (before.text or "") + "." + (child.text or "")
+                merged.pop()
+                continue
+            merged.append(child)
+        if len(merged) != len(children):
+            for child in children:
+                row.remove(child)
+            row.extend(merged)
+    return ET.tostring(root, encoding="unicode")
 
 
 def recover_equation(page_text, box):
@@ -233,7 +273,7 @@ def recover_equation(page_text, box):
             text = '\n'.join(value for _, value in rendered)
         if sum(c.count for c in atoms) != len(chars):
             raise ValueError('source glyph ownership changed during reconstruction')
-        return EquationRecovery(text, '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">' + node + '</math>', crop, glyph_count=len(chars))
+        return EquationRecovery(text, _merge_numbers('<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">' + node + '</math>'), crop, glyph_count=len(chars))
     except ValueError as exc:
         reason = str(exc)
     return EquationRecovery(source_text, None, crop, reason, len(chars))

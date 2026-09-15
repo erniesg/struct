@@ -1934,6 +1934,12 @@ class StructAdapter:
                 "warning" if asset_id else "error", "text", "Equation structure unavailable",
                 f"{limitation}; " + ("original source region retained as visual fallback" if asset_id else "source image unavailable"), item,
             )
+        if block.get("attributes", {}).get("mathml") or block.get("fallbackAssetIds"):
+            # the MathML or the crop is the formula: its transcript is kept as data,
+            # not rendered as a caption of raw `\frac{…}` text under the notation
+            block["attributes"] = {**block.get("attributes", {}), **({"transcript": block["text"]} if block["text"] else {})}
+            block["text"] = ""
+            block.pop("label", None)
         self.blocks.append(block)
 
     def _emit_footnote(self, item: TextItem) -> None:

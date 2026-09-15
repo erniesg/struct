@@ -106,7 +106,7 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
         tag, attributes, inner = match.group(1), match.group(2), match.group(3)
         text = _strip(inner).strip()
         kind = tag
-        if tag == "figure" and ('class="equation"' in attributes or 'alt="Equation' in inner):
+        if tag == "figure" and ('class="equation"' in attributes or 'alt="Equation' in inner or 'src="images/equation-' in inner):
             kind = "equation"
         before_kind, before = previous_kind, previous_text
         previous_kind, previous_text = kind, text
