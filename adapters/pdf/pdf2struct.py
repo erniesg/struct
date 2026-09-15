@@ -91,6 +91,8 @@ WORD_RE_ADAPTER = re.compile(r"[A-Za-z\u00c0-\u024f]{2,}")
 SAFE_HREF_RE = re.compile(r"^(https?|mailto|ftp):", re.IGNORECASE)
 VISIBLE_RE = re.compile(r"[^\s\u0300-\u036f\u00ad]")
 TICK_LABEL_RE = re.compile(r"^\s*[-+]?\d{1,4}(?:[.,]\d+)?%?\s*$")
+# an axis's row of tick values (`9 10 11 12 … 64`)
+TICK_ROW_RE = re.compile(r"^\s*(?:[-+]?\d{1,4}(?:[.,]\d+)?%?\s+){2,}[-+]?\d{1,4}(?:[.,]\d+)?%?\s*$")
 PARATEXT_NOTE_RE = re.compile(
     r"^(?:Permission to make digital|©|\(c\)\s*\d{4}|Copyright|ISSN|ISBN|ACM ISBN|https?://doi\.org|DOI:|arXiv:|Preprint,|"
     r"Proceedings of|\d{4}-\d{4}/\d{4}|This work is licensed|Licensed under|Received:|Accepted:|Published:|Manuscript submitted|"
@@ -3426,6 +3428,73 @@ class StructAdapter:
                 found.append((top, bottom, line.text.strip(), line.r / page_text.width))
         return sorted(found)
 
+    def _recover_subcaption_panels(self) -> None:
+        """A panel of a figure continued over several pages (`(b) Layers 7-13`
+        under a page of heat maps) can carry only its sub-caption. With no
+        figure on its page and a run of at least five chart labels above it,
+        the layout model missed the artwork: the band of labels, grown to the
+        drawing's ink, is recovered as a figure that keeps the sub-caption."""
+        for index, block in enumerate(list(self.blocks)):
+            if block not in self.blocks or block["kind"] != "caption" or block["page"] is None or not block["evidence"]["boxes"]:
+                continue
+            if not SUBCAPTION_RE.match(block["text"]) or len(block["text"]) > 160:
+                continue
+            page = block["page"]
+            if any(other["kind"] in ("figure", "table") and other["page"] == page for other in self.blocks):
+                continue
+            band = self._panel_band(self.blocks.index(block), block, "above")
+            if band is None:
+                continue
+            (x0, top, x1, bottom), members = band
+            bottom = min(bottom, block["evidence"]["boxes"][0]["y"] - 0.002)  # not the sub-caption's own glyphs
+            if len(members) < 5 or bottom - top < 0.1:
+                continue
+            # the labels beside the column (row names, tick values) belong to the same drawing
+            for other in self.blocks:
+                if other is block or other in members or other["page"] != page or other["kind"] == "furniture" or not other["evidence"]["boxes"] or not self._figure_like(other):
+                    continue
+                if all(box["page"] == page and top <= box["y"] and box["y"] + box["height"] <= bottom for box in other["evidence"]["boxes"]):
+                    members.append(other)
+                    x0 = min(x0, min(box["x"] for box in other["evidence"]["boxes"]) - 0.003)
+                    x1 = max(x1, max(box["x"] + box["width"] for box in other["evidence"]["boxes"]) + 0.003)
+            x0, x1 = max(0.0, x0), min(1.0, x1)
+            image = self._page_image(page)
+            if image is None:
+                continue
+            width, height = image.size
+            crop = image.crop((int(x0 * width), int(top * height), int(x1 * width), int(bottom * height)))
+            if not self._has_ink(crop):
+                continue
+            figure = {
+                "id": self._id(f"b-recovered-panel-{block['id']}"),
+                "kind": "figure",
+                "text": block["text"],
+                "page": page,
+                "order": 0,
+                "column": "single",
+                "inline": block.get("inline", []),
+                "evidence": {
+                    "confidence": 0.6,
+                    "pages": [page],
+                    "boxes": [{"page": page, "x": round(x0, 5), "y": round(top, 5), "width": round(x1 - x0, 5), "height": round(bottom - top, 5), "rotation": 0}],
+                    "sourceIds": list(dict.fromkeys(block["evidence"]["sourceIds"] + [sid for member in members for sid in member["evidence"]["sourceIds"]])),
+                    "signals": ["source-region-fallback", "sub-caption-panel"],
+                },
+            }
+            asset_id = self._asset_from_image("figure", f"figure-panel-{block['id']}", crop, figure["evidence"], figure["evidence"]["sourceIds"])
+            if not asset_id:
+                continue
+            figure["fallbackAssetIds"] = [asset_id]
+            self._attached_caption_boxes[figure["id"]] = dict(block["evidence"]["boxes"][0])
+            position = min(self.blocks.index(m) for m in members + [block])
+            for member in members:
+                self._absorb_block(member)
+            self._absorb_block(block)
+            self.blocks.insert(min(position, len(self.blocks)), figure)
+            self.report.figures += 1
+            self.report.figures_with_caption += 1
+            self.report.figures_recovered_from_source += 1
+
     def _recover_uncaptured_figures(self) -> None:
         """An orphan `Figure N` caption with no figure beside it means the layout
         model missed the artwork. Recover it as a source-region crop: the page
@@ -5031,7 +5100,7 @@ class StructAdapter:
         if block["kind"] in ("paragraph", "caption", "heading", "list-item"):
             if SUBCAPTION_RE.match(text) and len(text) < 160:
                 return True
-            if TICK_LABEL_RE.match(text):
+            if TICK_LABEL_RE.match(text) or TICK_ROW_RE.match(text):
                 return True
             if len(text) < 60 and not re.search(r"[.!?]\s", text) and not CAPTION_LIKE_RE.match(text):
                 return True
@@ -5709,6 +5778,7 @@ class StructAdapter:
         self._recover_ruled_boxes()
         self._complete_short_captions()
         self._recover_uncaptured_figures()
+        self._recover_subcaption_panels()
         self._recover_uncaptured_tables()
         self._fold_panels_by_geometry()
         self._join_split_paragraphs()  # captions adopted above may now claim their continuation
