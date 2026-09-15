@@ -22,6 +22,11 @@ const CRASH_CODES = new Set([
   'PDF_DOCUMENT_WORKER_FAILED',
   'IMPORT_CANCELLED',
   'OVERSIZED_PDF',
+  // the adapter's own refusals: no EPUB, or none that validates, is not a completed reconstruction
+  'STRUCT_RENDER_REFUSED',
+  'EPUBCHECK_FAILED',
+  'SOURCE_RASTER_FAILED',
+  'SOURCE_CHANGED',
 ])
 
 const count = (document, code) => document.diagnosticCounts?.[code] ?? 0

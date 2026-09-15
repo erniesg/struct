@@ -41,7 +41,9 @@ def normalize_uri(uri: str) -> str:
         return value
     if not parts.scheme or not parts.netloc:
         return value
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", parts.query, parts.fragment))
+    # brackets are legal only around an IPv6 host; EPUB validators refuse them elsewhere
+    bracket = lambda part: part.replace("[", "%5B").replace("]", "%5D")
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), bracket(parts.path) or "/", bracket(parts.query), bracket(parts.fragment)))
 
 
 @dataclass

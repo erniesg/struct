@@ -42,6 +42,7 @@ class LinkTargets(unittest.TestCase):
         self.assertEqual(normalize_uri("mailto:{yfwu, zhuokai}@meta.com"), "mailto:%7Byfwu,zhuokai%7D@meta.com")
         self.assertEqual(normalize_uri("http://​www.​gutenberg.org/​files"), "http://www.gutenberg.org/files")
         self.assertEqual(normalize_uri("10.2139/ssrn.5240330"), "10.2139/ssrn.5240330")
+        self.assertEqual(normalize_uri("https://www.ebi.ac.uk/pride/archive/projects/PXD067882]"), "https://www.ebi.ac.uk/pride/archive/projects/PXD067882%5D")
 
     def test_visible_text_tolerates_hyphens_and_quotes(self):
         text = "Below is an example for ' init/control/functor.lean ', which imports ' init/core.lean '."
