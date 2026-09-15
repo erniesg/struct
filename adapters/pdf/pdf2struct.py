@@ -2693,6 +2693,57 @@ class StructAdapter:
                                for run in block["inline"] if run["start"] < len(head)]
             self.report.glued_tails_stripped += 1
 
+    def _split_cross_page_spans(self) -> None:
+        """A text item whose first line stands mid-page, with the page's body
+        continuing under it, and whose second line opens the next page with a
+        capitalised sentence, was merged by the layout model across two places
+        (`and, for n ≥ 3,` between two display equations, `Proof. By
+        Proposition 4.16 …` overleaf). The first line becomes its own paragraph
+        before the block under it; the second stays where the walk put it."""
+        items = {self._source_id(item): item for item, _ in self.doc.iterate_items() if isinstance(item, TextItem) and len(item.prov) == 2}
+        for block in list(self.blocks):
+            if block["kind"] != "paragraph" or len(block["evidence"]["sourceIds"]) != 1:
+                continue
+            item = items.get(block["evidence"]["sourceIds"][0])
+            if item is None:
+                continue
+            segments = self._prov_segments(item)
+            if len(segments) != 2:
+                continue
+            (first_index, head), (second_index, tail) = segments
+            head, tail = sanitize(head).strip(), sanitize(tail).strip()
+            first, second = self._box(item, first_index), self._box(item, second_index)
+            if not head or not tail or not first or not second or second["page"] != first["page"] + 1:
+                continue
+            if not re.match(r"[A-Z]", tail) or not block["text"].startswith(head) or not block["text"].endswith(tail):
+                continue
+            bottom = first["y"] + first["height"]
+            # the column the line opens: a short line and a centred display
+            # equation under it need not overlap
+            column = {**first, "width": max(first["width"], 0.4)}
+            below = [
+                other for other in self.blocks
+                if other is not block and other["kind"] not in ("furniture", "footnote") and other["page"] == first["page"] and other["evidence"]["boxes"]
+                and other["evidence"]["boxes"][0]["page"] == first["page"] and other["evidence"]["boxes"][0]["y"] >= bottom - 0.002
+                and min(column["x"] + column["width"], other["evidence"]["boxes"][0]["x"] + other["evidence"]["boxes"][0]["width"]) - max(column["x"], other["evidence"]["boxes"][0]["x"]) > 0
+            ]
+            if not below:
+                continue  # the line closes its page: an ordinary page-break continuation
+            anchor = min(below, key=lambda other: other["evidence"]["boxes"][0]["y"])
+            lead = self._new_block("paragraph", item, head)
+            lead["id"] = self._id(f"{block['id']}-lead")
+            lead["page"] = first["page"]
+            lead["evidence"]["boxes"], lead["evidence"]["pages"] = [first], [first["page"]]
+            lead["evidence"]["signals"].append("cross-page-merge-split")
+            lead["inline"] = self._runs_for(item, head)
+            block["text"] = tail
+            block["page"] = second["page"]
+            block["evidence"]["boxes"], block["evidence"]["pages"] = [second], [second["page"]]
+            block["evidence"]["signals"].append("cross-page-merge-split")
+            block["inline"] = self._runs_for(item, tail)
+            self.blocks.insert(self.blocks.index(anchor), lead)
+            self.report.paragraphs += 1
+
     def _strip_glued_heads(self) -> None:
         """The mirror of `_strip_glued_tails`: the layout model sometimes puts a
         margin stamp — usually a page or line number sitting alone at the page
@@ -5369,6 +5420,7 @@ class StructAdapter:
         self._strip_glued_tails()
         self._place_table_notes()
         self._strip_glued_heads()
+        self._split_cross_page_spans()
         self._join_split_paragraphs()
         self._link_notes()
         self._recover_link_icons()
