@@ -20,6 +20,7 @@ import base64
 import hashlib
 import io
 import re
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -4842,6 +4843,23 @@ class StructAdapter:
             index = position + 1  # continue right after the recovered block; absorbed members shifted the rest up
 
     # ------------------------------------------------------------ panel bands
+    def _set_at_body_size(self, block: dict) -> bool:
+        """True when the block's glyphs are at least as tall as the body text
+        of its page (median glyph height inside its long paragraphs)."""
+        page_text = self._page_text(block["page"])
+        if page_text is None or not block["evidence"]["boxes"]:
+            return False
+
+        def heights(boxes: list[dict]) -> list[float]:
+            return [char.height for box in boxes if box["page"] == block["page"] for char in page_text.chars
+                    if char.text.strip() and not char.superscript and page_text._inside(char, box)]
+
+        own = heights(block["evidence"]["boxes"])
+        body = heights([box for other in self.blocks if other["page"] == block["page"] and other["kind"] == "paragraph" and len(other["text"]) >= 200 for box in other["evidence"]["boxes"]])
+        if not own or not body:
+            return False
+        return statistics.median(own) >= 0.95 * statistics.median(body)
+
     def _union_covers_text(self, page: int, x0: float, y0: float, x1: float, y1: float, members: list[dict]) -> bool:
         """True when a block of body text that is not artwork (not figure-like,
         not one of the members) has a box centred inside the region."""
@@ -5016,8 +5034,10 @@ class StructAdapter:
                     for candidate in self.blocks:
                         if candidate in group or candidate["page"] != block["page"] or not candidate["evidence"]["boxes"]:
                             continue
-                        if "figure-linked-label" in candidate["evidence"].get("signals", []):
-                            continue
+                        if "figure-linked-label" in candidate["evidence"].get("signals", []) or (
+                            candidate["kind"] != "figure" and any(run.get("href") for run in candidate.get("inline", []))
+                        ):
+                            continue  # a crop cannot carry a hyperlink: linked words stay text
                         box = candidate["evidence"]["boxes"][0]
                         page_boxes = [b for b in candidate["evidence"]["boxes"] if b["page"] == block["page"]]
                         panel_caption = self._attached_caption_boxes.get(candidate["id"])
@@ -5051,6 +5071,10 @@ class StructAdapter:
                             if (box["y"] >= uy1 and cap_center < box["y"] and cap_center > uy1 - 0.01) or (box["y"] + box["height"] <= uy0 and cap_center > box["y"] + box["height"] and cap_center < uy0 + 0.01):
                                 continue  # the candidate lies beyond this figure's own caption
                         if vertical_gap > 0 and not self._gap_is_figure_like(block["page"], uy0, uy1, box, min(ux0, box["x"]), max(ux1, box["x"] + box["width"])):
+                            continue
+                        # a line set in the body's size or larger, apart from the artwork,
+                        # is an author or affiliation line over a first-page figure, not a label
+                        if candidate["kind"] in ("paragraph", "heading", "list-item", "caption") and not encloses and vertical_gap > 0.015 and self._set_at_body_size(candidate):
                             continue
                         # a label reached across body text is not the picture's own
                         # (an affiliation line over the abstract beside a first-page figure)
