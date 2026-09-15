@@ -3220,6 +3220,58 @@ class StructAdapter:
                 self.report.table_captions_read_from_source += 1
                 break
 
+    def _complete_short_captions(self) -> None:
+        """An orphan caption that is only its label (`Fig. 7.`) lost the rest
+        of its words to neighbouring blocks (`ARM-CL`, `… runtime
+        illustration: …` glued to a diagram letter). The caption's lines in
+        the text layer, read from the label down while the line spacing holds,
+        give the whole caption; the blocks whose words it holds are absorbed."""
+        for block in list(self.blocks):
+            if block["kind"] not in ("caption", "paragraph") or block["page"] is None or not block["evidence"]["boxes"]:
+                continue
+            match = FIGURE_CAPTION_RE.match(block["text"])
+            if not match or len(block["text"].strip()) > len(match.group(0)) + 12:
+                continue
+            if any(f["kind"] == "figure" and f.get("label") == canonical_figure_label(match) for f in self.blocks):
+                continue
+            page, cbox = block["page"], block["evidence"]["boxes"][0]
+            # the caption's column: the widest body block starting at its left edge
+            widths = [b["evidence"]["boxes"][0]["width"] for b in self.blocks
+                      if b["page"] == page and b["kind"] == "paragraph" and b["evidence"]["boxes"] and abs(b["evidence"]["boxes"][0]["x"] - cbox["x"]) <= 0.02]
+            x1 = min(1.0, cbox["x"] + max(widths + [0.3]) + 0.005)
+            lines = [line for line in self._lines_in(page, cbox["x"] - 0.005, cbox["y"] - 0.003, x1, cbox["y"] + 0.12) if line[1] > cbox["y"]]
+            if not lines or not lines[0][2].startswith(match.group(0).strip().split()[0]):
+                continue
+            kept = [lines[0]]
+            for line in lines[1:]:
+                previous = kept[-1]
+                if line[0] - previous[1] > 0.8 * (previous[1] - previous[0]):
+                    break
+                kept.append(line)
+            text = sanitize(" ".join(line[2] for line in kept))
+            if len(text) <= len(block["text"]) or not FIGURE_CAPTION_RE.match(text):
+                continue
+            top, bottom = kept[0][0], kept[-1][1]
+            compact = re.sub(r"\W", "", text).casefold()
+            absorbed = []
+            for other in self.blocks:
+                if other is block or other["page"] != page or other["kind"] not in ("paragraph", "caption", "heading") or not other["evidence"]["boxes"]:
+                    continue
+                if not any(obox["page"] == page and obox["y"] + obox["height"] >= top and obox["y"] <= bottom and obox["x"] <= x1 and obox["x"] + obox["width"] >= cbox["x"] - 0.005
+                           for obox in other["evidence"]["boxes"]):
+                    continue
+                words = re.sub(r"\W", "", other["text"]).casefold()
+                # a diagram letter the layout model glued in front may precede the words
+                if len(words) >= 3 and any(words[cut:] and words[cut:] in compact for cut in (0, 1, 2)):
+                    absorbed.append(other)
+            block["text"] = text
+            block["inline"] = []
+            block["evidence"]["boxes"] = [{"page": page, "x": cbox["x"], "y": round(top, 5), "width": round(x1 - cbox["x"], 5), "height": round(bottom - top, 5), "rotation": 0}]
+            block["evidence"]["sourceIds"] = list(dict.fromkeys(block["evidence"]["sourceIds"] + [sid for other in absorbed for sid in other["evidence"]["sourceIds"]]))
+            block["evidence"].setdefault("signals", []).append("caption-completed-from-source")
+            for other in absorbed:
+                self._absorb_block(other)
+
     def _recover_uncaptured_figures(self) -> None:
         """An orphan `Figure N` caption with no figure beside it means the layout
         model missed the artwork. Recover it as a source-region crop: the page
@@ -4865,6 +4917,27 @@ class StructAdapter:
             bottom = min(bottom, edge) if edge < bottom else bottom
         if not pictures and bottom - top < 0.04:
             return None
+        if not pictures:
+            # labels alone mark where the artwork is, not where it ends: the drawing
+            # (a legend row, a frame's top) runs on until blank rows or the edge
+            rows = self._pixel_rows(page, x0, x1)
+            if rows is not None:
+                _, nonwhite, height = rows
+                gap = max(3, int(0.008 * height))
+                step, start, stop = (-1, int(top * height) - 1, int(max(edge, 0.0) * height)) if side == "above" else (1, int(bottom * height) + 1, int(min(edge, 1.0) * height))
+                reached, blank, row = start - step, 0, start
+                while (row >= stop if side == "above" else row <= stop) and 0 <= row < len(nonwhite):
+                    if nonwhite[row] > 0.002:
+                        reached, blank = row, 0
+                    else:
+                        blank += 1
+                        if blank >= gap:
+                            break
+                    row += step
+                if side == "above":
+                    top = min(top, reached / height)
+                else:
+                    bottom = max(bottom, reached / height)
         return (x0, top - 0.003, x1, bottom + 0.003), members
 
     def _gap_is_figure_like(self, page: int, uy0: float, uy1: float, box: dict, ux0: float, ux1: float) -> bool:
@@ -5434,6 +5507,7 @@ class StructAdapter:
         self._fold_panels_into_captioned_figures()
         self._fold_panels_by_geometry()
         self._recover_ruled_boxes()
+        self._complete_short_captions()
         self._recover_uncaptured_figures()
         self._recover_uncaptured_tables()
         self._fold_panels_by_geometry()
