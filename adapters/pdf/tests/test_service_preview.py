@@ -3,7 +3,7 @@
 Everything under a job directory is derived from a PDF nobody vetted, so these
 tests are mostly about refusals — no token, another job's file, an entry that is
 not in the archive, a typography value that is not a number. The fixture is a
-job built by `preview-fixture.mjs`: a two-page PDF and a four-block draft
+job built by `preview-fixture.mjs`: a two-page PDF and a five-block draft
 rendered by `render.mjs`, so the suite needs Node and a built `dist/` but never
 Docling.
 
@@ -221,14 +221,17 @@ def test_blocks_carry_the_ids_the_epub_already_uses(service):
     assert mapped["pageCount"] == 2
     assert [page["page"] for page in mapped["pages"]] == [1, 2]
     by_id = {block["id"]: block for block in mapped["blocks"]}
-    assert set(by_id) == {"b-0001-heading", "b-0002-paragraph", "b-0003-heading", "b-0004-paragraph"}
-    assert by_id["b-0003-heading"]["page"] == 2
-    box = by_id["b-0003-heading"]["boxes"][0]
+    assert set(by_id) == {"b-0001-heading", "b-0002-paragraph", "b-0003-furniture", "b-0004-heading", "b-0005-paragraph"}
+    assert by_id["b-0004-heading"]["page"] == 2
+    box = by_id["b-0004-heading"]["boxes"][0]
     assert box["page"] == 2 and 0 <= box["x"] <= 1 and 0 <= box["y"] <= 1
-    # the same ids the rendition carries, so the sync needs no renumbering
+    # the same ids the rendition carries, so the sync needs no renumbering; the
+    # map also lists furniture, which the renderer leaves out of the rendition,
+    # so nothing may assume every mapped block can be found in it
     xhtml = client.get(f"/api/jobs/{job}/epub/paperPro/content.xhtml", headers=AUTH).text
-    for block_id in by_id:
-        assert f'data-struct-id="{block_id}"' in xhtml
+    for block_id, block in by_id.items():
+        present = f'data-struct-id="{block_id}"' in xhtml
+        assert present == (block["kind"] != "furniture"), block_id
 
 
 # --------------------------------------------------------------------- export

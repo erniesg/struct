@@ -254,7 +254,6 @@ const state = {
   job: null,
   blocks: [],
   blocksById: new Map(),
-  pagesById: new Map(),
   pageAspect: new Map(),
   profile: null,
   device: 'paperPro',
@@ -656,9 +655,23 @@ function drawEvidence (blockId) {
   }
 }
 
+// The first block from a page that the rendition actually shows. struct.json
+// also lists furniture (running heads, page numbers) and anything else the
+// renderer leaves out, and on a real paper one of those usually leads the page,
+// so a lookup that ignored the rendition would select a block nobody can see.
+function firstRenderedBlockOn (page) {
+  const frame = $('#frame').contentDocument
+  if (!frame) return null
+  for (const block of state.blocks) {
+    if ((block.boxes?.[0]?.page ?? block.page) !== page) continue
+    if (frame.querySelector(`[data-struct-id="${CSS.escape(block.id)}"]`)) return block.id
+  }
+  return null
+}
+
 function jumpToPage (number) {
   showPage(number)
-  const first = state.pagesById.get(state.page)
+  const first = firstRenderedBlockOn(state.page)
   if (first) selectBlock(first, { scrollFrame: true })
   else $('#selection').textContent = `no rendition block came from page ${state.page}`
 }
@@ -779,8 +792,6 @@ async function start () {
   }
   for (const block of state.blocks) {
     state.blocksById.set(block.id, block)
-    const page = block.boxes?.[0]?.page ?? block.page
-    if (page != null && !state.pagesById.has(page)) state.pagesById.set(page, block.id)
   }
 
   await loadRendition(state.profile)

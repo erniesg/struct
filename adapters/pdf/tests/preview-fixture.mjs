@@ -92,13 +92,32 @@ function block (index, kind, text, page, box, attributes) {
   }
 }
 
+function furniture (one) {
+  return {
+    ...one,
+    furniture: {
+      classification: 'explicit-paratext',
+      band: 'top',
+      pages: [one.page],
+      boxes: one.evidence.boxes,
+      evidence: ['fixture'],
+      normalizedText: one.text.toLowerCase(),
+    },
+  }
+}
+
 function buildDraft (sha256, byteLength) {
   const blocks = [
     block(1, 'heading', 'Abstract', 1, { x: 0.117, y: 0.128, width: 0.16, height: 0.021 }, { level: 2 }),
     block(2, 'paragraph', 'This document exists so the preview can be driven without a Docling run behind it.',
       1, { x: 0.117, y: 0.178, width: 0.62, height: 0.05 }),
-    block(3, 'heading', '1 Introduction', 2, { x: 0.117, y: 0.103, width: 0.3, height: 0.021 }, { level: 2 }),
-    block(4, 'paragraph', 'The second page carries one heading and one paragraph, both mapped back to this page.',
+    // a running head leads page 2, as one leads most pages of a real paper; the
+    // renderer keeps furniture out of the rendition, so the page control has to
+    // skip it rather than select a block the reader cannot see
+    furniture(block(3, 'furniture', 'A Short Paper for the Preview Fixture', 2,
+      { x: 0.117, y: 0.05, width: 0.5, height: 0.015 })),
+    block(4, 'heading', '1 Introduction', 2, { x: 0.117, y: 0.103, width: 0.3, height: 0.021 }, { level: 2 }),
+    block(5, 'paragraph', 'The second page carries one heading and one paragraph, both mapped back to this page.',
       2, { x: 0.117, y: 0.153, width: 0.62, height: 0.05 }),
   ]
   const text = blocks.reduce((total, one) => total + one.text.length, 0)

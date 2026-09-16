@@ -7,7 +7,7 @@
 //                               [--base <url> --job <id>]   # drive a running service
 //
 // With no --base it builds a fixture job (preview-fixture.mjs: a two-page PDF
-// and a four-block draft, no Docling) and starts its own uvicorn on a free
+// and a five-block draft, no Docling) and starts its own uvicorn on a free
 // loopback port. With --base and --job it drives a service that is already
 // running, which is how a deployment is smoke-tested against a job that
 // finished before the deployment; the token then comes from PDF2EPUB_TOKEN in
@@ -236,7 +236,12 @@ async function main () {
         label: document.querySelector('#selection').textContent,
       }
     })
-    const firstOnPageTwo = blocks.blocks.find((one) => (one.boxes?.[0]?.page ?? one.page) === 2)?.id
+    // the first block from page 2 a reader can see: furniture such as a running
+    // head is in struct.json but deliberately left out of the rendition
+    const rendered = new Set(await page.evaluate(() => [...document.querySelector('#frame').contentDocument
+      .querySelectorAll('[data-struct-id]')].map((element) => element.getAttribute('data-struct-id'))))
+    const firstOnPageTwo = blocks.blocks.find((one) =>
+      (one.boxes?.[0]?.page ?? one.page) === 2 && rendered.has(one.id))?.id
     check('a PDF page jumps the rendition to the first block from there',
       firstOnPageTwo ? jumped.selected === firstOnPageTwo : jumped.selected !== null,
       `${jumped.selected} vs ${firstOnPageTwo}`)
