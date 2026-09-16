@@ -41,7 +41,9 @@ def normalize_uri(uri: str) -> str:
         return value
     if not parts.scheme or not parts.netloc:
         return value
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", parts.query, parts.fragment))
+    # brackets are legal only around an IPv6 host; EPUB validators refuse them elsewhere
+    bracket = lambda part: part.replace("[", "%5B").replace("]", "%5D")
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), bracket(parts.path) or "/", bracket(parts.query), bracket(parts.fragment)))
 
 
 @dataclass
@@ -52,6 +54,15 @@ class SourceLink:
     kind: str  # 'uri' | 'internal'
     words: list[str] = field(default_factory=list)
     group_words: list[str] | None = None  # words of every line of a wrapped link, in reading order
+
+    # Original-PDF destination geometry; coordinates retain bottom-left origin.
+    destination_name: str | None = None
+    destination_page: int | None = None
+    destination_x: float | None = None
+    destination_y: float | None = None
+    destination_mode: str | None = None
+    source_id: str | None = None
+    unresolved_reason: str | None = None
 
     @property
     def text(self) -> str:
@@ -72,41 +83,92 @@ def _rect_of(annotation) -> tuple[float, float, float, float] | None:
     return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
 
+def _destination(reader, value) -> dict:
+    """Decode only local PDF destinations. Never follow or execute actions."""
+    from pypdf.generic import NullObject
+
+    result = {}
+    try:
+        value = value.get_object() if hasattr(value, "get_object") else value
+        if isinstance(value, (str, bytes)):
+            name = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+            result["destination_name"] = name
+            value = reader.named_destinations.get(name)
+            if value is None:
+                return dict(result, unresolved_reason="unknown-named-destination")
+        if isinstance(value, dict):
+            value = value.dest_array if hasattr(value, "dest_array") else value.get("/D")
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            return dict(result, unresolved_reason="malformed-destination")
+        page_ref = value[0]
+        if isinstance(page_ref, int):
+            page_no = int(page_ref) + 1
+        else:
+            page_no = reader.get_page_number(page_ref.get_object()) + 1
+        if not 1 <= page_no <= len(reader.pages):
+            return dict(result, unresolved_reason="destination-page-out-of-range")
+        result["destination_page"] = page_no
+        mode = str(value[1])
+        result["destination_mode"] = mode
+        def number(index):
+            if index >= len(value) or value[index] is None or isinstance(value[index], NullObject):
+                return None
+            return float(value[index])
+        if mode == "/XYZ":
+            result.update(destination_x=number(2), destination_y=number(3))
+        elif mode in {"/FitH", "/FitBH"}:
+            result["destination_y"] = number(2)
+        elif mode in {"/FitV", "/FitBV"}:
+            result["destination_x"] = number(2)
+        elif mode == "/FitR":
+            result.update(destination_x=number(2), destination_y=number(5))
+        elif mode not in {"/Fit", "/FitB"}:
+            result["unresolved_reason"] = "unsupported-destination-mode"
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+        result["unresolved_reason"] = "malformed-destination"
+    return result
+
+
 def extract_links(pdf_path: Path) -> tuple[list[SourceLink], dict[int, tuple[float, float]]]:
-    """Return every link annotation with its rectangle plus page sizes."""
+    """Return every link annotation, retaining original local destinations."""
     from pypdf import PdfReader
 
     reader = PdfReader(str(pdf_path))
-    links: list[SourceLink] = []
-    sizes: dict[int, tuple[float, float]] = {}
+    links = []
+    sizes = {}
     for index, page in enumerate(reader.pages, start=1):
-        box = page.mediabox
-        sizes[index] = (float(box.width), float(box.height))
-        annotations = page.get("/Annots") or []
-        for reference in annotations:
+        sizes[index] = (float(page.mediabox.width), float(page.mediabox.height))
+        for annotation_index, reference in enumerate(page.get("/Annots") or []):
             try:
                 annotation = reference.get_object()
-            except Exception:  # pragma: no cover - malformed annotation
-                continue
-            if annotation.get("/Subtype") != "/Link":
-                continue
-            rect = _rect_of(annotation)
-            if rect is None:
-                continue
-            action = annotation.get("/A")
-            uri = None
-            kind = "internal"
-            if action is not None:
+                if annotation.get("/Subtype") != "/Link":
+                    continue
+                rect = _rect_of(annotation)
+                if rect is None:
+                    continue
+                uri, kind, destination = None, "internal", {}
                 try:
-                    action = action.get_object()
-                except Exception:  # pragma: no cover
-                    action = None
-            if action is not None and action.get("/S") == "/URI":
-                uri = str(action.get("/URI"))
-                kind = "uri"
-            elif action is None and annotation.get("/Dest") is None:
-                continue
-            links.append(SourceLink(page=index, rect=rect, uri=uri, kind=kind))
+                    action = annotation.get("/A")
+                    action = action.get_object() if action is not None else None
+                    if action is not None and not isinstance(action, dict):
+                        destination = {"unresolved_reason": "malformed-action"}
+                    elif action is not None and action.get("/S") == "/URI":
+                        uri, kind = str(action.get("/URI") or ""), "uri"
+                    elif action is not None and action.get("/S") == "/GoTo":
+                        destination = _destination(reader, action.get("/D"))
+                    elif action is not None:
+                        destination = {"unresolved_reason": "unsupported-action:" + str(action.get("/S", "unknown"))}
+                    elif annotation.get("/Dest") is not None:
+                        destination = _destination(reader, annotation.get("/Dest"))
+                    else:
+                        destination = {"unresolved_reason": "missing-destination"}
+                except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+                    # A broken action does not erase its known source region.
+                    destination = {"unresolved_reason": "malformed-action"}
+                links.append(SourceLink(index, rect, uri, kind,
+                    source_id=f"pdf-annotation-p{index}-{annotation_index}", **destination))
+            except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+                continue  # malformed annotation with no usable source rectangle
     return links, sizes
 
 

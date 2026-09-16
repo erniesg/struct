@@ -1,0 +1,865 @@
+{
+  "provenance": {
+    "pdf": "2609.03933v1.pdf",
+    "page": 17,
+    "source_text_id": "#/texts/125",
+    "source": "out/reconstruction/lanes/equations/all-glyphs.json"
+  },
+  "chars": [
+    {
+      "text": "√",
+      "l": 147.737,
+      "b": 701.6014399999999,
+      "r": 157.6996,
+      "t": 707.977504,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "k",
+      "l": 157.7,
+      "b": 692.4324525786744,
+      "r": 163.78878336,
+      "t": 702.8804016,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "n",
+      "l": 163.78799999999998,
+      "b": 691.4003080832854,
+      "r": 168.92632346999997,
+      "t": 698.3655783,
+      "font": "/UOWRAG+LMMathItalic8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 171.41699999999997,
+      "b": 715.23844,
+      "r": 180.13427499999997,
+      "t": 721.614504,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 171.41699999999997,
+      "b": 697.70344,
+      "r": 180.13427499999997,
+      "t": 704.079504,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 171.41699999999997,
+      "b": 691.72644,
+      "r": 180.13427499999997,
+      "t": 698.1025040000001,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 171.41699999999997,
+      "b": 685.3494400000001,
+      "r": 180.13427499999997,
+      "t": 691.7255040000001,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "̂",
+      "l": 180.72799999999998,
+      "b": 700.38444,
+      "r": 186.26322055999998,
+      "t": 706.7605040000001,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "γ",
+      "l": 180.134,
+      "b": 703.2214525786745,
+      "r": 186.20604608,
+      "t": 713.6694016000001,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "H",
+      "l": 186.856,
+      "b": 708.2968006000002,
+      "r": 193.19940259,
+      "t": 715.3343989000002,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "C",
+      "l": 193.19940259,
+      "b": 708.2968006000002,
+      "r": 199.31565733,
+      "t": 715.3343989000002,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "1",
+      "l": 186.206,
+      "b": 701.0028006000002,
+      "r": 190.44051413,
+      "t": 708.0403989000002,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "(",
+      "l": 199.814,
+      "b": 702.1565440000003,
+      "r": 204.36654016,
+      "t": 718.9775104000003,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "x",
+      "l": 204.36654016,
+      "b": 703.2835253818184,
+      "r": 211.4643424,
+      "t": 713.5618048000002,
+      "font": "/OXMXCJ+LMRoman12-Bold",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 211.464,
+      "b": 702.1648006000003,
+      "r": 215.69851413,
+      "t": 709.2023989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": ")",
+      "l": 216.197,
+      "b": 702.1565440000003,
+      "r": 220.74954016,
+      "t": 718.9775104000003,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "-",
+      "l": 223.40359456000002,
+      "b": 703.3918827861336,
+      "r": 232.70234912,
+      "t": 713.6694016000002,
+      "font": "/ELQWOX+LMMathSymbols10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "γ",
+      "l": 235.35640352000001,
+      "b": 703.2214525786746,
+      "r": 241.42844960000002,
+      "t": 713.6694016000002,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "1",
+      "l": 241.433,
+      "b": 702.1648006000003,
+      "r": 245.66751413,
+      "t": 709.2023989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "̂",
+      "l": 180.728,
+      "b": 674.3824400000002,
+      "r": 186.26322056,
+      "t": 680.7585040000002,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "γ",
+      "l": 180.13400000000001,
+      "b": 677.2194525786747,
+      "r": 186.20604608000002,
+      "t": 687.6674016000003,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "H",
+      "l": 186.85600000000002,
+      "b": 682.2938006000003,
+      "r": 193.19940259000003,
+      "t": 689.3313989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "C",
+      "l": 193.19940259000003,
+      "b": 682.2938006000003,
+      "r": 199.31565733000002,
+      "t": 689.3313989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 186.20600000000002,
+      "b": 674.9998006000003,
+      "r": 190.44051413000003,
+      "t": 682.0373989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "(",
+      "l": 199.81400000000002,
+      "b": 676.1545440000003,
+      "r": 204.36654016000003,
+      "t": 692.9755104000003,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "x",
+      "l": 204.36654016000003,
+      "b": 677.2815253818185,
+      "r": 211.46434240000002,
+      "t": 687.5598048000003,
+      "font": "/OXMXCJ+LMRoman12-Bold",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 211.46400000000003,
+      "b": 676.1628006000003,
+      "r": 215.69851413000004,
+      "t": 683.2003989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": ")",
+      "l": 216.19700000000003,
+      "b": 676.1545440000003,
+      "r": 220.74954016000004,
+      "t": 692.9755104000003,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "-",
+      "l": 223.40359456000004,
+      "b": 677.3898827861336,
+      "r": 232.70234912000004,
+      "t": 687.6674016000003,
+      "font": "/ELQWOX+LMMathSymbols10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "γ",
+      "l": 235.35640352000004,
+      "b": 677.2194525786747,
+      "r": 241.42844960000005,
+      "t": 687.6674016000003,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 241.43300000000002,
+      "b": 676.1628006000003,
+      "r": 245.66751413000003,
+      "t": 683.2003989000003,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 246.16500000000002,
+      "b": 715.2384400000002,
+      "r": 254.88227500000002,
+      "t": 721.6145040000002,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 246.16500000000002,
+      "b": 697.7034400000002,
+      "r": 254.88227500000002,
+      "t": 704.0795040000003,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 246.16500000000002,
+      "b": 691.7264400000003,
+      "r": 254.88227500000002,
+      "t": 698.1025040000003,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 246.16500000000002,
+      "b": 685.3494400000003,
+      "r": 254.88227500000002,
+      "t": 691.7255040000003,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "D",
+      "l": 264.11100000000005,
+      "b": 699.5713080832857,
+      "r": 271.05853617,
+      "t": 706.5365783000003,
+      "font": "/UOWRAG+LMMathItalic8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "-",
+      "l": 261.52400000000006,
+      "b": 692.6028827861336,
+      "r": 270.8227545600001,
+      "t": 702.8804016000003,
+      "font": "/ELQWOX+LMMathSymbols10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "→",
+      "l": 263.33879936000005,
+      "b": 692.6028827861336,
+      "r": 275.29399936000004,
+      "t": 702.8804016000003,
+      "font": "/ELQWOX+LMMathSymbols10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "N",
+      "l": 281.92913536000003,
+      "b": 692.6028827861336,
+      "r": 291.73837696000004,
+      "t": 702.8804016000003,
+      "font": "/ELQWOX+LMMathSymbols10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 293.50500000000005,
+      "b": 718.2264400000003,
+      "r": 302.2222750000001,
+      "t": 724.6025040000003,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 293.50500000000005,
+      "b": 700.6924400000003,
+      "r": 302.2222750000001,
+      "t": 707.0685040000003,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 293.50500000000005,
+      "b": 694.7144400000003,
+      "r": 302.2222750000001,
+      "t": 701.0905040000004,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 293.50500000000005,
+      "b": 688.7374400000003,
+      "r": 302.2222750000001,
+      "t": 695.1135040000004,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 293.50500000000005,
+      "b": 682.3614400000004,
+      "r": 302.2222750000001,
+      "t": 688.7375040000004,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 302.22300000000007,
+      "b": 718.2264400000004,
+      "r": 310.94027500000004,
+      "t": 724.6025040000004,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 302.22300000000007,
+      "b": 700.6924400000004,
+      "r": 310.94027500000004,
+      "t": 707.0685040000004,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 302.22300000000007,
+      "b": 694.7144400000004,
+      "r": 310.94027500000004,
+      "t": 701.0905040000005,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 302.22300000000007,
+      "b": 688.7374400000004,
+      "r": 310.94027500000004,
+      "t": 695.1135040000005,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 302.22300000000007,
+      "b": 682.3614400000005,
+      "r": 310.94027500000004,
+      "t": 688.7375040000005,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 310.94000000000005,
+      "b": 703.7015440000006,
+      "r": 316.79326592000007,
+      "t": 720.5225104000006,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 310.94000000000005,
+      "b": 674.6105440000006,
+      "r": 316.79326592000007,
+      "t": 691.4315104000005,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 316.79300000000006,
+      "b": 718.2264400000005,
+      "r": 325.5102750000001,
+      "t": 724.6025040000005,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 316.79300000000006,
+      "b": 700.6924400000005,
+      "r": 325.5102750000001,
+      "t": 707.0685040000005,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 316.79300000000006,
+      "b": 694.7144400000005,
+      "r": 325.5102750000001,
+      "t": 701.0905040000006,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 316.79300000000006,
+      "b": 688.7374400000006,
+      "r": 325.5102750000001,
+      "t": 695.1135040000006,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 316.79300000000006,
+      "b": 682.3614400000006,
+      "r": 325.5102750000001,
+      "t": 688.7375040000006,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": ",",
+      "l": 327.50300000000004,
+      "b": 692.432452578675,
+      "r": 330.75481440000004,
+      "t": 702.8804016000006,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 332.74700000000007,
+      "b": 718.2264400000006,
+      "r": 341.46427500000004,
+      "t": 724.6025040000006,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 332.74700000000007,
+      "b": 700.6924400000006,
+      "r": 341.46427500000004,
+      "t": 707.0685040000006,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 332.74700000000007,
+      "b": 694.7144400000006,
+      "r": 341.46427500000004,
+      "t": 701.0905040000007,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 332.74700000000007,
+      "b": 688.7374400000007,
+      "r": 341.46427500000004,
+      "t": 695.1135040000007,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 332.74700000000007,
+      "b": 682.3614400000007,
+      "r": 341.46427500000004,
+      "t": 688.7375040000007,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "γ",
+      "l": 341.46400000000006,
+      "b": 704.7664525786752,
+      "r": 347.53604608000006,
+      "t": 715.2144016000008,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "2",
+      "l": 348.18700000000007,
+      "b": 709.8408006000008,
+      "r": 352.42151413000005,
+      "t": 716.8783989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "1",
+      "l": 347.53600000000006,
+      "b": 702.5468006000008,
+      "r": 351.77051413000004,
+      "t": 709.5843989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "σ",
+      "l": 352.91900000000004,
+      "b": 704.7664525786752,
+      "r": 359.5720688,
+      "t": 715.2144016000008,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "2",
+      "l": 360.00100000000003,
+      "b": 709.8408006000008,
+      "r": 364.23551413,
+      "t": 716.8783989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "1",
+      "l": 359.57200000000006,
+      "b": 702.5468006000008,
+      "r": 363.80651413000004,
+      "t": 709.5843989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "(",
+      "l": 364.73400000000004,
+      "b": 703.7015440000008,
+      "r": 369.28654016,
+      "t": 720.5225104000008,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "x",
+      "l": 369.28654016,
+      "b": 704.828525381819,
+      "r": 376.38434240000004,
+      "t": 715.1068048000008,
+      "font": "/OXMXCJ+LMRoman12-Bold",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 376.384,
+      "b": 703.7088006000008,
+      "r": 380.61851413,
+      "t": 710.7463989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": ")",
+      "l": 381.11600000000004,
+      "b": 703.7015440000008,
+      "r": 385.66854016,
+      "t": 720.5225104000008,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 414.80336256000004,
+      "b": 703.7015440000008,
+      "r": 420.65662848000005,
+      "t": 720.5225104000008,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 360.64000000000004,
+      "b": 674.6105440000008,
+      "r": 366.49326592000006,
+      "t": 691.4315104000008,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "γ",
+      "l": 395.6280883200001,
+      "b": 675.6754525786752,
+      "r": 401.7001344000001,
+      "t": 686.1234016000008,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "2",
+      "l": 402.35400000000004,
+      "b": 680.7498006000008,
+      "r": 406.58851413,
+      "t": 687.7873989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 401.70300000000003,
+      "b": 673.4558006000008,
+      "r": 405.93751413,
+      "t": 680.4933989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "σ",
+      "l": 407.086,
+      "b": 675.6754525786752,
+      "r": 413.73906880000004,
+      "t": 686.1234016000008,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "2",
+      "l": 414.168,
+      "b": 680.7498006000008,
+      "r": 418.40251413,
+      "t": 687.7873989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 413.73900000000003,
+      "b": 673.4558006000008,
+      "r": 417.97351413,
+      "t": 680.4933989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": "(",
+      "l": 418.901,
+      "b": 674.6105440000008,
+      "r": 423.45354016,
+      "t": 691.4315104000008,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "x",
+      "l": 423.45354016,
+      "b": 675.737525381819,
+      "r": 430.5513424,
+      "t": 686.0158048000008,
+      "font": "/OXMXCJ+LMRoman12-Bold",
+      "superscript": false
+    },
+    {
+      "text": "0",
+      "l": 430.551,
+      "b": 674.6178006000008,
+      "r": 434.78551412999997,
+      "t": 681.6553989000008,
+      "font": "/CZKNYR+LMRoman8-Regular",
+      "superscript": false
+    },
+    {
+      "text": ")",
+      "l": 435.283,
+      "b": 674.6105440000008,
+      "r": 439.83554016,
+      "t": 691.4315104000008,
+      "font": "/HGCDRE+LMRoman12-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 439.836,
+      "b": 718.2264400000007,
+      "r": 448.553275,
+      "t": 724.6025040000007,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 439.836,
+      "b": 700.6924400000007,
+      "r": 448.553275,
+      "t": 707.0685040000008,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 439.836,
+      "b": 694.7144400000008,
+      "r": 448.553275,
+      "t": 701.0905040000008,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 439.836,
+      "b": 688.7374400000008,
+      "r": 448.553275,
+      "t": 695.1135040000008,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 439.836,
+      "b": 682.3614400000008,
+      "r": 448.553275,
+      "t": 688.7375040000009,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 448.553,
+      "b": 718.2264400000008,
+      "r": 457.27027499999997,
+      "t": 724.6025040000009,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 448.553,
+      "b": 700.6924400000008,
+      "r": 457.27027499999997,
+      "t": 707.0685040000009,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 448.553,
+      "b": 694.7144400000009,
+      "r": 457.27027499999997,
+      "t": 701.0905040000009,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 448.553,
+      "b": 688.7374400000009,
+      "r": 457.27027499999997,
+      "t": 695.113504000001,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": "",
+      "l": 448.553,
+      "b": 682.3614400000009,
+      "r": 457.27027499999997,
+      "t": 688.737504000001,
+      "font": "/LTLGJY+LMMathExtension10-Regular",
+      "superscript": false
+    },
+    {
+      "text": ",",
+      "l": 459.263,
+      "b": 692.4324525786753,
+      "r": 462.5148144,
+      "t": 702.8804016000009,
+      "font": "/WLSDFN+LMMathItalic12-Regular",
+      "superscript": false
+    }
+  ]
+}

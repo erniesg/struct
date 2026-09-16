@@ -1,3 +1,4 @@
+import { utf8ByteLength } from '../document/codec/primitives'
 import type { StructDocument, StructInline } from '../document/types'
 
 const EPUB_RESERVED_IDS = new Set([
@@ -372,7 +373,11 @@ type PlanningTotals = {
   citationWork: number
 }
 
+export type RenderedBlockEntry = readonly [number, StructDocument['blocks'][number]]
+
 export type RenderedPublicationPlan = {
+  topLevelBlocks: readonly RenderedBlockEntry[]
+  noteBodies: ReadonlyMap<string, readonly RenderedBlockEntry[]>
   sources: readonly RenderedInlineSourcePlan[]
   sourceByKey: ReadonlyMap<string, RenderedInlineSourcePlan>
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>
@@ -402,9 +407,9 @@ export class RenderedPublicationPlanError extends Error {
 
 /** Return exactly the inline sources that the publication renderer consumes. */
 function* renderedInlineSources(
-  document: StructDocument,
+  blockEntries: readonly RenderedBlockEntry[],
 ): Generator<RenderedInlineSource> {
-  for (const [blockIndex, block] of document.blocks.entries()) {
+  for (const [blockIndex, block] of blockEntries) {
     if (block.kind === 'furniture') continue
     if (block.kind === 'table' && block.table) {
       for (const [cellIndex, cell] of block.table.cells.entries())
@@ -610,6 +615,13 @@ function draftInlinePlan(
   for (const [originalIndex, run] of source.runs.entries()) {
     if (!validInline(run, source.value)) continue
     const path = `${source.pathPrefix}[${originalIndex}]`
+    if (run.mathml !== undefined) {
+      totals.wrapperBytes += utf8ByteLength(run.mathml)
+      if (totals.wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES)
+        throw new RenderedPublicationPlanError(
+          'BUDGET', path, 'inline MathML exceeds publication output budgets',
+        )
+    }
     runs.push({
       run,
       originalIndex,
@@ -839,6 +851,28 @@ function materializeInlinePlan(draft: InlineDraft): RenderedInlineSegment[] {
 export function buildRenderedPublicationPlan(
   document: StructDocument,
 ): RenderedPublicationPlan {
+  const entries = [...document.blocks.entries()]
+  const noteBodies = new Map<string, readonly RenderedBlockEntry[]>()
+  let topLevelBlocks: readonly RenderedBlockEntry[] = entries
+  let emittedBlocks: readonly RenderedBlockEntry[] = entries
+  // Preserve lazy target inspection for existing documents: their inline output
+  // budget can be rejected before any later node identifier is inspected.
+  if (entries.some(([, block]) => block.noteBodyBlockIds !== undefined)) {
+    const byId = new Map(entries.map((entry) => [entry[1].id, entry] as const))
+    const owned = new Set<string>()
+    for (const [, block] of entries) {
+      if (!block.noteBodyBlockIds) continue
+      noteBodies.set(block.id, block.noteBodyBlockIds.map((id) => byId.get(id)!))
+      for (const id of block.noteBodyBlockIds) owned.add(id)
+    }
+    topLevelBlocks = entries.filter(([, block]) => !owned.has(block.id))
+    const ordered: RenderedBlockEntry[] = []
+    for (const entry of topLevelBlocks) {
+      ordered.push(entry)
+      for (const child of noteBodies.get(entry[1].id) ?? []) ordered.push(child)
+    }
+    emittedBlocks = ordered
+  }
   const authors = document.metadata.authors
   const authorNotes = document.metadata.authorNotes ?? []
   const seenAuthors = new Set<string>()
@@ -886,7 +920,7 @@ export function buildRenderedPublicationPlan(
   for (const note of authorNotes)
     if (seenSemanticIds.has(stableId(note.id)))
       renderedRelationshipIds.add(note.id)
-  for (const source of renderedInlineSources(document)) {
+  for (const source of renderedInlineSources(emittedBlocks)) {
     const draft = draftInlinePlan(
       document,
       source,
@@ -937,6 +971,8 @@ export function buildRenderedPublicationPlan(
     authorNotesByAuthor.set(note.author, notes)
   }
   return {
+    topLevelBlocks,
+    noteBodies,
     sources,
     sourceByKey,
     relationships,

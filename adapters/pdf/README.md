@@ -25,8 +25,8 @@ PDF ──Docling (local layout model)──────────────
 | bold / italic words | `inline` runs (`bold`, `italic`) | from the glyph faces under the block; a face covering the whole block is block styling, not a run |
 | list_item | `list-item` + `attributes.ordered/listId` | struct groups them into `<ol>`/`<ul>` |
 | picture + caption | `figure` (text = caption) + crop asset | caption-less pictures under 1% of the page are decorative; caption-less panels, sub-captions (`(a) …`), chart labels, short labels and monospace fragments stacked against a captioned figure fold into its crop, never across another caption; a `Figure N` line inside a crop is read back as the caption (the crop trimmed above it) or splits the crop into two figures; a caption-less figure adopts the nearest orphan `Figure N` caption in its column (geometry, not reading order); a block the layout model labelled a caption is adopted at any length, a paragraph opening `Figure N` only under 1,200 characters; one line of text standing on the foot of a caption-less picture (`Prototypes: cortical L5 · hippocampal CA1 · cerebellar Purkinje`) with the `Figure N` caption directly under it is the figure's own legend and leaves the flow; a `Figure N.` that closes a caption's last sentence with nothing after it (`… The families are drawn in Figure 3.`) is a cross-reference, not a second caption to cut off; when the paper sets captions below figures, a picture whose attached caption sits above it gives that caption back and takes the orphan caption below; in such a paper an orphan `Figure N` caption standing first on its page, its label held by no figure, belongs to the caption-less pictures that close the previous page with nothing under them, merged as one figure when they are stacked panels; an orphan caption with no artwork recovers the framed region beside it (drawn rules, a rounded frame, a shaded box read from the page image) or the run of panels, labels and code beside it as a crop; a table item whose caption says `Figure N`, or a caption-less table item beside an orphan `Figure N` caption, is a figure; labels keep chapter numbering (`Fig. 2.3`) and a label never backtracks into a sentence's full stop |
-| table + caption | `table` (cell grid, header scopes, spans, links and note references in cells; text = caption, rendered above the table) | a one-cell grid holding prose is a boxed text and stays a table; a grid less than 30 % filled falls back to a crop; a caption-less one- or two-column grid of prose cells (a bibliography) becomes a list of entries; a caption-less table adopts the `Table N` caption beside it, by geometry, or from the text layer; a caption-less table at the top of the next page with the same column count continues the previous table; a `Table N` caption with no table item reads the ruled box beside it (heavy rules close a booktabs box, a caption inside its own first row starts the box, a box that runs off the page reaches the page edge) and turns the text blocks inside into rows, one column per x-cluster; only when no frame exists does the band beside the caption become a crop |
-| formula | `equation` + `attributes.mathml` (LaTeX via latex2mathml) or crop | `--formula` turns on Docling's formula enrichment |
+| table + caption | `table` (cell grid, header scopes, spans, links and note references in cells; text = caption, rendered above the table) | a one-cell grid holding prose is a boxed text and stays a table; a caption-less one- or two-column grid of prose cells (a bibliography) becomes a list of entries; a caption-less table adopts the `Table N` caption beside it, by geometry, or from the text layer; a caption-less table at the top of the next page with the same column count continues the previous table; a `Table N` caption with no table item reads the ruled box beside it (heavy rules close a booktabs box, a caption inside its own first row starts the box, a box that runs off the page reaches the page edge) and turns the text blocks inside into rows, one column per x-cluster; only when no frame exists does the band beside the caption become a crop |
+| formula | `equation` + `attributes.mathml` (from the source glyphs) or a crop of the original page; `attributes.transcript` keeps the text | MathML is built from glyph positions, faces and sizes (scripts, fractions, radicals, accents, matrices) only when every glyph has an owner: a glyph one size down (8 pt beside 10 pt) is a script, and a raised or lowered glyph the sizes did not explain refuses MathML; anything unsupported is a crop cut from the PDF rendered by Poppler, never from Docling's page image; the transcript is data, not a caption under the notation |
 | code | `code` with source line breaks | Docling `code` items are verified against glyph faces: math faces → equation crop, prose faces → paragraph; any paragraph set ≥80% in a monospace face over two or more lines is code; a listing split by a caption, footnote, furniture, or page break rejoins |
 | footnote | `footnote` block + `note-reference` inline run + `footnote` relationship | markers are superscript glyph runs (small, raised) located in the host block (or table cell, or a paragraph that began on the previous page) by their left context, `∗` and `*` being one symbol; every reference links; the note moves to follow its first referencing block; a symbol note whose symbol appears nowhere else on the page, or a digit note with no raised run of its digit on its page or the page before, keeps the label in its text and is not a reference; two notes sharing a label on one page (an affiliation and a footnote) take successive markers in reading order; copyright, licence, ISSN/DOI and journal lines labelled as footnotes become furniture; a `Figure N` / `Table N` line labelled as a footnote or as page furniture is a caption |
 | page_header / page_footer, edge page numbers, text repeated on ≥3 pages in an edge band, edge-band text equal to a heading or the title | `furniture` blocks with evidence | accounted, never rendered; a margin stamp the layout model glued in front of a paragraph's first line (a tiny edge box, far from the box carrying the prose, opening the text with a bare number) is cut, the mirror of the glued-tail rule |
@@ -38,6 +38,64 @@ Chart tick labels the layout model left outside a picture (three or more
 number-only lines in a row) are dropped as figure content. Pages the layout
 model dropped are recovered from the text layer. The graph is compacted for
 struct's node budget and dangling references are pruned.
+
+## Where rules live
+
+`pdf2struct.py` is the orchestrator: `StructAdapter` keeps the adapter's state
+(blocks, assets, relationships, diagnostics, the report), walks the Docling tree
+and runs the recovery passes in order in `build()`. The rules are methods of
+mixin classes, one module per concern, composed into `StructAdapter`; they read
+and write the adapter's state through `self`. A new rule goes into the module
+for its concern, and only its call goes into `build()`. `pdf2struct` re-exports
+the shared names, so `from pdf2struct import StructAdapter, FIGURE_CAPTION_RE`
+and patching `pdf2struct.StructAdapter._<rule>` keep working.
+
+- `adapter_common.py` — shared regexes and pure text helpers (sentence
+  termination, caption labels, footnote markers, link visible-text matching); no
+  adapter state.
+- `rules_prose.py` (`ProseRules`) — paragraphs and headings: emission, splitting
+  items the layout model merged (a caption under a paragraph, a stray lead word,
+  a side-column tail, a first line merged across a page), joins across column,
+  page and float breaks, dehyphenation and attested-word fusion, glued tails.
+- `rules_notes.py` (`NoteRules`) — footnotes, note markers located by superscript
+  glyphs or text, `footnote` relationships, note placement, table notes cut from
+  the paragraph before their table.
+- `rules_links.py` (`LinkRules`) — URI annotations mapped onto items and table
+  cells, `href` and bold/italic runs, textless author icons.
+- `rules_furniture.py` (`FurnitureRules`) — running heads, footers, edge page
+  numbers, repeated edge-band text, margin stamps, content rescued from the
+  furniture layer.
+- `rules_captions.py` (`CaptionRules`) — which float a `Figure N` / `Table N`
+  caption belongs to: adoption by adjacency, geometry, page break and caption
+  side; captions read from the text layer; label-only captions completed.
+- `rules_figures.py` (`FigureRules`) — picture emission, what a crop absorbs
+  (panels, sub-captions, chart labels) and must not cross, sub-panel merging,
+  artwork recovered beside an orphan caption or sub-caption.
+- `rules_tables.py` (`TableRules`) — cell grids, bibliography grids as entry
+  lists, tables recovered beside an orphan `Table N`, continued tables, and
+  `_table_from_blocks` (text blocks in a region to rows and columns).
+- `rules_ruled_boxes.py` (`RuledBoxRules`) — drawn rules, frames and shaded boxes
+  beside a caption, read as a text table or a figure crop.
+- `rules_code_equations.py` (`CodeEquationRules`) — code items checked against
+  glyph faces, monospace listings, equation blocks (MathML or crop), split
+  listings rejoined.
+- `rules_text_layer.py` (`TextLayerRules`) — text-layer words and lines in a
+  region, restored lines and clauses, dropped regions and pages, OCR of an
+  undecodable region.
+- `rules_assets.py` (`AssetRules`) — crops from the original PDF raster, PNG
+  asset records, ink tests.
+- `rules_graph.py` (`GraphRules`) — absorbing blocks, provenance compaction,
+  pruning dangling references.
+
+Passes that already lived apart stay where they are, called from `build()` or
+from a rule: `layout_normalization.py` (impossible cross-page items, before the
+walk), `figure_recovery.py` (sideways captions, picture galleries, caption
+columns, caption evidence), `source_tables.py` (glyph cell grids, caption
+reconciliation), `note_bodies.py`, `internal_links.py`, `equation_recovery.py`
+with `equation_geometry.py` and `equation_matrix.py`, `ocr_region.py`, and
+`inline_offsets.py` (UTF-16 offsets at emission). `inline_equations.py` is
+tested but not yet called by the adapter. Source signals come from
+`pdf_text.py`, `pdf_links.py` and `source_raster.py`.
 
 ## Usage
 
@@ -66,9 +124,17 @@ node screenshot.mjs out/<stem>/<stem>-paperpro.epub --out page.png --anchor <blo
 
 Outputs per PDF: `<stem>.docling.json`, `<stem>.struct-draft.json`, the sealed
 `struct.json`, struct's `content.xhtml`, one EPUB per profile, and
-`<stem>.report.json`. EPUBCheck runs when it is on `PATH`.
+`<stem>.report.json`, and at the root `corpus-report.json`; a fresh run also
+writes `source-report.json` and `cache-manifest.json`, which bind every PDF to
+its Docling cache and image files so a later `--reuse-json` refuses a cache that
+changed (a cache from an older run without them is reused as it is; move a cache
+with `relocate_cache.py`, giving it an absolute path). EPUBCheck runs on every
+profile's EPUB when it is on `PATH`, and a run exits non-zero when any document
+fails.
 
-Requires `pdftotext` (poppler) and `node` ≥ 20. Docling uses the GPU (MPS on
+Requires `pdftotext` and `pdftoppm` (poppler) and `node` ≥ 20; `tesseract` is
+optional and reads the rare text region whose PDF text layer cannot be decoded
+(without it such a region stays an image). Docling uses the GPU (MPS on
 Apple silicon); run one or two workers for fresh extraction, four for
 `--reuse-json`. `screenshot.mjs` needs Playwright with Chromium (from this
 repository's `node_modules` or the sibling `erniesg` checkout).
@@ -94,3 +160,34 @@ Expectations come from the PDF, never from the adapter's output:
 - furniture: lines repeated in the top or bottom tenth of three or more pages, and page-edge numbers, must not appear as paragraphs (a bare number the draft places in the page body is content)
 - prose continuity: word coverage ≥ 0.98 (words inside detected figures and edge or margin furniture excluded; small-caps runs, words broken at a line end and CJK text compared on equal terms) and no prose paragraph that begins with a plain lowercase word outside the bibliography, after a heading, after an equation, or after a colon-terminated lead-in (spec 052 counts every such paragraph)
 - EPUBCheck errors
+
+## Rules added closing the reader-gate failures (2026-09-15)
+
+Each rule came from a source page that failed, was checked on both corpora, and
+has a test in `tests/`:
+
+- **Crops** come from the original PDF (`source_raster.py`); a figure's crop
+  folds panels, sub-captions and tick labels, but never linked words, never a
+  line of text set apart from the artwork (an author or affiliation line over a
+  first-page figure, a section number over a chart) and never across body text.
+- **Captions**: a label-only caption (`Fig. 7.`, `Figure 5.`) is completed from
+  its lines on the page and absorbs the fragments the layout model scattered; a
+  figure keeps the whole caption left beside it; appendix labels (`Figure A2`,
+  `Table B.1`) are captions; a float keeps the hyperlinks of its caption; an axis
+  title glued to a paragraph across a page is cut and the crop widens to it; a
+  blank remainder under an inner caption is dropped; a sub-captioned panel
+  (`(b) Layers 7-13`) with no artwork detected is recovered from its labels.
+- **Tables**: a glyph grid replaces the layout model's grid only as a split of
+  collapsed rows (each column's text conserved in order, the header kept, a value
+  column giving every new row its record, no hyphenated word separated); a ruled
+  box of prose and formula fragments stays one column; glyph text that lost its
+  word spaces is not used; a table caption set on a chart stays a captioned image.
+- **Text**: an item merged across a page whose first line stands mid-page is
+  split and its first line placed before the block under it; a `code` item with
+  forty words of prose between the symbols is a paragraph; a caption-less picture
+  over undecodable prose is read by OCR.
+- **Furniture**: merged furniture keeps a box per edge band.
+- **Evaluator** (reported apart): a paper that sets no line in the page's outer
+  bands has no furniture to exclude; undecodable text-layer lines are not held
+  against coverage (`undecodableSourceLines`); a `Table N` rendered as an image
+  whose region holds no rows of text-layer words counts (`tableLabelledImages`).

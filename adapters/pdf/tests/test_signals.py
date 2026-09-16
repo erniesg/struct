@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from evaluate import _canonical_uri, _lowercase_starts, _running_lines, _strip  # noqa: E402
+from evaluate import _canonical_uri, _furniture_candidate_lines, _lowercase_starts, _running_lines, _strip  # noqa: E402
 from pdf2struct import LIST_LIKE_NOTE_RE, PARATEXT_NOTE_RE, StructAdapter, clean_caption, footnote_parts, heading_level  # noqa: E402
 from pdf_text import Char, Marker, PageText, classify_font  # noqa: E402
 
@@ -105,6 +105,15 @@ class Evaluator(unittest.TestCase):
         running = _running_lines([], layout)
         self.assertIn("journal of things #", running)
         self.assertNotIn("the input list contains quadruples", running)
+
+    def test_furniture_candidates_are_lines_in_the_outer_bands(self):
+        def line(y, x, text):
+            return {"ymin": y, "ymax": y + 2, "xmin": x, "xmax": x + 20, "text": text}
+        body = [line(30, 20, "Body text of the paper"), line(70, 20, "More body text")]
+        self.assertEqual(_furniture_candidate_lines([{"height": 100.0, "width": 100.0, "lines": body}]), 0)
+        self.assertEqual(_furniture_candidate_lines([{"height": 100.0, "width": 100.0, "lines": body + [line(95, 45, "Journal 12")]}]), 1)
+        self.assertEqual(_furniture_candidate_lines([{"height": 100.0, "width": 100.0, "lines": body + [line(91, 45, "7")]}]), 1)
+        self.assertIsNone(_furniture_candidate_lines([]))
 
     def test_lowercase_after_colon_is_not_a_broken_join(self):
         html = "<p>The server maintains:</p><p>runtime state that is observed by the agent while it works on the task</p>"

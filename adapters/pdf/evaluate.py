@@ -21,10 +21,10 @@ from urllib.parse import urlsplit, urlunsplit
 from pdf_links import WORD_RE, attach_words, extract_links, group_wrapped_links, normalize_uri, page_layout_lines, page_text_lines, word_boxes
 
 # `Figure 15 shows …` is a sentence: the word after the label must be capitalised
-CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
-CAPTION_TAIL_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*(\d+(?:\.\d+)*)(?!\d)\s*[.,;:)]*\s*$", re.IGNORECASE)
-OUTPUT_CAPTION_RE = re.compile(r"^\W*(?:\d{1,3}\s+)?(Figure|Fig\.?|Table)\s*(\d+(?:\.\d+)*)(?![\d])(?!\.\d)", re.IGNORECASE)
-DRAFT_FIGURE_CAPTION_RE = re.compile(r"^(Figure|Fig\.?)\s*(\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
+CAPTION_TAIL_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*[.,;:)]*\s*$", re.IGNORECASE)
+OUTPUT_CAPTION_RE = re.compile(r"^\W*(?:\d{1,3}\s+)?(Figure|Fig\.?|Table)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?![\d])(?!\.\d)", re.IGNORECASE)
+DRAFT_FIGURE_CAPTION_RE = re.compile(r"^(Figure|Fig\.?)\s*((?-i:[A-Z])\.?\d+(?:\.\d+)*|\d+(?:\.\d+)*)(?!\d)\s*(?:\.(?!\d)|[:|\-–—]|(?=\s+(?-i:[A-Z])))", re.IGNORECASE)
 
 
 def _label_key(label: str) -> tuple:
@@ -49,8 +49,13 @@ def _normalize(text: str) -> str:
         .replace("‘", "'")
         .replace("“", '"')
         .replace("”", '"')
+        .replace("ﬀ", "ff")
         .replace("ﬁ", "fi")
         .replace("ﬂ", "fl")
+        .replace("ﬃ", "ffi")
+        .replace("ﬄ", "ffl")
+        .replace("ﬅ", "st")
+        .replace("ﬆ", "st")
         .replace("­", "")
         .replace("–", "-")
         .replace("—", "-")
@@ -80,18 +85,45 @@ def _tokens(text: str) -> list[str]:
 # or a lettered / roman-numbered item opens lowercase by convention; the label
 # must be followed by a capitalised or numbered word, so `i. e.,` is not one
 ENUMERATED_LABEL_RE = re.compile(r"^(?:\(?[a-z]\)|\(?(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\)|(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\.)\s+[A-Z0-9]")
+# a run-in heading the paper itself sets apart (`a. Coupled cluster theory:`), recognised only
+# when the words carry the source's own emphasis
+RUN_IN_HEAD_RE = re.compile(r"^[a-z][.)]\s+\S.*[:.]$")
 
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6][^>]*>\s*(references|bibliography|works cited)\b", re.IGNORECASE)
 
 
-def _lowercase_starts(body_html: str) -> int:
+def _lowercase_starts(body_html: str, display_lines: set[str] | None = None) -> int:
     """Prose paragraphs that begin lowercase, ignoring bibliography entries
     (authors such as `nostalgebraist`) and the `where …` sentence that
     conventionally follows a display equation."""
-    return len(lowercase_start_paragraphs(body_html))
+    return len(lowercase_start_paragraphs(body_html, display_lines))
 
 
-def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
+def display_line_ids(struct_draft: Path | None) -> set[str]:
+    """Blocks the paper sets as a display line: one line, centred in the text
+    block and narrower than the body (an aphorism between two rules, a
+    definition set apart). Such a line opens lowercase by design."""
+    draft = _load_draft(struct_draft)
+    if draft is None:
+        return set()
+    paragraphs = [b for b in draft.get("blocks", []) if b.get("kind") == "paragraph" and (b.get("evidence", {}).get("boxes") or [])]
+    if len(paragraphs) < 5:
+        return set()
+    lefts = sorted(b["evidence"]["boxes"][0]["x"] for b in paragraphs)
+    rights = sorted(b["evidence"]["boxes"][0]["x"] + b["evidence"]["boxes"][0]["width"] for b in paragraphs)
+    left, right = lefts[len(lefts) // 2], rights[len(rights) // 2]
+    found = set()
+    for block in paragraphs:
+        boxes = block["evidence"]["boxes"]
+        box = boxes[0]
+        if len(boxes) != 1 or box["height"] > 0.02 or box["width"] > 0.8 * max(right - left, 1e-6):
+            continue
+        if abs((box["x"] - left) - (right - (box["x"] + box["width"]))) <= 0.02:
+            found.add(block["id"])
+    return found
+
+
+def lowercase_start_paragraphs(body_html: str, display_lines: set[str] | None = None) -> list[tuple[str, str]]:
     """(previous element text, paragraph text) for every prose paragraph that
     begins with a plain lowercase word where a broken join is possible: not
     after a heading (keyword lists), not after an equation (`where …`), not
@@ -102,14 +134,19 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
     scope = re.sub(r"<aside[^>]*>.*?</aside>", "", scope, flags=re.S)
     found = []
     previous_kind, previous_text = "", ""
+    float_kinds = {"figure", "table"}
     for match in re.finditer(r"<(p|h[1-6]|figure|pre|li|table)\b([^>]*)>(.*?)</\1>", scope, re.S):
         tag, attributes, inner = match.group(1), match.group(2), match.group(3)
         text = _strip(inner).strip()
         kind = tag
-        if tag == "figure" and ('class="equation"' in attributes or 'alt="Equation' in inner):
+        if tag == "figure" and ('class="equation"' in attributes or 'alt="Equation' in inner or 'src="images/equation-' in inner):
             kind = "equation"
         before_kind, before = previous_kind, previous_text
-        previous_kind, previous_text = kind, text
+        # a float between the two halves is not the predecessor a reader sees
+        # (a figure that moved to the head of the page between an equation and
+        # the sentence it continues)
+        if kind not in float_kinds:
+            previous_kind, previous_text = kind, text
         if tag != "p" or len(text) <= 40 or not LOWER_START.match(text):
             continue
         if before_kind in ("equation", "h1", "h2", "h3", "h4", "h5", "h6"):
@@ -120,12 +157,24 @@ def lowercase_start_paragraphs(body_html: str) -> list[tuple[str, str]]:
             continue  # `vec2vec is`, `iCoT (…)`, `e.g.`: a name, not a fragment
         if before.rstrip().endswith(":"):
             continue  # an item under a colon-terminated lead-in, not a broken join
+        identifier = re.search(r'\sid="([^"]+)"', attributes)
+        if before.rstrip().endswith(";") and identifier and identifier.group(1) in (display_lines or set()):
+            continue  # a centred display line after a semicolon: the paper sets it apart
         if re.match(r"^[a-z](?:\s?[a-z0-9]){0,2}\s+(?:[a-z]|\d|[=<>≤≥∈∼∈])", text):
             continue  # inline math symbol such as "s t represents" or "a = b"
         if re.match(r"^[a-z_][\w.]*\s*(?:=|:=|←|→|:)\s", text):
             continue  # a template or assignment line such as "message = {* *} …", not a sentence fragment
         if ENUMERATED_LABEL_RE.match(text):
             continue  # `b) Operator Mapping Choice:`, `ii. Column diameter …`: an enumerated label opens lowercase by convention
+        emphasised, rest = "", inner
+        while True:
+            head = re.match(r"\s*<(em|strong)>(.*?)</\1>", rest, re.S)
+            if not head:
+                break
+            emphasised += " " + _strip(head.group(2))
+            rest = rest[head.end():]
+        if RUN_IN_HEAD_RE.match(emphasised.strip()):
+            continue  # `a. Coupled cluster theory:` set in italic: a run-in heading, whose own typography says so
         if len(text.split()) <= 12 and len(re.findall(r"<a\b", inner)) >= 2:
             continue  # `globe Project page github Code cube Model`: a row of links under the title, not prose
         found.append((before, text))
@@ -197,6 +246,85 @@ def _running_lines(pages: list[list[str]], layout: list[dict] | None = None) -> 
     return {key for key, count in counter.items() if count >= 3}
 
 
+def _undecodable_text_regions(layout: list[dict]) -> dict[int, list[tuple[float, float, float, float]]]:
+    """Boxes of the text-layer lines that cannot be decoded (glyphs without a
+    Unicode map read `Recen work has demons ra ed`), in runs of at least five
+    such lines on a page. Their words are not a ground truth the rendition can
+    be held to; the adapter reads such regions from the page image."""
+    from ocr_region import short_word_share
+
+    regions: dict[int, list[tuple[float, float, float, float]]] = {}
+    for page_index, page in enumerate(layout, start=1):
+        height, width = page.get("height") or 0, page.get("width") or 0
+        if not height or not width:
+            continue
+        broken = []
+        for line in page["lines"]:
+            share = short_word_share(line["text"])
+            if share is not None and share > 0.45:
+                broken.append((line["xmin"] / width, line["ymin"] / height, line["xmax"] / width, line["ymax"] / height))
+        if len(broken) >= 5:
+            regions[page_index] = broken
+    return regions
+
+
+def _table_labels_without_text_rows(pdf: Path, struct_draft: Path | None, candidates: set[str], sizes: dict[int, tuple[float, float]]) -> set[str]:
+    """The `Table N` labels, rendered as images, whose draft region on the page
+    holds fewer than three rows of two or more text-layer words: a chart or a
+    picture the author captioned as a table, not a grid of text left unread."""
+    draft = _load_draft(struct_draft)
+    if not candidates or draft is None:
+        return set()
+    pages = word_boxes(pdf)
+    found = set()
+    for block in draft.get("blocks", []):
+        label = OUTPUT_CAPTION_RE.match(block.get("text") or "")
+        if block.get("kind") != "figure" or not block.get("fallbackAssetIds") or not label or not label.group(1).lower().startswith("t") or label.group(2) not in candidates:
+            continue
+        boxes = block.get("evidence", {}).get("boxes") or []
+        if not boxes or boxes[0]["page"] > len(pages):
+            continue
+        box = boxes[0]
+        width, height = sizes.get(box["page"], (0.0, 0.0))
+        if not width or not height:
+            continue
+        centres = sorted(((y0 + y1) / 2 / height) for x0, y0, x1, y1, _ in pages[box["page"] - 1]
+                         if box["x"] <= (x0 + x1) / 2 / width <= box["x"] + box["width"] and box["y"] <= (y0 + y1) / 2 / height <= box["y"] + box["height"])
+        rows: list[int] = []
+        previous = None
+        for centre in centres:
+            if previous is not None and centre - previous <= 0.004:
+                rows[-1] += 1
+            else:
+                rows.append(1)
+            previous = centre
+        if sum(count >= 2 for count in rows) < 3:
+            found.add(label.group(2))
+    return found
+
+
+def _furniture_candidate_lines(layout: list[dict]) -> int | None:
+    """Source lines where page furniture can stand: the outer 6 % above and
+    below the body, the outer 7 % beside it, and a bare number in the outer
+    tenth. Zero means the paper sets no running head, footer, page number or
+    margin stamp, so there is nothing for the flow to exclude."""
+    if not layout:
+        return None
+    found = 0
+    for page in layout:
+        height, width = page.get("height") or 0, page.get("width") or 0
+        if not height or not width:
+            continue
+        for line in page["lines"]:
+            cy = (line["ymin"] + line["ymax"]) / 2 / height
+            cx = (line["xmin"] + line["xmax"]) / 2 / width
+            if cy <= 0.06 or cy >= 0.94 or cx <= 0.07 or cx >= 0.93:
+                found += 1
+            elif (cy <= 0.10 or cy >= 0.90) and PAGE_NUMBER_RE.match(line["text"]):
+                found += 1
+    return found
+
+
 def _load_draft(struct_draft: Path | None) -> dict | None:
     if not struct_draft or not struct_draft.exists():
         return None
@@ -254,6 +382,39 @@ def _number_paragraphs_in_body(struct_draft: Path | None) -> Counter:
         if boxes and 0.12 < boxes[0]["y"] and boxes[0]["y"] + boxes[0]["height"] < 0.88:
             found[text] += 1
     return found
+
+
+def _repeated_lines_set_in_body(struct_draft: Path | None) -> Counter:
+    """Paragraphs the draft places outside the page's edge bands, keyed the way
+    repeated edge lines are keyed.
+
+    A line can be furniture on most pages and content on one: an author byline
+    under the title is set again as the verso running head, a journal's article
+    title heads every recto. The byline is the paper's own text, in the body of
+    the title page, and is not a leak.
+    """
+    found: Counter = Counter()
+    draft = _load_draft(struct_draft)
+    if draft is None:
+        return found
+    for block in draft.get("blocks", []):
+        text = (block.get("text") or "").strip()
+        if block.get("kind") != "paragraph" or not text:
+            continue
+        boxes = block.get("evidence", {}).get("boxes") or []
+        if boxes and 0.12 < boxes[0]["y"] and boxes[0]["y"] + boxes[0]["height"] < 0.88:
+            found[re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower()))] += 1
+    return found
+
+
+def _furniture_exemptions(struct_draft: Path | None) -> Counter:
+    """How many times each repeated line may be excused as content.
+
+    A byline is set once, under the title; a running head repeats on every
+    page. Crediting a line once lets the byline through and still reports a
+    head that leaked, which is the fault this criterion exists to catch.
+    """
+    return Counter({key: 1 for key in _repeated_lines_set_in_body(struct_draft)})
 
 
 def _unassociated_figures(struct_draft: Path | None) -> int:
@@ -337,7 +498,8 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
     pages = page_text_lines(pdf)
     all_lines = [line for page in pages for line in page]
     labels = _caption_labels(all_lines)
-    running = _running_lines(pages, page_layout_lines(pdf))
+    layout = page_layout_lines(pdf)
+    running = _running_lines(pages, layout)
     links, sizes = extract_links(pdf)
     attach_words(links, word_boxes(pdf), sizes)
     group_wrapped_links(links)
@@ -379,6 +541,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
     body_html = re.sub(r"<aside[^>]*>.*?</aside>", "", body_html, flags=re.S)
 
     out_labels = {"figure": set(), "table": set()}
+    table_images: set[str] = set()
     # a figure label counts only when its <figure> carries an image; a table
     # label counts from a <caption> or the caption paragraph that follows a
     # rendered <table> (struct renders table captions as separate blocks)
@@ -389,16 +552,23 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
             label = OUTPUT_CAPTION_RE.match(_strip(caption.group(1)))
             if label and not label.group(1).lower().startswith("t"):
                 out_labels["figure"].add(label.group(2))
+            elif label:
+                table_images.add(label.group(2))
         if "<table" in inner:
             for text in re.findall(r"<caption>(.*?)</caption>", inner, re.S) + re.findall(r"<figcaption>(.*?)</figcaption>", inner, re.S) + ([trailing] if trailing else []):
                 label = OUTPUT_CAPTION_RE.match(_strip(text))
                 if label and label.group(1).lower().startswith("t"):
                     out_labels["table"].add(label.group(2))
     mapped_uris = {uri for uri in expected_uris if uri in out_hrefs}
+    # a `Table N` the author set as a chart (a line plot captioned `Table 7`)
+    # is an image in the source too: rendered as a captioned image whose page
+    # region holds no rows of text-layer words, it is the table's structure
+    charts = _table_labels_without_text_rows(pdf, struct_draft, table_images & (labels["table"] - out_labels["table"]), sizes)
+    out_labels["table"] |= charts
 
     paragraphs = [_strip(p).strip() for p in re.findall(r"<p(?:\s[^>]*)?>(.*?)</p>", body_html, re.S)]
     prose = [p for p in paragraphs if len(p) > 40]
-    lowercase_starts = _lowercase_starts(body_html)
+    lowercase_starts = _lowercase_starts(body_html, display_line_ids(struct_draft))
     edge_numbers = set()
     for page in pages:
         for line in page[:6] + page[-6:]:
@@ -406,10 +576,17 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
                 edge_numbers.add(line.strip())
     furniture_hits = 0
     body_numbers = _number_paragraphs_in_body(struct_draft)
+    body_running = _furniture_exemptions(struct_draft)
     for p in paragraphs:
         key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", p.strip().lower()))
         if key in running:
-            furniture_hits += 1
+            # furniture, unless the draft also sets this text in the body of a
+            # page: the author byline on the title page repeats as the verso
+            # running head, and the byline is the paper's own text
+            if body_running.get(key, 0) > 0:
+                body_running[key] -= 1
+            else:
+                furniture_hits += 1
         elif PAGE_NUMBER_RE.match(p) and p.strip() in edge_numbers:
             # a bare number is a leaked page number unless the draft places it
             # in the body of the page (an answer line, an equation number)
@@ -471,6 +648,9 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
             previous_line = line
     source_words.update(rejoined)
     excluded_regions = _figure_boxes(struct_draft)
+    undecodable = _undecodable_text_regions(layout)
+    for page_index, boxes in undecodable.items():
+        excluded_regions.setdefault(page_index, []).extend(boxes)
     for page_index, boxes in _edge_furniture_boxes(struct_draft).items():
         excluded_regions.setdefault(page_index, []).extend(boxes)
     outside = _words_outside_figures(pdf, excluded_regions, sizes)
@@ -563,6 +743,9 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "ocrRequiredPages": [1] if diagnostics.get("OCR_REQUIRED") else [],
         "furnitureExcludedRunCount": len(running) + build_report.get("furniture_blocks", 0),
         "furnitureContaminationCount": furniture_hits,
+        "sourceFurnitureCandidateLines": _furniture_candidate_lines(layout),
+        "undecodableSourceLines": sum(len(boxes) for boxes in undecodable.values()),
+        "tableLabelledImages": len(charts),
         "equationCount": formulas,
         "internalLinkAnnotations": internal_links,
     }
@@ -596,14 +779,18 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
 
 def epubcheck(epub: Path) -> dict:
     try:
-        result = subprocess.run(["epubcheck", str(epub)], capture_output=True, text=True)
+        result = subprocess.run(["epubcheck", str(epub)], capture_output=True, text=True, timeout=120)
     except FileNotFoundError:
-        return {"available": False, "errors": None, "warnings": None}
+        return {"available": False, "returncode": None, "errors": None, "warnings": None, "code": "EPUBCHECK_UNAVAILABLE"}
+    except subprocess.TimeoutExpired:
+        return {"available": True, "returncode": None, "errors": None, "warnings": None, "code": "EPUBCHECK_TIMEOUT"}
+    except OSError:
+        return {"available": True, "returncode": None, "errors": None, "warnings": None, "code": "EPUBCHECK_EXEC_FAILED"}
     errors = len(re.findall(r"^ERROR", result.stdout + result.stderr, re.M))
     fatal = len(re.findall(r"^FATAL", result.stdout + result.stderr, re.M))
     warnings = len(re.findall(r"^WARNING", result.stdout + result.stderr, re.M))
     messages = [line for line in (result.stdout + result.stderr).splitlines() if line.startswith(("ERROR", "FATAL", "WARNING"))][:20]
-    return {"available": True, "errors": errors + fatal, "warnings": warnings, "messages": messages}
+    return {"available": True, "returncode": result.returncode, "errors": errors + fatal, "warnings": warnings, "messages": messages}
 
 
 if __name__ == "__main__":  # pragma: no cover

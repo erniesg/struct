@@ -34,3 +34,18 @@ Renderer exports are intentionally absent from the root facade. Import them
 from their explicit renderer paths. Public-consumer validation installs the
 packed tarball, imports only through the package export map, typechecks those
 imports, and proves the removed and not-yet-available paths fail closed.
+
+## Portable native MathML fonts
+
+`renderPublicationXhtml` embeds an unmodified, pinned STIX Two Math WOFF2 font
+when its output contains MathML. Its optional `mathFont` setting is `embedded`
+(default) or `external`. External mode references `struct-math.css`; callers
+selecting it must supply that stylesheet and its referenced font. `buildStructEpub`
+selects external mode and packages both resources automatically, independently
+of caller profile CSS. Publications without MathML gain no font resources.
+
+The font is a renderer resource, so document assets and semantic receipts are
+unchanged. The caller's profile CSS and its recorded hash remain unchanged;
+the complete EPUB digest binds the additional stylesheet and font bytes.
+`NOTICE` contains the font's license, upstream revision and digest. The original
+license and provenance are also retained in the generated math stylesheet.

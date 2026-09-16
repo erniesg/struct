@@ -1,3 +1,4 @@
+import { validateInlineMathMl, validateMathMlInlineRanges } from '../mathml'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
   STRUCT_SCHEMA_VERSION,
@@ -220,6 +221,7 @@ function parseInline(value: unknown, path: string): StructInline {
       'italic',
       'verticalAlign',
       'compactMathAtom',
+      'mathml',
       'semanticRole',
     ],
   )
@@ -237,6 +239,7 @@ function parseInline(value: unknown, path: string): StructInline {
       'italic',
       'verticalAlign',
       'compactMathAtom',
+      'mathml',
       'semanticRole',
     ].some((key) => has(parsed, key))
   )
@@ -245,9 +248,14 @@ function parseInline(value: unknown, path: string): StructInline {
       path,
       'zero-width inline runs cannot carry formatting or semantic data',
     )
+  const mathml = has(parsed, 'mathml')
+    ? stringValue(parsed.mathml, `${path}.mathml`)
+    : undefined
+  if (mathml !== undefined) validateInlineMathMl(mathml, `${path}.mathml`)
   return {
     start,
     end,
+    ...(mathml !== undefined ? { mathml } : {}),
     ...(has(parsed, 'href')
       ? { href: parseHref(parsed.href, `${path}.href`) }
       : {}),
@@ -314,6 +322,7 @@ function parseInlineList(value: unknown, path: string, text: string) {
         'inline end must not exceed text length',
       )
   }
+  validateMathMlInlineRanges(inline, text, path)
   return inline
 }
 
@@ -719,6 +728,7 @@ function parseBlock(value: unknown, path: string): StructBlock {
     [
       'label',
       'sourceObservationAnchorIds',
+      'noteBodyBlockIds',
       'table',
       'fallbackAssetIds',
       'furniture',
@@ -766,6 +776,14 @@ function parseBlock(value: unknown, path: string): StructBlock {
           sourceObservationAnchorIds: identifierList(
             parsed.sourceObservationAnchorIds,
             `${path}.sourceObservationAnchorIds`,
+          ),
+        }
+      : {}),
+    ...(has(parsed, 'noteBodyBlockIds')
+      ? {
+          noteBodyBlockIds: identifierList(
+            parsed.noteBodyBlockIds,
+            `${path}.noteBodyBlockIds`,
           ),
         }
       : {}),

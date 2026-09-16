@@ -1,4 +1,8 @@
 import {
+  mathFontBytes, mathFontStyles, MATH_FONT_HREF, MATH_FONT_CSS_HREF,
+  MATH_FONT_ID, MATH_FONT_CSS_ID,
+} from "./math-font";
+import {
   strFromU8,
   strToU8,
   unzipSync,
@@ -467,8 +471,18 @@ export async function buildStructEpub(
         `<item id="${attribute(asset.id)}" href="${attribute(asset.href)}" media-type="${attribute(asset.mediaType)}" />`,
     )
     .join("\n    ");
-  const content = renderPublicationXhtml(document);
-  const contentProperties = content.includes("<math")
+  const content = renderPublicationXhtml(document, { mathFont: "external" });
+  const hasMath = content.includes("<math");
+  const fontBytes = hasMath ? mathFontBytes() : undefined;
+  const fontCss = hasMath ? mathFontStyles("external") : undefined;
+  if (hasMath && assets.some((asset) =>
+    asset.id === MATH_FONT_ID || asset.id === MATH_FONT_CSS_ID ||
+    asset.href === MATH_FONT_HREF || asset.href === MATH_FONT_CSS_HREF
+  )) throw new Error("STRUCT EPUB asset collides with a math font resource");
+  const fontItems = hasMath
+    ? `<item id="${MATH_FONT_ID}" href="${MATH_FONT_HREF}" media-type="font/woff2" />\n    <item id="${MATH_FONT_CSS_ID}" href="${MATH_FONT_CSS_HREF}" media-type="text/css" />`
+    : "";
+  const contentProperties = hasMath
     ? ' properties="mathml"'
     : "";
   const packageDocument = `<?xml version="1.0" encoding="UTF-8"?>
@@ -487,12 +501,17 @@ export async function buildStructEpub(
     <item id="styles" href="styles.css" media-type="text/css" />
     <item id="struct" href="struct.json" media-type="application/json" />
     ${retainedProfile ? '<item id="profile" href="profile.json" media-type="application/json" />' : ""}
-    ${assetItems}
+    ${assetItems}${fontItems ? `\n    ${fontItems}` : ""}
   </manifest>
   <spine${retainedProfile ? ` page-progression-direction="${retainedProfile.pageProgressionDirection}"` : ""}><itemref idref="content" /></spine>
 </package>
 `;
-  const headings = document.blocks.filter((block) => block.kind === "heading");
+  const noteOwnedIds = new Set(
+    document.blocks.flatMap((block) => block.noteBodyBlockIds ?? []),
+  );
+  const headings = document.blocks.filter(
+    (block) => block.kind === "heading" && !noteOwnedIds.has(block.id),
+  );
   const nav = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>Contents</h1><ol><li><a href="content.xhtml">${text(document.metadata.title)}</a></li>${headings.map((block) => `<li><a href="content.xhtml#${attribute(block.id)}">${text(block.text)}</a></li>`).join("")}</ol></nav></body></html>
@@ -520,7 +539,9 @@ export async function buildStructEpub(
     utf8ByteLength(profile?.css ?? EPUB_CSS) +
     utf8ByteLength(serializedStructArtifact) +
     (serializedProfile ? utf8ByteLength(serializedProfile) : 0) +
-    assetBytes;
+    assetBytes +
+    (fontBytes?.byteLength ?? 0) +
+    (fontCss ? utf8ByteLength(fontCss) : 0);
   if (
     archiveBytes >
     MAX_STRUCT_EPUB_ARCHIVE_BYTES - ZIP_ARCHIVE_OVERHEAD_RESERVE
@@ -539,6 +560,10 @@ export async function buildStructEpub(
           "EPUB/profile.json": entry(serializedProfile!),
         }
       : {}),
+    ...(fontBytes && fontCss ? {
+      [`EPUB/${MATH_FONT_HREF}`]: binaryEntry(fontBytes),
+      [`EPUB/${MATH_FONT_CSS_HREF}`]: entry(fontCss),
+    } : {}),
     ...Object.fromEntries(
       assets.map((asset) => [`EPUB/${asset.href}`, binaryEntry(asset.bytes)]),
     ),

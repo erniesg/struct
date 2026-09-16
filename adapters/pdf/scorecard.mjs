@@ -22,6 +22,11 @@ const CRASH_CODES = new Set([
   'PDF_DOCUMENT_WORKER_FAILED',
   'IMPORT_CANCELLED',
   'OVERSIZED_PDF',
+  // the adapter's own refusals: no EPUB, or none that validates, is not a completed reconstruction
+  'STRUCT_RENDER_REFUSED',
+  'EPUBCHECK_FAILED',
+  'SOURCE_RASTER_FAILED',
+  'SOURCE_CHANGED',
 ])
 
 const count = (document, code) => document.diagnosticCounts?.[code] ?? 0
@@ -294,9 +299,12 @@ export const SUCCESS_CRITERIA = [
         extra.push('FURNITURE_CONTAMINATION')
       }
       const blockers = blockersFrom(document, this.codes, extra)
+      // a paper that sets no furniture at all (no line in the page's outer
+      // bands, measured on the source) has nothing to exclude
       const accounted =
         (completeness.furnitureExcludedRunCount ?? 0) > 0 ||
-        count(document, 'REPEATED_MARGIN_TEXT') > 0
+        count(document, 'REPEATED_MARGIN_TEXT') > 0 ||
+        completeness.sourceFurnitureCandidateLines === 0
       const applicable = pageCount > 1
       const pass = blockers.length === 0 && (accounted || pageCount <= 2)
       if (applicable && !pass && blockers.length === 0) {
