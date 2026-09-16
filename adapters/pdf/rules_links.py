@@ -221,6 +221,22 @@ class LinkRules:
                     claimed.add(id(existing))
                     processed.add(identity)
                     break
+                # an icon whose glyph name the layout model did read is already
+                # in the text; one left of this icon on the same line goes first,
+                # whichever of the two annotations was visited first
+                for run in sorted(block["inline"], key=lambda r: r["start"]):
+                    if run["start"] < position or not run.get("href"):
+                        continue
+                    if (ICON_WORDS_RE.sub("", block["text"][position:run["start"]])
+                            or not ICON_WORD_RE.fullmatch(block["text"][run["start"]:run["end"]])):
+                        break
+                    left_of = [other.rect[0] for other in self.links
+                               if other.page == link.page and other is not link and other.kind == "uri" and other.uri
+                               and normalize_uri(other.uri) == run["href"]
+                               and other.rect[1] <= top and other.rect[3] >= bottom]
+                    if not left_of or min(left_of) >= l:
+                        break
+                    position = run["end"]
                 insertion = " " + label
                 block["text"] = block["text"][:position] + insertion + block["text"][position:]
                 for run in block["inline"]:
