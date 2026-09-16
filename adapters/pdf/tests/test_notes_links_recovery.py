@@ -167,6 +167,31 @@ class IconLinkLabels(unittest.TestCase):
         self.assertEqual(host['text'],'Alice Smith [email]')
         self.assertEqual(host['text'][host['inline'][0]['start']:host['inline'][0]['end']],'[email]')
 
+    def test_missing_icon_goes_after_a_read_icon_left_of_it(self):
+        # 2508.03474v1 extracted on aarch64: the layout model read the envelope
+        # glyph name but not the ORCID one, and the taller ORCID icon is
+        # visited first; the inserted label must still follow the envelope
+        from pdf_links import SourceLink
+        host=block('authors','Guillermo Suarez-Tangil envelope',y=.2)
+        host['inline']=[dict(start=24,end=32,href='mailto:g@example.org')]
+        a=self._adapter(host,[SourceLink(1,(40,75,43,80),'mailto:g@example.org','uri'),
+                              SourceLink(1,(44,75,47,82),'https://orcid.org/0000-0000-0000-0001','uri')],
+                        [[(10,20,24,25,'Guillermo'),(25,20,39,25,'Suarez-Tangil')]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Guillermo Suarez-Tangil [email] [ORCID]')
+        by_href={r['href']:host['text'][r['start']:r['end']] for r in host['inline']}
+        self.assertEqual(by_href,{'mailto:g@example.org':'[email]','https://orcid.org/0000-0000-0000-0001':'[ORCID]'})
+
+    def test_missing_icon_goes_before_a_read_icon_right_of_it(self):
+        from pdf_links import SourceLink
+        host=block('authors','Guillermo Suarez-Tangil orcid',y=.2)
+        host['inline']=[dict(start=24,end=29,href='https://orcid.org/0000-0000-0000-0001')]
+        a=self._adapter(host,[SourceLink(1,(40,75,43,80),'mailto:g@example.org','uri'),
+                              SourceLink(1,(44,75,47,82),'https://orcid.org/0000-0000-0000-0001','uri')],
+                        [[(10,20,24,25,'Guillermo'),(25,20,39,25,'Suarez-Tangil')]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Guillermo Suarez-Tangil [email] [ORCID]')
+
     def test_a_linked_word_in_prose_is_not_an_icon(self):
         host=block('contact','Please email us or see ORCID for details',y=.2)
         host['inline']=[dict(start=7,end=12,href='mailto:team@example.org'),
