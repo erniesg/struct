@@ -402,15 +402,20 @@ class PageText:
             last glyph ends within a space of it, at its own height, is the
             line it trails, and that line's tail is its left context.
             """
-            left, top, bottom = min(c.l for c in chars), max(c.t for c in chars), min(c.b for c in chars)
+            left, bottom = min(c.l for c in chars), min(c.b for c in chars)
             best = None
             for other in self.lines:
                 if other is line or not other.chars:
                     continue
                 end = max(c.r for c in other.chars)
-                if not (0 <= left - end <= 0.02 * self.width):
+                # the marker must touch the line's last glyph: a wider reach
+                # would take the context of whatever ends near it, a row of a
+                # table or the line beside it in the other column
+                if not (0 <= left - end <= 0.006 * self.width):
                     continue
-                if min(c.b for c in other.chars) > top or max(c.t for c in other.chars) < bottom:
+                # and sit on that line's own baseline, raised within its height
+                base, cap = min(c.b for c in other.chars), max(c.t for c in other.chars)
+                if not (base <= bottom < cap):
                     continue
                 if best is None or end > best[0]:
                     best = (end, other.text)

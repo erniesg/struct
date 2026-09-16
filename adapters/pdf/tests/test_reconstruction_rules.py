@@ -358,3 +358,34 @@ class TrailingNoteMarker(unittest.TestCase):
     def test_a_marker_opening_its_own_line_still_reads_as_one(self):
         found = [m for m in self.markers([(100, 100, "Some line of words", False), (100, 130, "7", True)]) if m.text == "7"]
         self.assertTrue(all(m.at_line_start for m in found))
+
+
+class RuledFrontMatter(unittest.TestCase):
+    """A journal's first page sets its article info and abstract in a band
+    between two full-width rules. The layout model can walk the left cell, fall
+    through to the body below the band and come back for the right cell."""
+
+    @staticmethod
+    def page_with_band(rules):
+        from pdf_text import Rule
+        return SimpleNamespace(rules=[Rule(x0=x0, y0=y, x1=x1, y1=y, width=w) for x0, y, x1, w in rules])
+
+    def build(self, rules):
+        info = block("b5", "heading", "ARTICLE INFO", .07, .214, .21, .01)
+        keywords = block("b6", "paragraph", "Keywords: Network inference", .07, .242, .21, .08)
+        heading = block("b7", "heading", "1. Introduction", .07, .572, .16, .01)
+        intro = block("b8", "paragraph", "Networks provide a natural way to capture", .07, .588, .86, .10)
+        label = block("b14", "heading", "ABSTRACT", .37, .215, .21, .01)
+        abstract = block("b15", "paragraph", "Likelihood-based network models are often", .37, .242, .56, .27)
+        a = adapter([info, keywords, heading, intro, label, abstract])
+        a._page_text = lambda page: self.page_with_band(rules)
+        a._hoist_ruled_front_matter()
+        return [b["id"] for b in a.blocks]
+
+    def test_the_band_is_printed_before_what_is_under_it(self):
+        order = self.build([(.0714, .2127, .9286, .4), (.0714, .5366, .9286, .4)])
+        self.assertEqual(order, ["b5", "b6", "b14", "b15", "b7", "b8"])
+
+    def test_a_page_without_a_ruled_band_is_left_in_its_own_order(self):
+        order = self.build([(.0714, .9434, .9286, .2)])
+        self.assertEqual(order, ["b5", "b6", "b7", "b8", "b14", "b15"])

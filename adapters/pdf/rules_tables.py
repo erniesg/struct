@@ -250,11 +250,13 @@ class TableRules:
         for ref in getattr(item, "footnotes", []):
             note = ref.resolve(self.doc)
             if isinstance(note, TextItem) and note.text.strip():
-                # a note the table owns is a note: emitted as a caption it
-                # read as one, its marker linked nothing, and the address it
-                # cites (`3 https://openrouter.ai/`) never became a link
                 self._caption_refs.add(note.self_ref)
-                self._emit_footnote(note)
+                block = self._new_block("caption", note, sanitize(note.text).strip())
+                # the note's own links: a note that is nothing but the address
+                # it cites (`3 https://openrouter.ai/`) was emitted with no
+                # runs at all, so the link it carries resolved to nothing
+                block["inline"] = self._runs_for(note, block["text"])
+                self.blocks.append(block)
 
     def _fix_table_caption_sides(self) -> None:
         """A grid that took the caption of the table below it.

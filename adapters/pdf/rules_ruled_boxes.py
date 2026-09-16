@@ -25,6 +25,51 @@ from adapter_common import (
 class RuledBoxRules:
     """`StructAdapter` mixin (see pdf2struct.py): state lives on the adapter and is read through `self`."""
 
+    def _hoist_ruled_front_matter(self) -> None:
+        """Front matter printed in a ruled band, emitted after the body.
+
+        A journal's first page sets its article info and abstract in a band
+        between two full-width rules, in two cells of unequal width. The layout
+        model can walk the left cell, fall through to the body below the band,
+        and come back for the right cell — so the abstract arrives after the
+        introduction, and the sentence the introduction opens with is left
+        hanging off the block before it. Everything inside the band is printed
+        before everything under it, whatever order the model returned.
+        """
+        body = {"paragraph", "heading", "list-item", "caption"}
+        for page in [1]:
+            page_text = self._page_text(page)
+            if page_text is None:
+                continue
+            # the band's own rules run the width of the frame; the rule under a
+            # running head or over a footer sits in the page's edge bands
+            frame = sorted({round(rule.y0, 4) for rule in page_text.rules
+                            if rule.horizontal and rule.x1 - rule.x0 >= 0.8 and 0.05 <= rule.y0 <= 0.9})
+            if len(frame) < 2:
+                continue
+            top, bottom = frame[0], frame[1]
+            if not 0.05 < bottom - top < 0.6:
+                continue
+            inside, below = [], []
+            for index, block in enumerate(self.blocks):
+                if block["page"] != page or block["kind"] not in body or not block["evidence"]["boxes"]:
+                    continue
+                box = block["evidence"]["boxes"][0]
+                if box["y"] >= top and box["y"] + box["height"] <= bottom:
+                    inside.append(index)
+                elif box["y"] >= bottom:
+                    below.append(index)
+            if not inside or not below or inside[0] > below[-1]:
+                continue
+            moved = [index for index in inside if index > below[0]]
+            if not moved:
+                continue
+            carried = [self.blocks[index] for index in moved]
+            kept = [block for index, block in enumerate(self.blocks) if index not in set(moved)]
+            first = kept.index(self.blocks[below[0]])
+            self.blocks = kept[:first] + carried + kept[first:]
+            self.report.front_matter_hoisted += len(carried)
+
     def _rule_rows(self, page: int, cbox: dict) -> list[tuple[float, float, float, float]]:
         """Horizontal rules on the page that span the caption's column, merged
         when several segments share a baseline: (y, x0, x1, stroke width)

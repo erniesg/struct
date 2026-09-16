@@ -161,6 +161,7 @@ class AdapterReport:
     overlapping_items_rebuilt: int = 0
     tables_split_side_by_side: int = 0
     tables_caption_row_lifted: int = 0
+    front_matter_hoisted: int = 0
     edge_page_numbers_dropped: int = 0
     invisible_items_dropped: int = 0
     tick_label_runs_dropped: int = 0
@@ -515,6 +516,7 @@ class StructAdapter(
         self._place_table_notes()
         self._strip_glued_heads()
         self._split_cross_page_spans()
+        self._hoist_ruled_front_matter()
         self._join_split_paragraphs()
         self._link_notes()
         self._recover_link_icons()
