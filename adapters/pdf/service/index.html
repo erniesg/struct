@@ -141,7 +141,8 @@ function jobCard (job) {
   const s = job.summary || {}
   const files = (job.files || []).map(f =>
     `<a class="dl" href="/api/jobs/${job.id}/file/${encodeURIComponent(f.name)}">${f.label} · ${fmtBytes(f.bytes)}</a>`
-  ).join('')
+  ).join('') + (job.status === 'done'
+    ? `<a class="dl" href="/jobs/${job.id}/preview">preview beside the PDF →</a>` : '')
   const nums = s.status && s.status !== 'failed' ? `<div class="nums">
       text coverage <code>${(s.textCoverage ?? 0).toFixed(4)}</code> ·
       figures <code>${(s.figures || []).join('/')}</code> ·

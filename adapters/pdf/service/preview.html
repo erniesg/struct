@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>preview · pdf2epub</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf7; --fg: #1b1a17; --muted: #6b6863; --line: #e2ded5;
+    --card: #ffffff; --accent: #2f5d50; --bad: #a13d2d; --warn: #8a6d1f;
+    --stage: #ece9e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16171a; --fg:#e9e6df; --muted:#9a978f; --line:#2c2e33;
+            --card:#1e2024; --accent:#7fb3a1; --bad:#e08b78; --warn:#d9bd72;
+            --stage:#101114; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+
+  header.top { display:flex; align-items:center; gap:.9rem; padding:.6rem 1rem;
+               border-bottom:1px solid var(--line); background:var(--card); flex:none; }
+  header.top .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  header.top .meta { color:var(--muted); font-size:.8rem; }
+  a.back { color:var(--accent); text-decoration:none; font-size:.86rem; white-space:nowrap; }
+  .spacer { flex:1 1 auto; }
+
+  button, select, input { font: inherit; color:var(--fg); }
+  button { padding:.35rem .75rem; border-radius:7px; border:1px solid var(--line);
+           background:var(--card); cursor:pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  button.primary { border-color:var(--accent); color:var(--accent); }
+  select, input[type=number] { padding:.28rem .4rem; border-radius:6px; border:1px solid var(--line);
+                               background:var(--bg); }
+
+  .controls { display:grid; gap:.35rem 1.1rem; padding:.7rem 1rem; flex:none;
+                  border-bottom:1px solid var(--line); background:var(--card);
+                  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr)); }
+  .controls[hidden] { display:none; }
+  .field { display:flex; align-items:center; gap:.5rem; font-size:.82rem; color:var(--muted); }
+  .field[hidden] { display:none; }
+  .field > span.label { flex:none; min-width:5.2rem; }
+  .field input[type=range] { flex:1 1 auto; min-width:4rem; accent-color: var(--accent); }
+  .field output { flex:none; width:2.6rem; text-align:right; font-variant-numeric:tabular-nums; color:var(--fg); }
+  .field select { flex:1 1 auto; min-width:0; }
+  .field.custom input { width:4.4rem; }
+  .actions { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+
+  p.note { margin:0; padding:.45rem 1rem; font-size:.78rem; color:var(--muted);
+           background:var(--bg); border-bottom:1px solid var(--line); flex:none; }
+
+  main.panes { flex:1 1 auto; min-height:0; display:grid; gap:1px; background:var(--line);
+               grid-template-columns: 1fr 1fr; }
+  section.pane { display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--bg); }
+  .pane-bar { display:flex; align-items:center; gap:.45rem; padding:.4rem .7rem; flex:none;
+              border-bottom:1px solid var(--line); font-size:.8rem; color:var(--muted); background:var(--card); }
+  .pane-bar .grow { flex:1 1 auto; }
+  .pane-bar button { padding:.2rem .55rem; font-size:.8rem; }
+  .pane-bar input[type=number] { width:3.6rem; }
+  .stage { flex:1 1 auto; min-height:0; overflow:auto; background:var(--stage);
+           display:flex; justify-content:center; padding:.75rem; }
+
+  #page-holder { position:relative; align-self:flex-start; flex:none; max-width:100%; background:#fff;
+                 box-shadow:0 1px 6px rgba(0,0,0,.25); line-height:0; }
+  #page-image { display:block; width:100%; height:auto; }
+  .evidence { position:absolute; border:2px solid var(--bad); border-radius:2px;
+              background:color-mix(in srgb, var(--bad) 14%, transparent); pointer-events:none; }
+
+  #frame-holder { position:relative; flex:none; align-self:flex-start; background:#fff;
+                  box-shadow:0 1px 6px rgba(0,0,0,.25); overflow:hidden; }
+  #frame { border:0; display:block; background:#fff; transform-origin: top left; }
+
+  .empty { color:var(--muted); font-size:.85rem; padding:2rem 1rem; text-align:center; align-self:center; }
+  .err { color:var(--bad); }
+  #export-result { font-size:.8rem; }
+  #export-result a { color:var(--accent); }
+
+  @media (max-width: 900px) {
+    /* Stacked, and tall enough to be worth looking at: the page scrolls
+       rather than squeezing two panes into what the controls leave over. */
+    body { height:auto; min-height:100%; }
+    header.top { position:sticky; top:0; z-index:2; }
+    main.panes { grid-template-columns: 1fr; grid-template-rows: none; }
+    section.pane { height: 76vh; }
+    header.top .meta { display:none; }
+    .controls { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="back" href="/">← jobs</a>
+  <span class="name" id="doc-name">…</span>
+  <span class="meta" id="doc-meta"></span>
+  <span class="spacer"></span>
+  <button id="toggle-controls" aria-expanded="true" aria-controls="controls">Settings</button>
+</header>
+
+<div class="controls" id="controls">
+  <label class="field"><span class="label">Device</span>
+    <select id="device">
+      <option value="paperPro">Paper Pro · 1620×2160</option>
+      <option value="paperProMove">Paper Pro Move · 954×1696</option>
+      <option value="mobile">Phone · 390×844</option>
+      <option value="custom">Custom…</option>
+    </select>
+  </label>
+  <div class="field custom" id="custom-size" hidden><span class="label">Size</span>
+    <input id="custom-width" type="number" min="200" max="3000" step="1" aria-label="custom width in CSS pixels">
+    <span>×</span>
+    <input id="custom-height" type="number" min="200" max="4000" step="1" aria-label="custom height in CSS pixels">
+  </div>
+  <label class="field"><span class="label">Orientation</span>
+    <select id="orientation">
+      <option value="portrait">Portrait</option>
+      <option value="landscape">Landscape</option>
+    </select>
+  </label>
+  <label class="field"><span class="label">Font</span>
+    <select id="font">
+      <option value="default">EPUB default (Georgia)</option>
+      <option value="serif">Serif (Iowan / Palatino)</option>
+      <option value="sans">Sans (Helvetica / Arial)</option>
+    </select>
+  </label>
+  <label class="field"><span class="label">Font size</span>
+    <input id="font-size" type="range" min="8" max="40" step="0.5">
+    <output id="font-size-out"></output>
+  </label>
+  <label class="field"><span class="label">Line height</span>
+    <input id="line-height" type="range" min="1" max="2.5" step="0.05">
+    <output id="line-height-out"></output>
+  </label>
+  <label class="field"><span class="label">Margins</span>
+    <input id="margin" type="range" min="0" max="6" step="0.1">
+    <output id="margin-out"></output>
+  </label>
+  <label class="field"><span class="label">View</span>
+    <select id="view">
+      <option value="paginated">Paginated</option>
+      <option value="scroll">Scroll</option>
+    </select>
+  </label>
+  <label class="field"><span class="label">Rendition</span>
+    <select id="profile"></select>
+  </label>
+  <div class="field actions">
+    <button id="reset" type="button">Reset</button>
+    <button id="export" class="primary" type="button">Export EPUB</button>
+  </div>
+  <div class="field"><span id="export-result"></span></div>
+</div>
+
+<p class="note">An approximation, not the device. The reMarkable reader applies its own font,
+  size and margin settings, and how it treats publisher CSS is unverified — read this pane for
+  reading order, completeness and layout, not for exact type.</p>
+
+<main class="panes">
+  <section class="pane">
+    <div class="pane-bar">
+      <button id="page-prev" type="button" aria-label="previous source page">←</button>
+      <span>page</span>
+      <input id="page-number" type="number" min="1" step="1" aria-label="source page number">
+      <span id="page-total"></span>
+      <button id="page-next" type="button" aria-label="next source page">→</button>
+      <span class="grow"></span>
+      <a class="back" id="open-pdf" href="#" target="_blank" rel="noopener">original PDF ↗</a>
+    </div>
+    <div class="stage" id="pdf-stage">
+      <div id="page-holder"><img id="page-image" alt="source page"><div id="evidence-layer"></div></div>
+    </div>
+  </section>
+
+  <section class="pane">
+    <div class="pane-bar">
+      <button id="epub-prev" type="button" aria-label="previous rendition page">←</button>
+      <span id="epub-position">—</span>
+      <button id="epub-next" type="button" aria-label="next rendition page">→</button>
+      <span class="grow"></span>
+      <span id="selection">click a paragraph to find it in the PDF</span>
+    </div>
+    <div class="stage" id="epub-stage">
+      <div id="frame-holder">
+        <!-- No allow-scripts: the document in here cannot execute anything. See
+             SANDBOX NOTE in the script below for why allow-same-origin is safe
+             and what it buys. -->
+        <iframe id="frame" title="EPUB rendition" sandbox="allow-same-origin"></iframe>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict'
+// SANDBOX NOTE
+// ------------
+// The EPUB is derived from a PDF nobody vetted, so its markup is treated as
+// hostile. Three independent locks hold, and any one of them alone stops
+// script:
+//
+//   1. the iframe's sandbox has no `allow-scripts`, so the browsing context is
+//      script-disabled — no <script>, no inline handler, no javascript: URL,
+//      no SVG script, whatever the markup says;
+//   2. the document carries `default-src 'none'` in a CSP meta, and the page
+//      that framed it carries a CSP too (a srcdoc document inherits its
+//      parent's policy and must satisfy both), so a script source does not
+//      exist to fetch and no subresource can leave the machine;
+//   3. the markup is rebuilt here from an allowlist of elements and
+//      attributes before it is ever handed over: script, style, link, iframe,
+//      object, embed, form and friends never reach the frame, and neither
+//      does any attribute outside the list.
+//
+// `allow-same-origin` is present, and that is the one flag that needs saying
+// out loud. It grants the *parent* reach into the frame's document; it grants
+// the frame nothing, because the frame cannot run code. The documented danger
+// of allow-same-origin is `allow-scripts allow-same-origin` together, where
+// content can reach its own <iframe> element and drop the sandbox — that pair
+// is exactly what is refused here. What it buys is the whole point of the
+// page: typography is a <style> element the parent rewrites in place, so a
+// font-size change reflows the rendition with no network request and no
+// re-parse, and a click lands on the block the reader is pointing at.
+//
+// Images and fonts enter as blob: URLs the parent fetched with its own
+// credentials, so the frame never issues a request of its own — the CSP would
+// refuse one anyway.
+
+const $ = (selector) => document.querySelector(selector)
+const jobId = location.pathname.split('/')[2] || ''
+
+// Device viewports in CSS pixels. reMarkable Paper Pro is 1620×2160 device px
+// at 229 ppi and the Move is 954×1696 at 264 ppi (the numbers screenshot.mjs
+// uses); a CSS pixel is 1/96 in, so the CSS box is device px × 96 / ppi.
+const DEVICES = {
+  paperPro: { width: 679, height: 906, label: 'Paper Pro' },
+  paperProMove: { width: 347, height: 617, label: 'Paper Pro Move' },
+  mobile: { width: 390, height: 844, label: 'Phone' },
+}
+// Kept in step with render.mjs FONT_STACKS / PROFILE_CSS. The export is the
+// authority: these values only drive the on-screen approximation.
+const FONT_STACKS = {
+  default: "Georgia, 'Times New Roman', serif",
+  serif: "'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif",
+  sans: "'Helvetica Neue', Helvetica, Arial, 'Liberation Sans', sans-serif",
+}
+const PROFILE_BODY_PX = { paperPro: 15, paperProMove: 14, mobile: 16 }
+const DEFAULTS = { font: 'default', lineHeight: 1.65, marginEm: 0.6 }
+
+const state = {
+  job: null,
+  blocks: [],
+  blocksById: new Map(),
+  pagesById: new Map(),
+  pageAspect: new Map(),
+  profile: null,
+  device: 'paperPro',
+  custom: { width: 679, height: 906 },
+  orientation: 'portrait',
+  view: 'paginated',
+  typography: { font: 'default', fontSizePx: 15, lineHeight: 1.65, marginEm: 0.6 },
+  page: 1,
+  pageCount: 1,
+  selected: null,
+  blobUrls: [],
+  loading: false,
+}
+
+// --------------------------------------------------------------------- fetch
+
+async function api (path, options) {
+  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}${path}`, options)
+  if (response.status === 401) { location.reload(); throw new Error('unauthenticated') }
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}))
+    throw new Error(detail.detail || `${path} failed (${response.status})`)
+  }
+  return response
+}
+
+// -------------------------------------------------------------- sanitisation
+
+const HTML_NS = 'http://www.w3.org/1999/xhtml'
+const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
+const ALLOWED_TAGS = new Set([
+  'html', 'head', 'body', 'title', 'p', 'div', 'span', 'em', 'strong', 'i', 'b', 'u', 's',
+  'sup', 'sub', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'footer', 'section', 'article',
+  'aside', 'nav', 'main', 'figure', 'figcaption', 'img', 'table', 'thead', 'tbody', 'tfoot',
+  'tr', 'th', 'td', 'caption', 'colgroup', 'col', 'ol', 'ul', 'li', 'dl', 'dt', 'dd', 'pre',
+  'code', 'kbd', 'samp', 'var', 'blockquote', 'br', 'hr', 'a', 'small', 'big', 'cite', 'q',
+  'abbr', 'time', 'mark', 'ruby', 'rt', 'rp', 'wbr', 'del', 'ins',
+])
+// Dropped whole, children and all: these are the elements that can execute,
+// fetch, or frame something.
+const DROP_TAGS = new Set([
+  'script', 'style', 'link', 'base', 'meta', 'iframe', 'object', 'embed', 'form', 'input',
+  'button', 'select', 'option', 'textarea', 'template', 'noscript', 'audio', 'video',
+  'source', 'track', 'canvas', 'frame', 'frameset', 'applet', 'portal', 'map', 'area',
+  'param', 'dialog', 'slot', 'svg', 'marquee',
+])
+const ALLOWED_ATTRS = new Set([
+  'id', 'class', 'colspan', 'rowspan', 'headers', 'scope', 'alt', 'title', 'lang', 'dir',
+  'start', 'reversed', 'width', 'height', 'datetime', 'role', 'span', 'abbr', 'value', 'cite',
+])
+const SAFE_LINK = /^(?:https?|mailto|tel):/i
+
+function sanitizeElement (element, images) {
+  const namespace = element.namespaceURI
+  const tag = (element.localName || '').toLowerCase()
+  if (namespace === MATHML_NS) {
+    // MathML carries no scriptable element once annotation-xml is gone, and
+    // every attribute that could navigate or execute is stripped below.
+    if (tag === 'annotation-xml' || tag === 'annotation') { element.remove(); return }
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase()
+      if (name.startsWith('on') || name === 'style' || name === 'src' || name.endsWith('href')) {
+        element.removeAttributeNode(attribute)
+      }
+    }
+  } else if (namespace !== HTML_NS || DROP_TAGS.has(tag) || !ALLOWED_TAGS.has(tag)) {
+    element.remove()
+    return
+  } else {
+    // href and src are read before the allowlist strips them, and put back
+    // only in the one shape each tag is allowed to carry.
+    const href = element.getAttribute('href') || ''
+    const source = element.getAttribute('src') || ''
+    for (const attribute of [...element.attributes]) {
+      const local = (attribute.localName || '').toLowerCase()
+      const keep = ALLOWED_ATTRS.has(local) || local.startsWith('data-') || local.startsWith('aria-') ||
+        (attribute.namespaceURI !== null && local === 'type' /* epub:type */)
+      if (!keep) element.removeAttributeNode(attribute)
+    }
+    if (tag === 'a' && href.startsWith('#')) {
+      element.setAttribute('href', href)
+    } else if (tag === 'a' && SAFE_LINK.test(href)) {
+      // Sandbox has no allow-popups, so this cannot navigate anywhere; it
+      // keeps the link visible and inspectable, which is what a reviewer
+      // checking hyperlink recovery wants.
+      element.setAttribute('href', href)
+      element.setAttribute('target', '_blank')
+      element.setAttribute('rel', 'noopener noreferrer')
+    } else if (tag === 'img') {
+      const blob = images.get(source)
+      if (!blob) { element.remove(); return }
+      element.setAttribute('src', blob)
+    }
+  }
+  for (const child of [...element.children]) sanitizeElement(child, images)
+  for (const node of [...element.childNodes]) {
+    if (node.nodeType === Node.COMMENT_NODE || node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) {
+      node.remove()
+    }
+  }
+}
+
+function sanitizeCss (css, assets) {
+  return css
+    .replace(/<\/\s*style/gi, '<\\/style')
+    .replace(/@import[^;]*;/gi, '')
+    .replace(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi, (whole, quote, target) => {
+      const resolved = assets.get(target.trim())
+      return resolved ? `url("${resolved}")` : 'none'
+    })
+}
+
+// ------------------------------------------------------------------ the frame
+
+function resolveEntry (base, reference) {
+  const parts = base.split('/').slice(0, -1)
+  for (const piece of reference.split('/')) {
+    if (piece === '.' || piece === '') continue
+    if (piece === '..') parts.pop()
+    else parts.push(piece)
+  }
+  return parts.join('/')
+}
+
+async function fetchBlob (profile, entry, type) {
+  const response = await api(`/epub/${encodeURIComponent(profile)}/${entry.split('/').map(encodeURIComponent).join('/')}`)
+  const blob = await response.blob()
+  const url = URL.createObjectURL(type ? new Blob([blob], { type }) : blob)
+  state.blobUrls.push(url)
+  return url
+}
+
+async function loadRendition (profile) {
+  for (const url of state.blobUrls) URL.revokeObjectURL(url)
+  state.blobUrls = []
+  const source = await (await api(`/epub/${encodeURIComponent(profile)}/content.xhtml`)).text()
+  const parsed = new DOMParser().parseFromString(source, 'application/xhtml+xml')
+  const failed = parsed.getElementsByTagName('parsererror').length > 0
+  const document_ = failed ? new DOMParser().parseFromString(source, 'text/html') : parsed
+
+  // Every subresource the rendition needs, fetched here with the page's own
+  // credentials and handed to the frame as a blob: URL.
+  const assets = new Map()
+  const images = new Map()
+  for (const image of document_.querySelectorAll('img[src]')) {
+    const reference = image.getAttribute('src')
+    if (!reference || /^[a-z]+:/i.test(reference) || images.has(reference)) continue
+    try {
+      images.set(reference, await fetchBlob(profile, resolveEntry('content.xhtml', reference)))
+    } catch { /* an entry the archive does not carry: the <img> is dropped */ }
+  }
+  const sheets = []
+  for (const link of document_.querySelectorAll('link[rel~="stylesheet"][href]')) {
+    const entry = resolveEntry('content.xhtml', link.getAttribute('href'))
+    let css
+    try { css = await (await api(`/epub/${encodeURIComponent(profile)}/${entry}`)).text() } catch { continue }
+    for (const match of css.matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi)) {
+      const reference = match[2].trim()
+      if (!reference || /^[a-z]+:/i.test(reference) || assets.has(reference)) continue
+      try { assets.set(reference, await fetchBlob(profile, resolveEntry(entry, reference))) } catch { /* skip */ }
+    }
+    sheets.push(sanitizeCss(css, assets))
+  }
+
+  sanitizeElement(document_.documentElement, images)
+  const shell = document.implementation.createHTMLDocument('rendition')
+  const body = shell.importNode(document_.body || document_.documentElement, true)
+  const markup = body.innerHTML
+
+  const frame = $('#frame')
+  await new Promise((resolve) => {
+    const done = () => { clearTimeout(guard); resolve() }
+    const guard = setTimeout(done, 8000)
+    frame.addEventListener('load', done, { once: true })
+    frame.srcdoc = `<!DOCTYPE html><html><head>` +
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; ` +
+      `style-src 'unsafe-inline'; font-src blob:; base-uri 'none'; form-action 'none'">` +
+      `<meta charset="utf-8">` +
+      `<style id="epub-styles">${sheets.join('\n')}</style>` +
+      `<style id="preview-typography"></style>` +
+      `<style id="preview-chrome">${CHROME_CSS}</style>` +
+      `</head><body>${markup}</body></html>`
+  })
+  frame.contentDocument.addEventListener('click', onFrameClick)
+  frame.contentDocument.addEventListener('scroll', schedulePosition, { passive: true })
+  frame.contentWindow.addEventListener('scroll', schedulePosition, { passive: true })
+}
+
+const CHROME_CSS = `
+[data-struct-id] { scroll-margin: 1.2em; }
+[data-struct-id]:hover { background: rgba(127,127,127,0.10); }
+.struct-preview-selected, .struct-preview-selected:hover {
+  outline: 2px solid #2f5d50; outline-offset: 2px; background: rgba(47,93,80,0.12);
+}
+html.struct-preview-paginated, html.struct-preview-paginated > body {
+  height: 100%; overflow: hidden;
+}
+`
+
+// -------------------------------------------------------------- typography
+
+function typographyCss () {
+  const { font, fontSizePx, lineHeight, marginEm } = state.typography
+  // Everything else in the profile stylesheet is expressed in em, so moving
+  // the root font size carries the headings, captions and tables with it —
+  // which is what render.mjs does when it is given --font-size.
+  return `html { font-size: ${fontSizePx}px; }
+body { font-family: ${FONT_STACKS[font] || FONT_STACKS.default}; line-height: ${lineHeight}; padding: 0 ${marginEm}em; }`
+}
+
+function paginationCss (viewport) {
+  if (state.view !== 'paginated') return ''
+  const padding = state.typography.marginEm * state.typography.fontSizePx
+  const column = Math.max(80, Math.round(viewport.width - 2 * padding))
+  const gap = Math.max(0, Math.round(2 * padding))
+  return `\nbody { column-width: ${column}px; column-gap: ${gap}px; column-fill: auto; }`
+}
+
+/** The only thing a control changes: one <style> element inside the frame. */
+function applyTypography () {
+  const frame = $('#frame')
+  const target = frame.contentDocument && frame.contentDocument.getElementById('preview-typography')
+  if (!target) return
+  const viewport = currentViewport()
+  target.textContent = typographyCss() + paginationCss(viewport)
+  frame.contentDocument.documentElement.classList.toggle('struct-preview-paginated', state.view === 'paginated')
+  schedulePosition()
+}
+
+// ------------------------------------------------------------------- layout
+
+function currentViewport () {
+  const base = state.device === 'custom' ? state.custom : DEVICES[state.device]
+  return state.orientation === 'landscape'
+    ? { width: base.height, height: base.width }
+    : { width: base.width, height: base.height }
+}
+
+function layoutPdf () {
+  const stage = $('#pdf-stage')
+  const holder = $('#page-holder')
+  const aspect = state.pageAspect.get(state.page) || 0.7727
+  const available = { width: stage.clientWidth - 24, height: stage.clientHeight - 24 }
+  holder.style.width = `${Math.max(120, Math.round(Math.min(available.width, available.height * aspect)))}px`
+}
+
+function layoutFrame () {
+  const viewport = currentViewport()
+  const stage = $('#epub-stage')
+  const holder = $('#frame-holder')
+  const frame = $('#frame')
+  const available = { width: stage.clientWidth - 24, height: stage.clientHeight - 24 }
+  const scale = state.view === 'paginated'
+    ? Math.min(1, available.width / viewport.width, available.height / viewport.height)
+    : Math.min(1, available.width / viewport.width)
+  const height = state.view === 'paginated'
+    ? viewport.height
+    : Math.max(viewport.height, Math.round(available.height / scale))
+  frame.style.width = `${viewport.width}px`
+  frame.style.height = `${height}px`
+  frame.style.transform = `scale(${scale})`
+  holder.style.width = `${Math.round(viewport.width * scale)}px`
+  holder.style.height = `${Math.round(height * scale)}px`
+  applyTypography()
+}
+
+// ------------------------------------------------------------- page position
+
+let positionTimer = null
+function schedulePosition () {
+  clearTimeout(positionTimer)
+  positionTimer = setTimeout(reportPosition, 60)
+}
+
+function pageMetrics () {
+  const body = $('#frame').contentDocument?.body
+  if (!body) return null
+  const padding = state.typography.marginEm * state.typography.fontSizePx
+  const viewport = currentViewport()
+  const step = Math.max(1, Math.round(viewport.width - 2 * padding) + Math.round(2 * padding))
+  return { body, step, total: Math.max(1, Math.ceil((body.scrollWidth - padding) / step)) }
+}
+
+function reportPosition () {
+  const label = $('#epub-position')
+  if (state.view !== 'paginated') { label.textContent = 'scroll view'; return }
+  const metrics = pageMetrics()
+  if (!metrics) { label.textContent = '—'; return }
+  const current = Math.round(metrics.body.scrollLeft / metrics.step) + 1
+  label.textContent = `page ${Math.min(current, metrics.total)} of ${metrics.total}`
+}
+
+function turnPage (delta) {
+  if (state.view !== 'paginated') {
+    const frame = $('#frame').contentDocument
+    if (frame) frame.documentElement.scrollTop += delta * frame.documentElement.clientHeight * 0.9
+    return
+  }
+  const metrics = pageMetrics()
+  if (!metrics) return
+  const current = Math.round(metrics.body.scrollLeft / metrics.step)
+  const next = Math.min(metrics.total - 1, Math.max(0, current + delta))
+  metrics.body.scrollLeft = next * metrics.step
+  reportPosition()
+}
+
+function scrollFrameTo (element) {
+  if (!element) return
+  if (state.view !== 'paginated') { element.scrollIntoView({ block: 'start' }); return }
+  const metrics = pageMetrics()
+  if (!metrics) return
+  const left = element.getBoundingClientRect().left + metrics.body.scrollLeft
+  const padding = state.typography.marginEm * state.typography.fontSizePx
+  metrics.body.scrollLeft = Math.max(0, Math.round((left - padding) / metrics.step)) * metrics.step
+  reportPosition()
+}
+
+// --------------------------------------------------------------------- sync
+
+function selectBlock (blockId, { scrollFrame = false } = {}) {
+  const frame = $('#frame').contentDocument
+  if (!frame) return
+  for (const marked of frame.querySelectorAll('.struct-preview-selected')) {
+    marked.classList.remove('struct-preview-selected')
+  }
+  const element = frame.querySelector(`[data-struct-id="${CSS.escape(blockId)}"]`)
+  if (element) {
+    element.classList.add('struct-preview-selected')
+    if (scrollFrame) scrollFrameTo(element)
+  }
+  state.selected = blockId
+  const block = state.blocksById.get(blockId)
+  $('#selection').textContent = block
+    ? `${block.kind} · page ${block.page ?? '?'}`
+    : 'that block has no recorded source page'
+  if (block) showPage(block.boxes?.[0]?.page ?? block.page ?? state.page, blockId)
+}
+
+function onFrameClick (event) {
+  let node = event.target
+  while (node && node.nodeType === Node.ELEMENT_NODE && !node.hasAttribute('data-struct-id')) {
+    node = node.parentElement
+  }
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return
+  selectBlock(node.getAttribute('data-struct-id'))
+}
+
+// ----------------------------------------------------------------- pdf pane
+
+function showPage (number, highlightBlockId) {
+  const page = Math.min(Math.max(1, Number(number) || 1), state.pageCount)
+  state.page = page
+  $('#page-number').value = String(page)
+  const image = $('#page-image')
+  const wanted = `/api/jobs/${encodeURIComponent(jobId)}/page/${page}.png`
+  if (image.getAttribute('src') !== wanted) image.setAttribute('src', wanted)
+  layoutPdf()
+  drawEvidence(highlightBlockId ?? state.selected)
+}
+
+function drawEvidence (blockId) {
+  const layer = $('#evidence-layer')
+  layer.textContent = ''
+  const block = blockId ? state.blocksById.get(blockId) : null
+  for (const box of block?.boxes ?? []) {
+    if (box.page !== state.page) continue
+    const mark = document.createElement('div')
+    mark.className = 'evidence'
+    mark.style.left = `${(box.x * 100).toFixed(3)}%`
+    mark.style.top = `${(box.y * 100).toFixed(3)}%`
+    mark.style.width = `${(box.width * 100).toFixed(3)}%`
+    mark.style.height = `${(box.height * 100).toFixed(3)}%`
+    layer.append(mark)
+  }
+}
+
+function jumpToPage (number) {
+  showPage(number)
+  const first = state.pagesById.get(state.page)
+  if (first) selectBlock(first, { scrollFrame: true })
+  else $('#selection').textContent = `no rendition block came from page ${state.page}`
+}
+
+// ------------------------------------------------------------------ controls
+
+function readControls () {
+  state.device = $('#device').value
+  state.custom = {
+    width: Math.min(3000, Math.max(200, Number($('#custom-width').value) || 679)),
+    height: Math.min(4000, Math.max(200, Number($('#custom-height').value) || 906)),
+  }
+  state.orientation = $('#orientation').value
+  state.view = $('#view').value
+  state.typography = {
+    font: $('#font').value,
+    fontSizePx: Number($('#font-size').value),
+    lineHeight: Number($('#line-height').value),
+    marginEm: Number($('#margin').value),
+  }
+  $('#custom-size').hidden = state.device !== 'custom'
+  $('#font-size-out').value = `${state.typography.fontSizePx}px`
+  $('#line-height-out').value = state.typography.lineHeight.toFixed(2)
+  $('#margin-out').value = `${state.typography.marginEm.toFixed(1)}em`
+  layoutFrame()
+}
+
+function resetControls () {
+  const profile = state.profile || 'paperPro'
+  $('#device').value = DEVICES[profile] ? profile : 'paperPro'
+  $('#orientation').value = 'portrait'
+  $('#view').value = profile === 'mobile' ? 'scroll' : 'paginated'
+  $('#font').value = DEFAULTS.font
+  $('#font-size').value = String(PROFILE_BODY_PX[profile] ?? 15)
+  $('#line-height').value = String(DEFAULTS.lineHeight)
+  $('#margin').value = String(DEFAULTS.marginEm)
+  const viewport = DEVICES[profile] || DEVICES.paperPro
+  $('#custom-width').value = String(viewport.width)
+  $('#custom-height').value = String(viewport.height)
+  readControls()
+}
+
+/** Only the values that differ from the profile's defaults are sent, so an
+ *  untouched preview exports the same bytes the job already produced. */
+function requestedTypography () {
+  const profile = state.profile || 'paperPro'
+  const requested = {}
+  if (state.typography.font !== DEFAULTS.font) requested.font = state.typography.font
+  if (state.typography.fontSizePx !== (PROFILE_BODY_PX[profile] ?? 15)) requested.fontSizePx = state.typography.fontSizePx
+  if (state.typography.lineHeight !== DEFAULTS.lineHeight) requested.lineHeight = state.typography.lineHeight
+  if (state.typography.marginEm !== DEFAULTS.marginEm) requested.marginEm = state.typography.marginEm
+  return requested
+}
+
+async function runExport () {
+  const button = $('#export')
+  const result = $('#export-result')
+  button.disabled = true
+  result.classList.remove('err')
+  result.textContent = 'rendering and checking…'
+  try {
+    const response = await api('/export', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ profile: state.profile, typography: requestedTypography() }),
+    })
+    const made = await response.json()
+    const check = made.epubcheck || {}
+    const verdict = check.available === false
+      ? 'EPUBCheck not installed'
+      : `EPUBCheck: ${check.errors ?? '?'} errors, ${check.warnings ?? '?'} warnings`
+    result.innerHTML = `<a href="${made.url}" download>${made.name}</a> · ${Math.round(made.bytes / 1024)} KB · ${verdict}`
+  } catch (error) {
+    result.classList.add('err')
+    result.textContent = String(error.message || error)
+  } finally {
+    button.disabled = false
+  }
+}
+
+// --------------------------------------------------------------------- start
+
+async function start () {
+  if (!/^[0-9a-f]{32}$/.test(jobId)) { document.body.innerHTML = '<p class="empty err">bad job id</p>'; return }
+  const job = await (await api('')).json()
+  state.job = job
+  state.pageCount = Math.max(1, Number(job.pages) || 1)
+  $('#doc-name').textContent = job.originalName || job.stem
+  $('#doc-meta').textContent = `${job.pages} pages · ${job.profiles.join(', ')}`
+  $('#page-total').textContent = `of ${state.pageCount}`
+  $('#page-number').max = String(state.pageCount)
+  $('#open-pdf').href = `/api/jobs/${encodeURIComponent(jobId)}/source.pdf`
+
+  const select = $('#profile')
+  for (const file of job.files || []) {
+    const option = document.createElement('option')
+    option.value = file.profile
+    option.textContent = file.label || file.profile
+    select.append(option)
+  }
+  state.profile = (job.files || [])[0]?.profile || 'paperPro'
+  select.value = state.profile
+
+  const mapped = await (await api('/blocks')).json()
+  state.blocks = mapped.blocks || []
+  for (const page of mapped.pages || []) {
+    if (page.width > 0 && page.height > 0) state.pageAspect.set(page.page, page.width / page.height)
+  }
+  for (const block of state.blocks) {
+    state.blocksById.set(block.id, block)
+    const page = block.boxes?.[0]?.page ?? block.page
+    if (page != null && !state.pagesById.has(page)) state.pagesById.set(page, block.id)
+  }
+
+  await loadRendition(state.profile)
+  resetControls()
+  showPage(1)
+
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    $('#controls').hidden = true
+    $('#toggle-controls').setAttribute('aria-expanded', 'false')
+  }
+  $('#controls').addEventListener('input', readControls)
+  $('#controls').addEventListener('change', readControls)
+  $('#reset').addEventListener('click', resetControls)
+  $('#export').addEventListener('click', runExport)
+  $('#toggle-controls').addEventListener('click', () => {
+    const controls = $('#controls')
+    controls.hidden = !controls.hidden
+    $('#toggle-controls').setAttribute('aria-expanded', String(!controls.hidden))
+    layoutFrame()
+  })
+  select.addEventListener('change', async () => {
+    state.profile = select.value
+    await loadRendition(state.profile)
+    resetControls()
+    if (state.selected) selectBlock(state.selected, { scrollFrame: true })
+  })
+  $('#page-prev').addEventListener('click', () => jumpToPage(state.page - 1))
+  $('#page-next').addEventListener('click', () => jumpToPage(state.page + 1))
+  $('#page-number').addEventListener('change', () => jumpToPage(Number($('#page-number').value)))
+  $('#epub-prev').addEventListener('click', () => turnPage(-1))
+  $('#epub-next').addEventListener('click', () => turnPage(1))
+  window.addEventListener('resize', () => { layoutFrame(); layoutPdf() })
+  document.documentElement.dataset.previewReady = 'true'
+}
+
+start().catch((error) => {
+  document.body.innerHTML = `<p class="empty err">${String(error.message || error)}</p>`
+})
+</script>
+</body>
+</html>
