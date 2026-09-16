@@ -174,7 +174,6 @@ class AdapterReport:
     paratext_notes_demoted: int = 0
     footnotes_glyph_linked: int = 0
     footnotes_placed: int = 0
-    tables_degenerate_grid: int = 0
     tables_recovered_from_source: int = 0
     tables_caption_adopted: int = 0
     tables_continued: int = 0

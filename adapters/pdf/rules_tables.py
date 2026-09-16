@@ -115,17 +115,10 @@ class TableRules:
         if usable:
             rows = len(grid)
             columns = max(len(row) for row in grid)
-            filled = sum(1 for row in grid for cell in row if cell.text.strip())
-            single_text_box = rows * columns == 1 and (PROSE_LIKE_RE.search(grid[0][0].text) or len(grid[0][0].text) > 80)
-            if single_text_box:
+            if rows * columns == 1 and (PROSE_LIKE_RE.search(grid[0][0].text) or len(grid[0][0].text) > 80):
                 # a one-cell table holding prose is a boxed text (a prompt, an
                 # example); the text is the structure a reader wants
                 self.report.tables_single_cell_text += 1
-            elif rows * columns < 1:
-                # a single cell or a mostly empty grid is not a table a
-                # reader can use; the crop is the honest fallback
-                usable = False
-                self.report.tables_degenerate_grid += 1
         if usable:
             cells = []
             seen: set[tuple[int, int]] = set()
