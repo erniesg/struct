@@ -110,14 +110,14 @@ class SourceIconRecovery(unittest.TestCase):
         a.links=[SourceLink(1,(36,75,39,80),'https://orcid.org/0000-0000-0000-0001','uri')]
         a.word_boxes=[[(10,20,20,25,'ALICE'),(21,20,32,25,'SMITH'),(33,20,35,25,'a'),(45,20,55,25,'BOB'),(56,20,66,25,'JONES')]]
         a._recover_link_icons()
-        self.assertEqual(host['text'],'ALICE SMITH a ORCID , BOB JONES b')
+        self.assertEqual(host['text'],'ALICE SMITH a [ORCID] , BOB JONES b')
         link=next(r for r in host['inline'] if r.get('href'))
-        self.assertEqual(host['text'][link['start']:link['end']],'ORCID')
-        self.assertEqual(host['inline'][0]['start'],22)
+        self.assertEqual(host['text'][link['start']:link['end']],'[ORCID]')
+        self.assertEqual(host['inline'][0]['start'],24)
         self.assertIn('source-icon',host['evidence']['signals'])
         self.assertEqual(host['evidence']['boxes'][-1]['x'],.36)
         a._recover_link_icons()
-        self.assertEqual(host['text'].count('ORCID'),1)
+        self.assertEqual(host['text'].count('[ORCID]'),1)
 
     def test_icon_without_source_word_context_is_not_guessed(self):
         from pdf_links import SourceLink
@@ -127,6 +127,108 @@ class SourceIconRecovery(unittest.TestCase):
         a._recover_link_icons()
         self.assertEqual(host['text'],'Some text')
         self.assertEqual(host['inline'],[])
+
+class IconLinkLabels(unittest.TestCase):
+    """An author icon keeps its link and reads as a bracketed label, never as
+    the icon font's glyph name (2508.03474v1: `Oriol Saguillo envelope orcid`)."""
+
+    @staticmethod
+    def _adapter(host, links, words):
+        a=adapter([host]);a.doc=SimpleNamespace(pages={1:SimpleNamespace(size=SimpleNamespace(width=100,height=100))})
+        a.links=links;a.word_boxes=words
+        return a
+
+    def test_glyph_name_anchors_become_labels_and_shift_later_runs(self):
+        from pdf_links import SourceLink
+        text='Alice Smith envelope orcid Example University'
+        host=block('authors',text,y=.2)
+        host['inline']=[dict(start=12,end=20,href='mailto:alice@example.org'),
+                        dict(start=21,end=26,href='https://orcid.org/0000-0000-0000-0001'),
+                        dict(start=27,end=45,italic=True)]
+        a=self._adapter(host,[SourceLink(1,(33,75,36,80),'mailto:alice@example.org','uri'),
+                              SourceLink(1,(37,75,40,80),'https://orcid.org/0000-0000-0000-0001','uri')],
+                        [[(10,20,20,25,'Alice'),(21,20,32,25,'Smith')]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Alice Smith [email] [ORCID] Example University')
+        by_href={r.get('href'):host['text'][r['start']:r['end']] for r in host['inline']}
+        self.assertEqual(by_href['mailto:alice@example.org'],'[email]')
+        self.assertEqual(by_href['https://orcid.org/0000-0000-0000-0001'],'[ORCID]')
+        self.assertEqual(by_href[None],'Example University')
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Alice Smith [email] [ORCID] Example University')
+
+    def test_glyph_name_anchor_is_labelled_without_word_context(self):
+        # the icon's annotation found no source words to anchor on, so the
+        # recovery never claimed the run; the glyph name must still not show
+        host=block('authors','Alice Smith envelope',y=.2)
+        host['inline']=[dict(start=12,end=20,href='mailto:alice@example.org')]
+        a=self._adapter(host,[],[[]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Alice Smith [email]')
+        self.assertEqual(host['text'][host['inline'][0]['start']:host['inline'][0]['end']],'[email]')
+
+    def test_missing_icon_goes_after_a_read_icon_left_of_it(self):
+        # 2508.03474v1 extracted on aarch64: the layout model read the envelope
+        # glyph name but not the ORCID one, and the taller ORCID icon is
+        # visited first; the inserted label must still follow the envelope
+        from pdf_links import SourceLink
+        host=block('authors','Guillermo Suarez-Tangil envelope',y=.2)
+        host['inline']=[dict(start=24,end=32,href='mailto:g@example.org')]
+        a=self._adapter(host,[SourceLink(1,(40,75,43,80),'mailto:g@example.org','uri'),
+                              SourceLink(1,(44,75,47,82),'https://orcid.org/0000-0000-0000-0001','uri')],
+                        [[(10,20,24,25,'Guillermo'),(25,20,39,25,'Suarez-Tangil')]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Guillermo Suarez-Tangil [email] [ORCID]')
+        by_href={r['href']:host['text'][r['start']:r['end']] for r in host['inline']}
+        self.assertEqual(by_href,{'mailto:g@example.org':'[email]','https://orcid.org/0000-0000-0000-0001':'[ORCID]'})
+
+    def test_missing_icon_goes_before_a_read_icon_right_of_it(self):
+        from pdf_links import SourceLink
+        host=block('authors','Guillermo Suarez-Tangil orcid',y=.2)
+        host['inline']=[dict(start=24,end=29,href='https://orcid.org/0000-0000-0000-0001')]
+        a=self._adapter(host,[SourceLink(1,(40,75,43,80),'mailto:g@example.org','uri'),
+                              SourceLink(1,(44,75,47,82),'https://orcid.org/0000-0000-0000-0001','uri')],
+                        [[(10,20,24,25,'Guillermo'),(25,20,39,25,'Suarez-Tangil')]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Guillermo Suarez-Tangil [email] [ORCID]')
+
+    def test_a_linked_word_in_prose_is_not_an_icon(self):
+        host=block('contact','Please email us or see ORCID for details',y=.2)
+        host['inline']=[dict(start=7,end=12,href='mailto:team@example.org'),
+                        dict(start=23,end=28,href='https://orcid.org/0000-0000-0000-0001')]
+        a=self._adapter(host,[],[[]])
+        a._recover_link_icons()
+        self.assertEqual(host['text'],'Please email us or see ORCID for details')
+
+class UnlinkedIconLabels(unittest.TestCase):
+    """An icon with no annotation still reads as a label when what follows it
+    says what it is (2609.04172v1: `envelope hebx24@mails.tsinghua.edu.cn`)."""
+
+    @staticmethod
+    def _run(host):
+        a=adapter([host]);a.doc=SimpleNamespace(pages={1:SimpleNamespace(size=SimpleNamespace(width=100,height=100))})
+        a.links=[];a.word_boxes=[[]]
+        a._recover_link_icons()
+        return host
+
+    def test_envelope_before_an_address_is_the_email_icon(self):
+        host=block('contact','envelope hebx24@mails.tsinghua.edu.cn, {dingning,xcj}@tsinghua.edu.cn',kind='list-item',y=.2)
+        host['inline']=[dict(start=9,end=37,href='mailto:hebx24@mails.tsinghua.edu.cn')]
+        self._run(host)
+        self.assertEqual(host['text'],'[email] hebx24@mails.tsinghua.edu.cn, {dingning,xcj}@tsinghua.edu.cn')
+        run=host['inline'][0]
+        self.assertEqual(host['text'][run['start']:run['end']],'hebx24@mails.tsinghua.edu.cn')
+
+    def test_orcid_before_an_identifier_is_the_orcid_icon(self):
+        host=block('author','Alice Smith orcid 0000-0002-1825-0097',y=.2)
+        self._run(host)
+        self.assertEqual(host['text'],'Alice Smith [ORCID] 0000-0002-1825-0097')
+
+    def test_the_word_envelope_in_prose_stays(self):
+        for text in ('Consider the envelope of the family of lines.',
+                     'a slowly varying envelope, which would otherwise dominate',
+                     'the signal envelope @ 5 kHz'):
+            self.assertEqual(self._run(block('prose',text,y=.2))['text'],text)
 
 class TableLinkGeometry(unittest.TestCase):
     def test_literal_uri_in_cell_recovers_bad_cell_box_inside_table(self):
@@ -160,9 +262,9 @@ class SourceIconReviewRegressions(unittest.TestCase):
         a.links=[SourceLink(1,(33,75,36,80),'https://orcid.org/0000-0000-0000-0001','uri'),SourceLink(1,(37,75,40,82),'mailto:alice@example.org','uri')]
         a.word_boxes=[[(10,20,20,25,'ALICE'),(21,20,32,25,'SMITH')]]
         a._recover_link_icons()
-        self.assertEqual(host['text'],'ALICE SMITH ORCID email')
+        self.assertEqual(host['text'],'ALICE SMITH [ORCID] [email]')
         runs=sorted(host['inline'],key=lambda r:r['start'])
-        self.assertEqual([host['text'][r['start']:r['end']] for r in runs],['ORCID','email'])
+        self.assertEqual([host['text'][r['start']:r['end']] for r in runs],['[ORCID]','[email]'])
         self.assertEqual([r['href'] for r in runs],[a.links[0].uri,a.links[1].uri])
 
     def test_build_keeps_heading_author_note_reference_beside_icon(self):
@@ -188,7 +290,7 @@ class SourceIconReviewRegressions(unittest.TestCase):
         notes=[r for r in host['inline'] if r.get('semanticRole')=='note-reference']
         self.assertEqual(len(notes),1)
         self.assertEqual(host['text'][notes[0]['start']:notes[0]['end']],'*')
-        self.assertEqual(host['text'],'ALICE SMITH ORCID email *')
+        self.assertEqual(host['text'],'ALICE SMITH [ORCID] [email] *')
         self.assertEqual(report.footnotes_linked,1)
         self.assertEqual(next(r for r in draft['relationships'] if r['kind']=='footnote')['from'],host['id'])
 
@@ -200,10 +302,10 @@ class FurtherReviewRegressions(unittest.TestCase):
         a.links=[SourceLink(1,(33,75,36,80),'mailto:team@example.org','uri'),SourceLink(1,(70,75,73,80),'mailto:team@example.org','uri')]
         a.word_boxes=[[(10,20,20,25,'ALICE'),(21,20,32,25,'SMITH'),(42,20,48,25,'and'),(50,20,58,25,'BOB'),(59,20,69,25,'JONES')]]
         a._recover_link_icons()
-        self.assertEqual(host['text'],'ALICE SMITH email and BOB JONES email')
+        self.assertEqual(host['text'],'ALICE SMITH [email] and BOB JONES [email]')
         self.assertEqual(len([r for r in host['inline'] if r.get('href')]),2)
         a._recover_link_icons()
-        self.assertEqual(host['text'].count('email'),2)
+        self.assertEqual(host['text'].count('[email]'),2)
 
     def test_twelve_is_not_two_implicitly_concatenated_note_labels(self):
         host=block('author','ALICE SMITH12',kind='heading')
