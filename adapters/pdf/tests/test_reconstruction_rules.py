@@ -254,3 +254,107 @@ class EvidenceBindsTheCode(unittest.TestCase):
             self.assertIn(module.name, bound)
         for module in ("pdf2struct.py", "pdf2epub.py", "evaluate.py", "render.mjs", "pdf_text.py", "table_split.py", "overlap_repair.py"):
             self.assertIn(module, bound)
+
+
+class SentenceRunsOn(unittest.TestCase):
+    """A bracket that closes an aside is not the end of the sentence."""
+
+    @staticmethod
+    def runs_on(text):
+        from adapter_common import sentence_runs_on
+        return sentence_runs_on(text)
+
+    def test_an_aside_opened_mid_sentence_leaves_it_open(self):
+        self.assertTrue(self.runs_on("along a path around the core the local configurations (the dyad in our spiral system)"))
+
+    def test_an_aside_that_is_its_own_sentence_ends_the_text(self):
+        self.assertFalse(self.runs_on("The proof follows the same lines. (It is given in Appendix B.)"))
+
+    def test_an_aside_after_a_finished_sentence_ends_the_text(self):
+        self.assertFalse(self.runs_on("The estimator is consistent. (see Appendix B)"))
+
+    def test_an_ordinary_full_stop_still_ends_the_text(self):
+        self.assertFalse(self.runs_on("The estimator is consistent for every sample size."))
+
+    def test_an_unterminated_line_still_runs_on(self):
+        self.assertTrue(self.runs_on("the local configurations of the order parameter"))
+
+
+class CaptionRowInTheGrid(unittest.TestCase):
+    def test_a_first_row_holding_the_caption_is_lifted_out(self):
+        """A caption printed inside the table's ruled block is read as its
+        first row: the table then owns no caption and the label resolves to
+        nothing."""
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DoclingDocument, ProvenanceItem, TableCell, TableData
+        from table_split import lift_caption_rows
+        doc = DoclingDocument(name="t")
+        doc.add_page(page_no=1, size=__import__("docling_core.types.doc", fromlist=["Size"]).Size(width=600, height=800))
+        def cell(text, row, col, span=1):
+            return TableCell(text=text, start_row_offset_idx=row, end_row_offset_idx=row + 1,
+                             start_col_offset_idx=col, end_col_offset_idx=col + span, col_span=span, row_span=1,
+                             bbox=BoundingBox(l=10 + col * 100, r=10 + (col + span) * 100, t=700 - row * 20, b=690 - row * 20, coord_origin=CoordOrigin.BOTTOMLEFT))
+        cells = [cell("Table 1: Structural forms surveyed.", 0, 0, 2),
+                 cell("Structure", 1, 0), cell("Section", 1, 1),
+                 cell("Weighted sum", 2, 0), cell("Sec. 3.1", 2, 1)]
+        table = doc.add_table(data=TableData(num_rows=3, num_cols=2, table_cells=cells),
+                              prov=ProvenanceItem(page_no=1, charspan=(0, 0), bbox=BoundingBox(l=10, r=210, t=700, b=650, coord_origin=CoordOrigin.BOTTOMLEFT)))
+        self.assertEqual(lift_caption_rows(doc), 1)
+        self.assertEqual(len(table.captions), 1)
+        self.assertEqual(table.captions[0].resolve(doc).text, "Table 1: Structural forms surveyed.")
+        self.assertEqual(table.data.num_rows, 2)
+        self.assertNotIn("Table 1: Structural forms surveyed.", [c.text for c in table.data.table_cells])
+
+
+class TableCaptionSides(unittest.TestCase):
+    """Two tables stacked on a page, captions above: the upper grid can be
+    given the caption printed below it, which belongs to the lower grid."""
+
+    def test_the_caption_below_goes_to_the_table_it_stands_over(self):
+        # a third table, captioned the way the paper sets them, establishes the side
+        settled = block("t0", "table", "Table 3: An earlier table.", .1, .60, .8, .09, page=2)
+        upper = block("t1", "table", "Table 5: The second table.", .1, .21, .8, .09)
+        lower = block("t2", "table", "", .1, .39, .8, .05)
+        for entry in (settled, upper, lower):
+            entry["table"] = {"rows": 2, "columns": 2, "cells": []}
+        a = adapter([settled, upper, lower])
+        a._attached_caption_boxes = {"t0": dict(page=2, x=.1, y=.55, width=.8, height=.04, rotation=0),
+                                     "t1": dict(page=1, x=.1, y=.32, width=.8, height=.05, rotation=0)}
+        a._fix_table_caption_sides()
+        self.assertEqual(upper["text"], "")
+        self.assertEqual(lower["text"], "Table 5: The second table.")
+
+    def test_a_caption_above_its_own_table_is_left_alone(self):
+        table = block("t1", "table", "Table 5: The only table.", .1, .21, .8, .09)
+        table["table"] = {"rows": 2, "columns": 2, "cells": []}
+        a = adapter([table])
+        a._attached_caption_boxes = {"t1": dict(page=1, x=.1, y=.15, width=.8, height=.04, rotation=0)}
+        a._fix_table_caption_sides()
+        self.assertEqual(table["text"], "Table 5: The only table.")
+
+
+class TrailingNoteMarker(unittest.TestCase):
+    """A note marker set hard against the end of its line is raised far enough
+    to band on its own; read as a line-opening marker it links nothing."""
+
+    @staticmethod
+    def markers(entries):
+        from pdf_text import Char, PageText
+        chars = []
+        for x, y, text, raised in entries:
+            for index, value in enumerate(text):
+                if value == " ":
+                    continue
+                top = 1000 - y
+                bottom = top - (6 if raised else 10)
+                chars.append(Char(value, x + index * 5, bottom, x + index * 5 + 4, top, "Times"))
+        return PageText(1, 1000, 1000, chars).markers
+
+    def test_a_marker_after_a_line_takes_that_line_as_its_context(self):
+        found = [m for m in self.markers([(100, 100, "CLASS v3.1.0", False), (163, 97, "7", True)]) if m.text == "7"]
+        self.assertEqual(len(found), 1)
+        self.assertFalse(found[0].at_line_start)
+        self.assertTrue(found[0].left_context.endswith("v3.1.0"))
+
+    def test_a_marker_opening_its_own_line_still_reads_as_one(self):
+        found = [m for m in self.markers([(100, 100, "Some line of words", False), (100, 130, "7", True)]) if m.text == "7"]
+        self.assertTrue(all(m.at_line_start for m in found))

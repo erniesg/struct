@@ -390,6 +390,32 @@ class PageText:
 
     def _find_markers(self) -> list[Marker]:
         markers: list[Marker] = []
+
+        def line_ending_left_of(chars) -> str:
+            """The text of the line this run trails, when the run is a line of
+            its own.
+
+            A note marker set hard against the end of its line (`CLASS
+            v3.1.0`<sup>7</sup>) is raised far enough that it bands on its own.
+            It then reads as a marker opening a line — an affiliation or a list
+            number — and the note it belongs to is never linked. The line whose
+            last glyph ends within a space of it, at its own height, is the
+            line it trails, and that line's tail is its left context.
+            """
+            left, top, bottom = min(c.l for c in chars), max(c.t for c in chars), min(c.b for c in chars)
+            best = None
+            for other in self.lines:
+                if other is line or not other.chars:
+                    continue
+                end = max(c.r for c in other.chars)
+                if not (0 <= left - end <= 0.02 * self.width):
+                    continue
+                if min(c.b for c in other.chars) > top or max(c.t for c in other.chars) < bottom:
+                    continue
+                if best is None or end > best[0]:
+                    best = (end, other.text)
+            return best[1] if best else ""
+
         for line in self.lines:
             run: list[int] = []
 
@@ -402,6 +428,8 @@ class PageText:
                     first, last = run[0], run[-1]
                     left = "".join(c.text for c in line.chars[:first] if not c.superscript)
                     right = "".join(c.text for c in line.chars[last + 1 :] if not c.superscript)
+                    if not left.strip():
+                        left = line_ending_left_of(chars)
                     l = min(c.l for c in chars)
                     r = max(c.r for c in chars)
                     b = min(c.b for c in chars)

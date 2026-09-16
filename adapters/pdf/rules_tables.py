@@ -250,8 +250,55 @@ class TableRules:
         for ref in getattr(item, "footnotes", []):
             note = ref.resolve(self.doc)
             if isinstance(note, TextItem) and note.text.strip():
+                # a note the table owns is a note: emitted as a caption it
+                # read as one, its marker linked nothing, and the address it
+                # cites (`3 https://openrouter.ai/`) never became a link
                 self._caption_refs.add(note.self_ref)
-                self.blocks.append(self._new_block("caption", note, note.text.strip()))
+                self._emit_footnote(note)
+
+    def _fix_table_caption_sides(self) -> None:
+        """A grid that took the caption of the table below it.
+
+        Where a paper sets its table captions above their tables, a grid
+        carrying a caption printed *below* it has taken the next table's
+        caption: two tables stacked on a page end up one caption out of step,
+        the last grid captionless and the first caption orphaned. The caption
+        goes to the grid it stands over, and the caption above this one is
+        left for it to adopt.
+        """
+        sides = []
+        for block in self.blocks:
+            caption = self._attached_caption_boxes.get(block["id"])
+            boxes = block["evidence"]["boxes"]
+            if block["kind"] == "table" and block["text"] and caption and boxes:
+                sides.append(caption["y"] >= boxes[0]["y"] + boxes[0]["height"] * 0.5)
+        if not sides or sum(sides) > len(sides) / 2:
+            return  # this paper sets its table captions below their tables
+        for block in list(self.blocks):
+            if block["kind"] != "table" or not block["text"] or not block["evidence"]["boxes"]:
+                continue
+            caption = self._attached_caption_boxes.get(block["id"])
+            box = block["evidence"]["boxes"][0]
+            if caption is None or caption["y"] < box["y"] + box["height"] * 0.5:
+                continue
+            for other in self.blocks:
+                if other is block or other["kind"] != "table" or other["text"] or other["page"] != block["page"] or not other["evidence"]["boxes"]:
+                    continue
+                obox = other["evidence"]["boxes"][0]
+                gap = obox["y"] - (caption["y"] + caption["height"])
+                overlap = min(caption["x"] + caption["width"], obox["x"] + obox["width"]) - max(caption["x"], obox["x"])
+                if not (-0.01 <= gap <= 0.07) or overlap < 0.5 * min(caption["width"], obox["width"]):
+                    continue
+                other["text"], other["inline"] = block["text"], block.get("inline", [])
+                if block.get("label"):
+                    other["label"] = block["label"]
+                other["evidence"]["sourceIds"] = list(dict.fromkeys(other["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))
+                self._attached_caption_boxes[other["id"]] = caption
+                self._attached_caption_boxes.pop(block["id"], None)
+                block["text"], block["inline"] = "", []
+                block.pop("label", None)
+                self.report.caption_sides_fixed += 1
+                break
 
     def _row_like(self, block: dict) -> bool:
         return (

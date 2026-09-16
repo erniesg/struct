@@ -107,6 +107,39 @@ def is_terminated(text: str) -> bool:
     return bool(TERMINAL_RE.search(stripped))
 
 
+def sentence_runs_on(text: str) -> bool:
+    """Whether the sentence this text ends in carries on into the next block.
+
+    Beyond an unterminated ending, a text can close on a bracket that ends an
+    aside rather than the sentence: `… the local configurations (the dyad {S,
+    Ω} in our spiral system or the tripod in a 120° Néel state)` is the subject
+    of a verb printed on the next page. The bracket counts as terminal
+    punctuation only when it closes a sentence — one that opened after the last
+    full stop, or that ends with a stop of its own inside the brackets.
+    """
+    if not is_terminated(text):
+        return True
+    stripped = text.rstrip()
+    if not stripped.endswith(")"):
+        return False
+    depth = 0
+    opened = None
+    for index in range(len(stripped) - 1, -1, -1):
+        if stripped[index] == ")":
+            depth += 1
+        elif stripped[index] == "(":
+            depth -= 1
+            if depth == 0:
+                opened = index
+                break
+    if opened is None:
+        return False
+    # `… as shown. (The proof is in Appendix B.)`: an aside that is its own
+    # sentence, or that follows one, ends the text
+    inside = stripped[opened + 1 : -1]
+    return not re.search(r"[.!?]\s*$", stripped[:opened]) and not re.search(r"[.!?]\s*$", inside)
+
+
 def heading_level(text: str, docling_level: int | None, last_numbered_level: int | None) -> int:
     stripped = text.strip()
     if NUMBERED_HEADING_RE.match(stripped):

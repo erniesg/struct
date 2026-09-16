@@ -384,6 +384,29 @@ def _number_paragraphs_in_body(struct_draft: Path | None) -> Counter:
     return found
 
 
+def _repeated_lines_set_in_body(struct_draft: Path | None) -> Counter:
+    """Paragraphs the draft places outside the page's edge bands, keyed the way
+    repeated edge lines are keyed.
+
+    A line can be furniture on most pages and content on one: an author byline
+    under the title is set again as the verso running head, a journal's article
+    title heads every recto. The byline is the paper's own text, in the body of
+    the title page, and is not a leak.
+    """
+    found: Counter = Counter()
+    draft = _load_draft(struct_draft)
+    if draft is None:
+        return found
+    for block in draft.get("blocks", []):
+        text = (block.get("text") or "").strip()
+        if block.get("kind") != "paragraph" or not text:
+            continue
+        boxes = block.get("evidence", {}).get("boxes") or []
+        if boxes and 0.12 < boxes[0]["y"] and boxes[0]["y"] + boxes[0]["height"] < 0.88:
+            found[re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower()))] += 1
+    return found
+
+
 def _unassociated_figures(struct_draft: Path | None) -> int:
     """Caption-less figures the reader would notice: on a page that still
     carries an orphan `Figure N` caption, or stacked against a captioned
@@ -543,10 +566,17 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
                 edge_numbers.add(line.strip())
     furniture_hits = 0
     body_numbers = _number_paragraphs_in_body(struct_draft)
+    body_running = _repeated_lines_set_in_body(struct_draft)
     for p in paragraphs:
         key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", p.strip().lower()))
         if key in running:
-            furniture_hits += 1
+            # furniture, unless the draft also sets this text in the body of a
+            # page: the author byline on the title page repeats as the verso
+            # running head, and the byline is the paper's own text
+            if body_running.get(key, 0) > 0:
+                body_running[key] -= 1
+            else:
+                furniture_hits += 1
         elif PAGE_NUMBER_RE.match(p) and p.strip() in edge_numbers:
             # a bare number is a leaked page number unless the draft places it
             # in the body of the page (an answer line, an equation number)

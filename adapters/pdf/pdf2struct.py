@@ -48,7 +48,7 @@ from source_raster import SourceRasterError  # noqa: F401  (re-exported)
 from layout_normalization import normalize_provenance
 from figure_recovery import normalize_sideways_captions
 from overlap_repair import repair_overlapping_items
-from table_split import split_side_by_side_tables
+from table_split import lift_caption_rows, split_side_by_side_tables
 from adapter_common import (  # noqa: F401  (re-exported: tests and sibling modules import these names from pdf2struct)
     TERMINAL_RE,
     CITATION_TAIL_RE,
@@ -160,6 +160,7 @@ class AdapterReport:
     ocr_text_regions: int = 0
     overlapping_items_rebuilt: int = 0
     tables_split_side_by_side: int = 0
+    tables_caption_row_lifted: int = 0
     edge_page_numbers_dropped: int = 0
     invisible_items_dropped: int = 0
     tick_label_runs_dropped: int = 0
@@ -240,6 +241,7 @@ class StructAdapter(
         self.report = AdapterReport()
         self.report.overlapping_items_rebuilt = repair_overlapping_items(doc, page_layout or [])
         self.report.tables_split_side_by_side = split_side_by_side_tables(doc)
+        self.report.tables_caption_row_lifted = lift_caption_rows(doc)
         self.doc = doc
         self.source_raster = source_raster
         self.word_boxes = word_boxes or []
@@ -519,6 +521,7 @@ class StructAdapter(
         self._merge_subpanel_figures()
         self._read_captions_inside_figures()
         self._fix_caption_sides()
+        self._fix_table_caption_sides()
         self._adopt_orphan_captions()
         self._adopt_captions_by_geometry()
         self._adopt_captions_across_page_break()

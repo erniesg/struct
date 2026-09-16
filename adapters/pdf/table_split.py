@@ -38,6 +38,50 @@ def _caption_cells(table: TableItem):
     return heads
 
 
+def lift_caption_rows(doc: DoclingDocument) -> int:
+    """Give a grid whose first row is its caption that caption. Returns the count.
+
+    A caption printed above a table inside the same ruled block is read as the
+    grid's first row, spanning every column. The table then owns no caption:
+    the reader sees `Table 1: …` as a cell of the table it names, and nothing
+    downstream can resolve the label. The row is lifted out and attached to the
+    table it captions, leaving the rows the table is made of.
+    """
+    lifted = 0
+    for table in doc.tables:
+        grid = table.data.table_cells if table.data else []
+        first = [cell for cell in grid if cell.start_row_offset_idx == 0]
+        columns = table.data.num_cols or 0
+        if table.captions or len(first) != 1 or len(grid) < 4 or not columns:
+            continue
+        head = first[0]
+        if head.col_span < columns or not CAPTION_CELL_RE.match(head.text or ""):
+            continue
+        text = (head.text or "").strip()
+        provenance = table.prov[0] if table.prov else None
+        if provenance is None:
+            continue
+        caption = doc.add_text(label=DocItemLabel.CAPTION, text=text, orig=text,
+                               prov=ProvenanceItem(page_no=provenance.page_no, charspan=(0, len(text)),
+                                                   bbox=head.bbox or provenance.bbox))
+        table.captions.append(caption.get_ref())
+        for cell in grid:
+            cell.start_row_offset_idx -= 1
+            cell.end_row_offset_idx -= 1
+        table.data.table_cells = [cell for cell in grid if cell.end_row_offset_idx > 0]
+        table.data.num_rows = max((cell.end_row_offset_idx for cell in table.data.table_cells), default=0)
+        # the caption is `add_text`-ed to the end of the body: move it beside
+        # its table, where the reader expects to meet it
+        position = next((index for index, ref in enumerate(doc.body.children) if ref.cref == table.self_ref), None)
+        reference = caption.get_ref()
+        body = [child for child in doc.body.children if child.cref != reference.cref]
+        if position is not None:
+            body.insert(position + 1, reference)
+            doc.body.children = body
+        lifted += 1
+    return lifted
+
+
 def _bounds(cells, fallback: BoundingBox) -> BoundingBox:
     boxes = [cell.bbox for cell in cells if cell.bbox]
     if not boxes:

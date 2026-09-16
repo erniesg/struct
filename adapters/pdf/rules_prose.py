@@ -30,6 +30,7 @@ from adapter_common import (
     VISIBLE_RE,
     heading_level,
     is_terminated,
+    sentence_runs_on,
     sanitize,
 )
 
@@ -95,7 +96,7 @@ class ProseRules:
                 or not -0.005 <= next_box["y"] - previous_box["y"] - previous_box["height"] <= 0.03
                 or min(previous_box["x"] + previous_box["width"], next_box["x"] + next_box["width"]) <= max(previous_box["x"], next_box["x"])):
                 break
-            if is_terminated(previous_text) or not LOWER_START_RE.match(next_text.lstrip()):
+            if not sentence_runs_on(previous_text) or not LOWER_START_RE.match(next_text.lstrip()):
                 # A new sentence can still be the same caption when its glyph
                 # size, left alignment and normal interline gap continue it.
                 page_text = self._page_text(previous_box["page"]) if getattr(self, "source_text", None) else None
@@ -284,7 +285,7 @@ class ProseRules:
             overlap = min(other["x"] + other["width"], box["x"] + box["width"]) - max(other["x"], box["x"])
             if overlap < 0.6 * min(other["width"], box["width"]):
                 continue
-            return candidate if not is_terminated(candidate["text"]) else None
+            return candidate if sentence_runs_on(candidate["text"]) else None
         return None
 
     def _body_text_below(self, box: dict) -> bool:
@@ -358,13 +359,13 @@ class ProseRules:
                 candidate = self.blocks[-back]
                 if candidate["kind"] == "paragraph":
                     between = self.blocks[len(self.blocks) - back + 1 :]
-                    if between and all(b["kind"] in FLOAT_KINDS - {"equation"} for b in between) and not is_terminated(candidate["text"]):
+                    if between and all(b["kind"] in FLOAT_KINDS - {"equation"} for b in between) and sentence_runs_on(candidate["text"]):
                         pending = candidate
                         resumed = True
                     break
                 if candidate["kind"] not in FLOAT_KINDS - {"equation"}:
                     break
-        if pending is not None and not is_terminated(pending["text"]) and (LOWER_START_RE.match(text.lstrip()) or pending["text"].rstrip().endswith("-")):
+        if pending is not None and sentence_runs_on(pending["text"]) and (LOWER_START_RE.match(text.lstrip()) or pending["text"].rstrip().endswith("-")):
             previous = pending["text"].rstrip()
             following = text.lstrip()
             offset_shift = len(text) - len(following)
@@ -538,7 +539,7 @@ class ProseRules:
                     break
                 back -= 1
                 continue
-            if is_terminated(candidate["text"]):
+            if not sentence_runs_on(candidate["text"]):
                 candidate_box = candidate["evidence"]["boxes"][0] if candidate["evidence"]["boxes"] else None
                 if box is not None and candidate_box is not None and self._is_side_column(candidate_box, box):
                     # a journal's first-page sidebar beside the article: matter the
