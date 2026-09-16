@@ -191,7 +191,7 @@ class TextLayerRules:
                         match = loose_pattern(candidate).search(text)
                         if match and match.end() > match.start() and not any(not (match.end() <= a or match.start() >= b) for a, b in spans):
                             spans.append((match.start(), match.end()))
-                            runs.append({"start": match.start(), "end": match.end(), "href": link.uri})
+                            runs.append({"start": match.start(), "end": match.end(), "href": normalize_uri(link.uri)})
                             self.report.links_mapped += 1
                             self.report.links_unmapped = max(0, self.report.links_unmapped - 1)
                             break

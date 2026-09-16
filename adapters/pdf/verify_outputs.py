@@ -294,6 +294,15 @@ def run_epubcheck(path: Path, command: str) -> dict[str, Any]:
     return {"file": str(path), "available": True, "returncode": result.returncode, "output": (result.stdout + result.stderr)[-4000:]}
 
 
+def adapter_code() -> list[Path]:
+    """Every file that decides what the run produces.
+
+    The rules live in a module each, so listing the entry points by hand would
+    bind the manifest to a fraction of the code that wrote the output.
+    """
+    return sorted(p for p in HERE.glob("*.py") if p.name != "verify_outputs.py") + [HERE / "render.mjs", REPOSITORY / "package-lock.json"]
+
+
 def file_manifest(paths: list[Path]) -> dict[str, dict[str, Any]]:
     return {str(path.relative_to(REPOSITORY)): {"sha256": sha256(path), "bytes": path.stat().st_size} for path in paths if path.is_file()}
 
@@ -397,7 +406,7 @@ def verify(runs: dict[str, Path], baselines: dict[str, Path], output: Path, epub
                         problems.append(f"{prefix}: EPUBCheck unavailable or failed: {epub.name}")
             results.append({"corpus": corpus, "basename": basename, "inputSha256": document.get("sha256"), "cache": cache_record, "render": render_record, "metricDiffs": metric_diffs})
     result = {"schemaVersion": "pdf-output-verification-1", "artifactValid": not problems, "baselineComparison": {"status": "recorded", "note": "Metric changes are recorded per paper and are not verification failures."}, "problems": problems, "documents": results, "epubcheck": validations,
-              "manifests": {"code": file_manifest([HERE / "pdf2epub.py", HERE / "pdf2struct.py", HERE / "render.mjs", HERE / "evaluate.py", REPOSITORY / "package-lock.json"]),
+              "manifests": {"code": file_manifest(adapter_code()),
                             "environment": {"python": sys.version, "epubcheck": shutil.which(epubcheck_command) if os.path.sep not in epubcheck_command else epubcheck_command}},
               "summary": {"documents": len(results), "epubs": len(validations), "problems": len(problems)}}
     (output / "output-verification.json").write_text(json.dumps(result, indent=2) + "\n")

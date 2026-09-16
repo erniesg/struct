@@ -215,3 +215,42 @@ class ColumnGutters(unittest.TestCase):
     def test_one_column_stays_one_line(self):
         page = self.page([(100, 100, "one continuous line of words")])
         self.assertEqual([line.text for line in page.lines], ["one continuous line of words"])
+
+
+class RecoveredPageLinks(unittest.TestCase):
+    """A page the layout model dropped is read from the text layer; its links
+    must be written in the same normalized shape as every other href, or the
+    EPUB carries an invalid one and EPUBCheck fails the whole reconstruction."""
+
+    @staticmethod
+    def recover(uri, line):
+        from pdf_links import SourceLink
+        a = StructAdapter.__new__(StructAdapter)
+        a.blocks, a.diagnostics, a._ids = [], [], set()
+        a.report = AdapterReport()
+        a.doc = SimpleNamespace(pages={1: object()})
+        a.page_lines = [[line + " " + "filler " * 60]]
+        a.links = [SourceLink(page=1, rect=(0, 0, 1, 1), uri=uri, kind="uri", words=[uri])]
+        a._recover_dropped_pages()
+        return [run["href"] for block in a.blocks for run in block["inline"]]
+
+    def test_a_bracketed_target_is_percent_encoded(self):
+        self.assertEqual(self.recover("https://example.org/a[b]c", "Data at https://example.org/a[b]c."),
+                         ["https://example.org/a%5Bb%5Dc"])
+
+    def test_an_ordinary_target_is_unchanged(self):
+        self.assertEqual(self.recover("https://example.org/paper", "Data at https://example.org/paper."),
+                         ["https://example.org/paper"])
+
+
+class EvidenceBindsTheCode(unittest.TestCase):
+    def test_every_rule_module_is_hashed_by_the_verifier(self):
+        """The rules live in a module each: a manifest naming only the entry
+        points would bind the evidence to a fraction of the code that wrote it."""
+        from verify_outputs import adapter_code
+        here = Path(__file__).resolve().parents[1]
+        bound = {path.name for path in adapter_code()}
+        for module in here.glob("rules_*.py"):
+            self.assertIn(module.name, bound)
+        for module in ("pdf2struct.py", "pdf2epub.py", "evaluate.py", "render.mjs", "pdf_text.py", "table_split.py", "overlap_repair.py"):
+            self.assertIn(module, bound)
