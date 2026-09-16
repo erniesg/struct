@@ -716,7 +716,14 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "textCoverage": round(text_coverage, 5),
         "missingSourceRegionCount": 0,
         "unresolvedCorruptingJoinCount": lowercase_starts,
-        "readingOrderDiagnostics": 0,
+        # pages whose order the text layer and the page geometry agree on and
+        # the output still contradicts; the broad disagreement count beside it
+        # is advisory, since most of it is the two tools reading a float-heavy
+        # page differently rather than a fault (see reading_order.py)
+        "readingOrderDiagnostics": build_report.get("reading_order_unrepaired", 0),
+        "readingOrderPagesCompared": build_report.get("reading_order_pages_compared", 0),
+        "readingOrderPagesDisagree": build_report.get("reading_order_pages_disagree", 0),
+        "readingOrderPagesRepaired": build_report.get("reading_order_pages_repaired", 0),
         "expectedInlineSpanCount": 0,
         "inlineSpanCoverage": 1,
         "expectedHyperlinkCount": len(expected_uris),
