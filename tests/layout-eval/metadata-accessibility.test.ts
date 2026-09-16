@@ -139,3 +139,40 @@ describe('Stage 2.1 structural accessibility baseline characterization', () => {
     expect(xmlAttribute(image, 'alt')).toBe('Invented asset label')
   })
 })
+
+// LOCAL RED CHECKPOINT: keep uncommitted until META-01/META-02 land.
+describe('Stage 2.1 metadata contract red checkpoint', () => {
+  it('packages optional publication metadata', async () => {
+    const publication = await characterizeRenderedCase('metadata-positive')
+    const opf = inspectOpf(reopenedText(publication, 'EPUB/package.opf'))
+    const values = new Set(opf.metadata.map(({ value }) => value))
+    const metadata = publication.decoded.metadata
+
+    expect(
+      [metadata.subtitle, metadata.abstract, metadata.publicationDate!].every(
+        (value) => values.has(value),
+      ),
+      'metadata-positive:optional-publication-metadata',
+    ).toBe(true)
+  })
+
+  it('keeps publication identity independent of source file name', async () => {
+    const left = buildSealedSyntheticFixture('metadata-positive')
+    const right = buildSealedSyntheticFixture('metadata-positive')
+    left.source.fileName = 'invented-left.struct'
+    right.source.fileName = 'invented-right.struct'
+    resealSyntheticDocument(left)
+    resealSyntheticDocument(right)
+    const [leftPublication, rightPublication] = await Promise.all([
+      characterizeSealedDocument(left),
+      characterizeSealedDocument(right),
+    ])
+
+    expect(
+      leftPublication.epub.identifier === rightPublication.epub.identifier &&
+        leftPublication.epub.fileName === rightPublication.epub.fileName &&
+        leftPublication.epub.sha256 === rightPublication.epub.sha256,
+      'metadata-positive:source-file-name-independence',
+    ).toBe(true)
+  })
+})
