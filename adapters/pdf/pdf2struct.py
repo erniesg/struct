@@ -105,6 +105,7 @@ from rules_graph import GraphRules
 from rules_links import LinkRules
 from rules_notes import NoteRules
 from rules_prose import ProseRules
+from rules_reading_order import ReadingOrderRules
 from rules_ruled_boxes import RuledBoxRules
 from rules_tables import TableRules
 from rules_text_layer import TextLayerRules
@@ -210,6 +211,12 @@ class AdapterReport:
     caption_sides_fixed: int = 0
     notes_linked_in_cells: int = 0
     tables_from_rule_box: int = 0
+    reading_order_pages_compared: int = 0
+    reading_order_pages_disagree: int = 0
+    reading_order_pages_repaired: int = 0
+    reading_order_blocks_moved: int = 0
+    reading_order_unrepaired: int = 0
+    reading_order_repairs: list = field(default_factory=list)
     figures_from_rule_box: int = 0
     figures_from_panel_band: int = 0
     panels_folded_by_geometry: int = 0
@@ -226,6 +233,7 @@ class StructAdapter(
     FigureRules,
     TableRules,
     RuledBoxRules,
+    ReadingOrderRules,
     CodeEquationRules,
     TextLayerRules,
     AssetRules,
@@ -516,6 +524,9 @@ class StructAdapter(
         self._strip_glued_heads()
         self._split_cross_page_spans()
         self._hoist_ruled_front_matter()
+        # before the joins: a paragraph and its continuation are only adjacent
+        # once the page is in the right order
+        self._repair_column_order()
         self._join_split_paragraphs()
         self._link_notes()
         self._recover_link_icons()
@@ -552,6 +563,7 @@ class StructAdapter(
         self._compact_graph()
         self._prune_dangling_references()
         self._place_notes()
+        self._report_reading_order()
         for order, block in enumerate(self.blocks):
             block["order"] = order
         page_count = len(self.doc.pages) or 1
