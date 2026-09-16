@@ -23,6 +23,8 @@ CAPTION_CELL_RE = re.compile(r"^\s*(?:Table|Figure|Fig\.?)\s*(?:[A-Z]\.?)?\d+(?:
 
 def _caption_cells(table: TableItem):
     """The first row's caption cells, left to right, or None when there are not two."""
+    if table.captions:
+        return None  # the table already has the caption its author gave it
     grid = table.data.table_cells if table.data else []
     heads = [cell for cell in grid if cell.start_row_offset_idx == 0 and cell.col_span >= 2 and CAPTION_CELL_RE.match(cell.text or "")]
     heads.sort(key=lambda cell: cell.start_col_offset_idx)
@@ -55,7 +57,9 @@ def lift_caption_rows(doc: DoclingDocument) -> int:
         if table.captions or len(first) != 1 or len(grid) < 4 or not columns:
             continue
         head = first[0]
-        if head.col_span < columns or not CAPTION_CELL_RE.match(head.text or ""):
+        # a caption that also spans the row beneath it is not a row of its own:
+        # shifting the grid up would leave that cell at a negative row index
+        if head.col_span < columns or head.end_row_offset_idx > 1 or not CAPTION_CELL_RE.match(head.text or ""):
             continue
         text = (head.text or "").strip()
         provenance = table.prov[0] if table.prov else None
@@ -96,6 +100,13 @@ def split_side_by_side_tables(doc: DoclingDocument) -> int:
     for table in list(doc.tables):
         heads = _caption_cells(table)
         if heads is None or not table.prov:
+            continue
+        # a cell that reaches across a caption's columns joins the two halves:
+        # whatever this grid is, it is not two tables printed side by side, and
+        # clipping such a cell into one half would drop it silently from the other
+        bounds = {head.start_col_offset_idx for head in heads} | {heads[-1].end_col_offset_idx}
+        if any(cell.start_row_offset_idx > 0 and any(cell.start_col_offset_idx < edge < cell.end_col_offset_idx for edge in bounds)
+               for cell in table.data.table_cells):
             continue
         provenance = table.prov[0]
         page = doc.pages.get(provenance.page_no)

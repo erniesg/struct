@@ -407,6 +407,16 @@ def _repeated_lines_set_in_body(struct_draft: Path | None) -> Counter:
     return found
 
 
+def _furniture_exemptions(struct_draft: Path | None) -> Counter:
+    """How many times each repeated line may be excused as content.
+
+    A byline is set once, under the title; a running head repeats on every
+    page. Crediting a line once lets the byline through and still reports a
+    head that leaked, which is the fault this criterion exists to catch.
+    """
+    return Counter({key: 1 for key in _repeated_lines_set_in_body(struct_draft)})
+
+
 def _unassociated_figures(struct_draft: Path | None) -> int:
     """Caption-less figures the reader would notice: on a page that still
     carries an orphan `Figure N` caption, or stacked against a captioned
@@ -566,7 +576,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
                 edge_numbers.add(line.strip())
     furniture_hits = 0
     body_numbers = _number_paragraphs_in_body(struct_draft)
-    body_running = _repeated_lines_set_in_body(struct_draft)
+    body_running = _furniture_exemptions(struct_draft)
     for p in paragraphs:
         key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", p.strip().lower()))
         if key in running:

@@ -309,19 +309,58 @@ class TableCaptionSides(unittest.TestCase):
     """Two tables stacked on a page, captions above: the upper grid can be
     given the caption printed below it, which belongs to the lower grid."""
 
-    def test_the_caption_below_goes_to_the_table_it_stands_over(self):
-        # a third table, captioned the way the paper sets them, establishes the side
-        settled = block("t0", "table", "Table 3: An earlier table.", .1, .60, .8, .09, page=2)
+    def build(self, settled_count):
+        """`settled_count` tables captioned the way the paper sets them (above),
+        plus one grid carrying the caption printed below it and the captionless
+        grid that caption stands over."""
+        blocks, boxes = [], {}
+        for index in range(settled_count):
+            name = f"t0{index}"
+            blocks.append(block(name, "table", f"Table {index + 1}: An earlier table.", .1, .60, .8, .09, page=2 + index))
+            boxes[name] = dict(page=2 + index, x=.1, y=.55, width=.8, height=.04, rotation=0)
         upper = block("t1", "table", "Table 5: The second table.", .1, .21, .8, .09)
         lower = block("t2", "table", "", .1, .39, .8, .05)
-        for entry in (settled, upper, lower):
+        boxes["t1"] = dict(page=1, x=.1, y=.32, width=.8, height=.05, rotation=0)
+        blocks += [upper, lower]
+        for entry in blocks:
             entry["table"] = {"rows": 2, "columns": 2, "cells": []}
-        a = adapter([settled, upper, lower])
-        a._attached_caption_boxes = {"t0": dict(page=2, x=.1, y=.55, width=.8, height=.04, rotation=0),
-                                     "t1": dict(page=1, x=.1, y=.32, width=.8, height=.05, rotation=0)}
+        a = adapter(blocks)
+        a._attached_caption_boxes = boxes
         a._fix_table_caption_sides()
+        return upper, lower
+
+    def test_the_caption_below_goes_to_the_table_it_stands_over(self):
+        upper, lower = self.build(settled_count=2)
         self.assertEqual(upper["text"], "")
         self.assertEqual(lower["text"], "Table 5: The second table.")
+
+    def test_a_split_vote_moves_nothing(self):
+        """One caption above and one below says nothing about the convention:
+        moving either would invent one and strip a correct caption."""
+        upper, lower = self.build(settled_count=1)
+        self.assertEqual(upper["text"], "Table 5: The second table.")
+        self.assertEqual(lower["text"], "")
+
+    def test_a_single_caption_moves_nothing(self):
+        upper, lower = self.build(settled_count=0)
+        self.assertEqual(upper["text"], "Table 5: The second table.")
+        self.assertEqual(lower["text"], "")
+
+    def test_the_nearest_grid_under_the_caption_takes_it(self):
+        """Two captionless grids in tolerance: the caption belongs to the one it
+        stands closest over, not the one the walk emitted first."""
+        settled = [block(f"s{i}", "table", f"Table {i}: Earlier.", .1, .60, .8, .09, page=3 + i) for i in range(2)]
+        upper = block("t1", "table", "Table 5: The second table.", .1, .21, .8, .09)
+        far = block("far", "table", "", .1, .43, .8, .05)
+        near = block("near", "table", "", .1, .375, .8, .05)
+        for entry in settled + [upper, far, near]:
+            entry["table"] = {"rows": 2, "columns": 2, "cells": []}
+        a = adapter(settled + [upper, far, near])   # `far` is emitted before `near`
+        a._attached_caption_boxes = {f"s{i}": dict(page=3 + i, x=.1, y=.55, width=.8, height=.04, rotation=0) for i in range(2)}
+        a._attached_caption_boxes["t1"] = dict(page=1, x=.1, y=.32, width=.8, height=.05, rotation=0)
+        a._fix_table_caption_sides()
+        self.assertEqual(near["text"], "Table 5: The second table.")
+        self.assertEqual(far["text"], "")
 
     def test_a_caption_above_its_own_table_is_left_alone(self):
         table = block("t1", "table", "Table 5: The only table.", .1, .21, .8, .09)
@@ -389,3 +428,108 @@ class RuledFrontMatter(unittest.TestCase):
     def test_a_page_without_a_ruled_band_is_left_in_its_own_order(self):
         order = self.build([(.0714, .9434, .9286, .2)])
         self.assertEqual(order, ["b5", "b6", "b7", "b8", "b14", "b15"])
+
+
+def docling_table(cells, columns, rows, captioned=False):
+    from docling_core.types.doc import BoundingBox, CoordOrigin, DoclingDocument, ProvenanceItem, Size, TableCell, TableData
+    doc = DoclingDocument(name="t")
+    doc.add_page(page_no=1, size=Size(width=600, height=800))
+    built = [TableCell(text=text, start_row_offset_idx=r0, end_row_offset_idx=r1,
+                       start_col_offset_idx=c0, end_col_offset_idx=c1, col_span=c1 - c0, row_span=r1 - r0,
+                       bbox=BoundingBox(l=10 + c0 * 100, r=10 + c1 * 100, t=700 - r0 * 20, b=700 - r1 * 20, coord_origin=CoordOrigin.BOTTOMLEFT))
+              for text, r0, r1, c0, c1 in cells]
+    box = BoundingBox(l=10, r=10 + columns * 100, t=700, b=700 - rows * 20, coord_origin=CoordOrigin.BOTTOMLEFT)
+    table = doc.add_table(data=TableData(num_rows=rows, num_cols=columns, table_cells=built),
+                          prov=ProvenanceItem(page_no=1, charspan=(0, 0), bbox=box))
+    if captioned:
+        caption = doc.add_text(label=__import__("docling_core.types.doc", fromlist=["DocItemLabel"]).DocItemLabel.CAPTION,
+                               text="Table 9: The author's own caption.", orig="Table 9: The author's own caption.",
+                               prov=ProvenanceItem(page_no=1, charspan=(0, 34), bbox=box))
+        table.captions.append(caption.get_ref())
+    return doc, table
+
+
+class SideBySideSplitGuards(unittest.TestCase):
+    def test_a_cell_reaching_across_both_halves_stops_the_split(self):
+        """A row spanning both captions joins the halves: whatever the grid is,
+        it is not two tables printed side by side, and clipping that cell would
+        drop it from one half without a trace."""
+        from table_split import split_side_by_side_tables
+        cells = [("Table 1: Left.", 0, 1, 0, 2), ("Table 2: Right.", 0, 1, 2, 4),
+                 ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 1, 2, 2, 3), ("d", 1, 2, 3, 4),
+                 ("spans the boundary", 2, 3, 1, 3)]
+        doc, _ = docling_table(cells, columns=4, rows=3)
+        self.assertEqual(split_side_by_side_tables(doc), 0)
+        self.assertEqual(len(doc.tables), 1)
+
+    def test_a_grid_that_already_has_its_caption_is_left_alone(self):
+        from table_split import split_side_by_side_tables
+        cells = [("Table 1: Left.", 0, 1, 0, 2), ("Table 2: Right.", 0, 1, 2, 4),
+                 ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 1, 2, 2, 3), ("d", 1, 2, 3, 4)]
+        doc, table = docling_table(cells, columns=4, rows=2, captioned=True)
+        self.assertEqual(split_side_by_side_tables(doc), 0)
+        self.assertEqual(len(table.captions), 1)
+
+    def test_a_grid_of_two_captions_still_splits(self):
+        from table_split import split_side_by_side_tables
+        cells = [("Table 1: Left.", 0, 1, 0, 2), ("Table 2: Right.", 0, 1, 2, 4),
+                 ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 1, 2, 2, 3), ("d", 1, 2, 3, 4),
+                 ("e", 2, 3, 0, 1), ("f", 2, 3, 1, 2), ("g", 2, 3, 2, 3), ("h", 2, 3, 3, 4)]
+        doc, _ = docling_table(cells, columns=4, rows=3)
+        self.assertEqual(split_side_by_side_tables(doc), 1)
+        self.assertEqual(len(doc.tables), 2)
+
+
+class CaptionRowGuards(unittest.TestCase):
+    def test_a_caption_that_spans_into_the_row_below_is_not_lifted(self):
+        """Shifting the grid up would leave that cell at row -1."""
+        from table_split import lift_caption_rows
+        cells = [("Table 1: Spans two rows.", 0, 2, 0, 2),
+                 ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 2, 3, 0, 1), ("d", 2, 3, 1, 2)]
+        doc, table = docling_table(cells, columns=2, rows=3)
+        self.assertEqual(lift_caption_rows(doc), 0)
+        self.assertTrue(all(cell.start_row_offset_idx >= 0 for cell in table.data.table_cells))
+
+    def test_every_lifted_grid_keeps_valid_row_indices(self):
+        from table_split import lift_caption_rows
+        cells = [("Table 1: A caption row.", 0, 1, 0, 2),
+                 ("Structure", 1, 2, 0, 1), ("Section", 1, 2, 1, 2),
+                 ("Weighted sum", 2, 3, 0, 1), ("Sec. 3.1", 2, 3, 1, 2)]
+        doc, table = docling_table(cells, columns=2, rows=3)
+        self.assertEqual(lift_caption_rows(doc), 1)
+        self.assertTrue(all(cell.start_row_offset_idx >= 0 for cell in table.data.table_cells))
+        self.assertEqual(table.data.num_rows, 2)
+
+
+class FrontMatterFullyDeferred(unittest.TestCase):
+    def test_a_band_emitted_entirely_after_the_body_is_still_hoisted(self):
+        """The same fault as the interleaved case, further gone."""
+        from pdf_text import Rule
+        heading = block("b7", "heading", "1. Introduction", .07, .572, .16, .01)
+        intro = block("b8", "paragraph", "Networks provide a natural way", .07, .588, .86, .10)
+        label = block("b14", "heading", "ABSTRACT", .37, .215, .21, .01)
+        abstract = block("b15", "paragraph", "Likelihood-based network models", .37, .242, .56, .27)
+        a = adapter([heading, intro, label, abstract])
+        a._page_text = lambda page: SimpleNamespace(rules=[
+            Rule(x0=.0714, y0=.2127, x1=.9286, y1=.2127, width=.4),
+            Rule(x0=.0714, y0=.5366, x1=.9286, y1=.5366, width=.4)])
+        a._hoist_ruled_front_matter()
+        self.assertEqual([b["id"] for b in a.blocks], ["b14", "b15", "b7", "b8"])
+
+
+class FurnitureExemptionIsCapped(unittest.TestCase):
+    def test_a_running_head_cannot_excuse_every_copy_of_itself(self):
+        """The byline exemption credits a line once. A head that leaked onto
+        eight pages must still be reported, or the criterion cannot see the
+        very fault it exists to catch."""
+        draft = {"blocks": [dict(id=f"b{i}", kind="paragraph", text="The Journal of Results",
+                                 page=i, evidence=dict(boxes=[dict(page=i, x=.1, y=.4, width=.8, height=.01)]))
+                            for i in range(1, 9)]}
+        import json, tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(draft, handle)
+            path = Path(handle.name)
+        self.assertEqual(evaluate._repeated_lines_set_in_body(path)["the journal of results"], 8)
+        exemptions = evaluate._furniture_exemptions(path)
+        self.assertEqual(exemptions["the journal of results"], 1, "only one occurrence may be excused")
+        self.assertEqual(sum(exemptions.values()), 1)

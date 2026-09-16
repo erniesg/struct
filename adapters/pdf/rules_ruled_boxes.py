@@ -59,7 +59,9 @@ class RuledBoxRules:
                     inside.append(index)
                 elif box["y"] >= bottom:
                     below.append(index)
-            if not inside or not below or inside[0] > below[-1]:
+            # nothing to do only when the band already precedes the body; the
+            # band emitted entirely after it is the same fault, further gone
+            if not inside or not below or inside[-1] < below[0]:
                 continue
             moved = [index for index in inside if index > below[0]]
             if not moved:

@@ -267,8 +267,11 @@ class TableRules:
             boxes = block["evidence"]["boxes"]
             if block["kind"] == "table" and block["text"] and caption and boxes:
                 sides.append(caption["y"] >= boxes[0]["y"] + boxes[0]["height"] * 0.5)
-        if not sides or sum(sides) > len(sides) / 2:
-            return  # this paper sets its table captions below their tables
+        # only a paper that clearly sets its captions above its tables can be
+        # corrected this way: on a tie, or from a single measured caption, the
+        # convention is unknown and moving a caption would invent one
+        if len(sides) < 2 or sum(sides) * 2 >= len(sides):
+            return
         for block in list(self.blocks):
             if block["kind"] != "table" or not block["text"] or not block["evidence"]["boxes"]:
                 continue
@@ -276,6 +279,7 @@ class TableRules:
             box = block["evidence"]["boxes"][0]
             if caption is None or caption["y"] < box["y"] + box["height"] * 0.5:
                 continue
+            candidates = []
             for other in self.blocks:
                 if other is block or other["kind"] != "table" or other["text"] or other["page"] != block["page"] or not other["evidence"]["boxes"]:
                     continue
@@ -284,6 +288,11 @@ class TableRules:
                 overlap = min(caption["x"] + caption["width"], obox["x"] + obox["width"]) - max(caption["x"], obox["x"])
                 if not (-0.01 <= gap <= 0.07) or overlap < 0.5 * min(caption["width"], obox["width"]):
                     continue
+                candidates.append((abs(gap), other))
+            # the caption belongs to the grid it stands closest over, not to
+            # whichever grid the walk happened to emit first
+            if candidates:
+                other = min(candidates, key=lambda pair: pair[0])[1]
                 other["text"], other["inline"] = block["text"], block.get("inline", [])
                 if block.get("label"):
                     other["label"] = block["label"]
@@ -293,7 +302,6 @@ class TableRules:
                 block["text"], block["inline"] = "", []
                 block.pop("label", None)
                 self.report.caption_sides_fixed += 1
-                break
 
     def _row_like(self, block: dict) -> bool:
         return (
