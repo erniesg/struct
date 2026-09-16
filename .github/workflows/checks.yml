@@ -28,11 +28,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # a shared runner is slower than a laptop: the codec suite times out at
+      # vitest's 5s default here, so CI gives it room rather than pretending
+      - run: npm test -- --testTimeout=30000
       - run: npm run build
       - run: npm run test:source-boundary
-      # the packed tarball is what a consumer actually installs
-      - run: npm run test:package
+      # `test:package` is deliberately not run here: scripts/test-packed-consumer.mjs
+      # installs the tarball with `npm install --offline`, which needs a warm npm
+      # cache that a fresh runner does not have (ENOTCACHED). It stays a local check
+      # until the script can populate its own cache.
 
   adapter:
     name: pdf adapter tests
@@ -46,6 +50,9 @@ jobs:
       # but imports it lazily: the test suite never reaches that import, so
       # CI installs the light half and stays under a minute instead of
       # pulling ~700 MB of CUDA wheels onto a CPU runner.
+      # six tests shell out to poppler (pdftoppm) to raster a page; without it
+      # they raise SourceRasterError rather than skip
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - run: python -m pip install --upgrade pip
       - run: pip install docling-core pypdf pillow pypdfium2 latex2mathml
       - name: the adapter is not allowed to import docling at module level
