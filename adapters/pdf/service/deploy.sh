@@ -58,10 +58,14 @@ if [[ -z "$HOST" ]]; then
   exit 0
 fi
 
-# one shared rate-limit zone, declared once in the http block
-if ! grep -qs "zone=pdf2epub" /etc/nginx/conf.d/pdf2epub-limits.conf; then
-  echo 'limit_req_zone $binary_remote_addr zone=pdf2epub:10m rate=30r/m;' |
-    sudo tee /etc/nginx/conf.d/pdf2epub-limits.conf >/dev/null
+# two rate-limit zones, declared once in the http block: the tight one gates
+# uploads and the job list, the read one gates a preview's reads of one job's
+# own bytes (see the comment in nginx.conf)
+if ! grep -qs "zone=pdf2epub_read" /etc/nginx/conf.d/pdf2epub-limits.conf; then
+  sudo tee /etc/nginx/conf.d/pdf2epub-limits.conf >/dev/null <<'LIMITS'
+limit_req_zone $binary_remote_addr zone=pdf2epub:10m rate=30r/m;
+limit_req_zone $binary_remote_addr zone=pdf2epub_read:10m rate=600r/m;
+LIMITS
 fi
 
 if [[ ! -d /etc/letsencrypt/live/$HOST ]]; then

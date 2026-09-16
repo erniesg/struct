@@ -181,6 +181,7 @@
       <span id="epub-position">—</span>
       <button id="epub-next" type="button" aria-label="next rendition page">→</button>
       <span class="grow"></span>
+      <span id="load-note" class="err"></span>
       <span id="selection">click a paragraph to find it in the PDF</span>
     </div>
     <div class="stage" id="epub-stage">
@@ -218,7 +219,7 @@
 // out loud. It grants the *parent* reach into the frame's document; it grants
 // the frame nothing, because the frame cannot run code. The documented danger
 // of allow-same-origin is `allow-scripts allow-same-origin` together, where
-// content can reach its own <iframe> element and drop the sandbox — that pair
+// content can reach its own frame element and drop the sandbox — that pair
 // is exactly what is refused here. What it buys is the whole point of the
 // page: typography is a <style> element the parent rewrites in place, so a
 // font-size change reflows the rendition with no network request and no
@@ -264,20 +265,29 @@ const state = {
   page: 1,
   pageCount: 1,
   selected: null,
+  missingImages: 0,
   blobUrls: [],
   loading: false,
 }
 
 // --------------------------------------------------------------------- fetch
 
+/** A read is retried once through a rate limiter; a write is not, because a
+ *  429 on an export means another export is already running. */
 async function api (path, options) {
-  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}${path}`, options)
-  if (response.status === 401) { location.reload(); throw new Error('unauthenticated') }
-  if (!response.ok) {
+  const url = `/api/jobs/${encodeURIComponent(jobId)}${path}`
+  const reading = !options || !options.method || options.method === 'GET'
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetch(url, options)
+    if (response.status === 401) { location.reload(); throw new Error('unauthenticated') }
+    if (response.ok) return response
+    if (reading && attempt === 0 && (response.status === 429 || response.status === 503)) {
+      await new Promise((settle) => setTimeout(settle, 1500))
+      continue
+    }
     const detail = await response.json().catch(() => ({}))
     throw new Error(detail.detail || `${path} failed (${response.status})`)
   }
-  return response
 }
 
 // -------------------------------------------------------------- sanitisation
@@ -398,13 +408,19 @@ async function loadRendition (profile) {
   // credentials and handed to the frame as a blob: URL.
   const assets = new Map()
   const images = new Map()
+  let missing = 0
   for (const image of document_.querySelectorAll('img[src]')) {
     const reference = image.getAttribute('src')
     if (!reference || /^[a-z]+:/i.test(reference) || images.has(reference)) continue
     try {
       images.set(reference, await fetchBlob(profile, resolveEntry('content.xhtml', reference)))
-    } catch { /* an entry the archive does not carry: the <img> is dropped */ }
+    } catch {
+      // an entry the archive does not carry, or a read that did not get
+      // through: the <img> is dropped, and the pane says how many
+      missing += 1
+    }
   }
+  state.missingImages = missing
   const sheets = []
   for (const link of document_.querySelectorAll('link[rel~="stylesheet"][href]')) {
     const entry = resolveEntry('content.xhtml', link.getAttribute('href'))
@@ -437,6 +453,7 @@ async function loadRendition (profile) {
       `<style id="preview-chrome">${CHROME_CSS}</style>` +
       `</head><body>${markup}</body></html>`
   })
+  $('#load-note').textContent = missing ? `${missing} image${missing === 1 ? '' : 's'} could not be read` : ''
   frame.contentDocument.addEventListener('click', onFrameClick)
   frame.contentDocument.addEventListener('scroll', schedulePosition, { passive: true })
   frame.contentWindow.addEventListener('scroll', schedulePosition, { passive: true })

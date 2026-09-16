@@ -857,7 +857,10 @@ def create_export(job_id: str, body: dict = Body(default={})) -> JSONResponse:
     try:
         export_id = uuid.uuid4().hex
         out = paths.root / "exports" / export_id
-        out.mkdir(parents=True)
+        try:
+            out.mkdir(parents=True)
+        except OSError as error:
+            raise HTTPException(status_code=503, detail="this job's directory cannot take an export") from error
         command = ["node", str(ADAPTER / "render.mjs"), str(draft), "--out", str(out), "--profiles", profile, *flags]
         if STRUCT_DIR:
             command += ["--struct-dir", STRUCT_DIR]
@@ -896,7 +899,7 @@ def create_export(job_id: str, body: dict = Body(default={})) -> JSONResponse:
 @app.get("/api/jobs/{job_id}/export/{export_id}", dependencies=[Depends(require_auth)])
 def get_export(job_id: str, export_id: str) -> FileResponse:
     paths = _job_paths(job_id)
-    state = _finished(paths)
+    _finished(paths)
     if not re.fullmatch(r"[0-9a-f]{32}", export_id):
         raise HTTPException(status_code=404, detail="no such export")
     directory = _in_job(paths.root, "exports", export_id)
