@@ -580,7 +580,9 @@ class FigureRules:
         if block["kind"] == "caption" and not CAPTION_LIKE_RE.match(text):
             return True
         if block["kind"] in ("paragraph", "caption", "heading", "list-item"):
-            if SUBCAPTION_RE.match(text) and len(text) < 160:
+            # a panel's sub-caption can be a sentence or two (`(a) The estimated
+            # network … under the penalised likelihood.`), not only a label
+            if SUBCAPTION_RE.match(text) and len(text) < 400:
                 return True
             if TICK_LABEL_RE.match(text) or TICK_ROW_RE.match(text):
                 return True

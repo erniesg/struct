@@ -291,9 +291,38 @@ class NoteRules:
                 block.pop("label", None)
                 self.report.footnotes_with_marker = max(0, self.report.footnotes_with_marker - 1)
                 self.report.notes_without_reference += 1
+            elif marker and self._marker_is_on_the_title(marker, block):
+                # the reference is set on the paper's title, which the
+                # publication renders as its header rather than as a block:
+                # there is nothing in the flow to link, so the note keeps its
+                # printed symbol instead of claiming a missing reference
+                block["text"] = f"{marker} {block['text']}".strip()
+                block.pop("label", None)
+                self.report.footnotes_with_marker = max(0, self.report.footnotes_with_marker - 1)
+                self.report.notes_without_reference += 1
             else:
                 self.report.footnotes_unlinked += 1
                 self._diagnostic("warning", "notes", "Footnote marker not found", f"footnote {marker or '?'} has no matched reference", item)
+
+    def _marker_is_on_the_title(self, marker: str, note: dict) -> bool:
+        """Whether the note's marker is a raised glyph over the title (page 1),
+        with no block of the flow carrying it."""
+        page_text = self._page_text(1)
+        if page_text is None or not self.title:
+            return False
+        title_words = {word for word in re.findall(r"[A-Za-z]{4,}", self.title.lower())}
+        if not title_words:
+            return False
+        wanted = normalize_marker(marker)
+        for glyph in page_text.markers:
+            if not glyph.has_label(wanted):
+                continue
+            line = next((line for line in page_text.lines
+                         if any(abs(char.l - glyph.x * page_text.width) < 1 and abs(char.b - (1 - glyph.y - glyph.height) * page_text.height) < 3 for char in line.chars)), None)
+            words = {word for word in re.findall(r"[A-Za-z]{4,}", (line.text if line else "").lower())}
+            if words and len(words & title_words) >= max(1, len(words) // 3):
+                return True
+        return False
 
     def _no_superscript_run(self, marker: str, page: int | None) -> bool:
         if page is None:

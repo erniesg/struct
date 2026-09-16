@@ -202,6 +202,7 @@ class PageText:
         self.chars = chars
         self.shapes = shapes or []
         self._lines: list[Line] | None = None
+        self._gutters: list[tuple[float, float]] | None = None
         self._markers: list[Marker] | None = None
         self._rules: list[Rule] | None = None
 
@@ -283,6 +284,45 @@ class PageText:
             self._lines = self._build_lines()
         return self._lines
 
+    @property
+    def gutters(self) -> list[tuple[float, float]]:
+        """The page's empty vertical corridors: the gap between two columns is
+        narrower than the 2.5 line heights that separate two lines, so without
+        them a line of the left column and one of the right at the same height
+        read as a single line."""
+        if self._gutters is None:
+            self._gutters = self._find_gutters()
+        return self._gutters
+
+    def _find_gutters(self) -> list[tuple[float, float]]:
+        chars = [c for c in self.chars if c.text.strip() and c.height > 0]
+        if len(chars) < 50 or not self.width:
+            return []
+        bins = 200
+        step = self.width / bins
+        covered = [False] * bins
+        for char in chars:
+            first, last = int(max(0.0, char.l) / step), int(min(self.width - 1e-6, char.r) / step)
+            for index in range(max(0, first), min(bins - 1, last) + 1):
+                covered[index] = True
+        gutters, start = [], None
+        for index in range(bins):
+            if not covered[index]:
+                start = index if start is None else start
+                continue
+            if start is not None:
+                gutters.append((start, index))
+                start = None
+        if start is not None:
+            gutters.append((start, bins))
+        found = []
+        for first, last in gutters:
+            left, right = first * step, last * step
+            centre = (left + right) / 2 / self.width
+            if right - left >= 0.012 * self.width and 0.15 <= centre <= 0.85:
+                found.append((left, right))
+        return found
+
     def _build_lines(self) -> list[Line]:
         chars = [c for c in self.chars if c.text.strip() and c.height > 0]
         if not chars:
@@ -300,7 +340,8 @@ class PageText:
             group.sort(key=lambda c: c.l)
             current: list[Char] = [group[0]]
             for char in group[1:]:
-                if char.l - current[-1].r > 2.5 * max(current[-1].height, char.height):
+                gutter = any(left >= current[-1].r - 1 and right <= char.l + 1 for left, right in self.gutters)
+                if gutter or char.l - current[-1].r > 2.5 * max(current[-1].height, char.height):
                     lines.append(Line(current, current[0].b))
                     current = [char]
                 else:

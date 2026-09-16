@@ -166,8 +166,14 @@ def lowercase_start_paragraphs(body_html: str, display_lines: set[str] | None = 
             continue  # a template or assignment line such as "message = {* *} …", not a sentence fragment
         if ENUMERATED_LABEL_RE.match(text):
             continue  # `b) Operator Mapping Choice:`, `ii. Column diameter …`: an enumerated label opens lowercase by convention
-        head = re.match(r"\s*<(em|strong)>(.*?)</\1>", inner, re.S)
-        if head and RUN_IN_HEAD_RE.match(_strip(head.group(2)).strip()):
+        emphasised, rest = "", inner
+        while True:
+            head = re.match(r"\s*<(em|strong)>(.*?)</\1>", rest, re.S)
+            if not head:
+                break
+            emphasised += " " + _strip(head.group(2))
+            rest = rest[head.end():]
+        if RUN_IN_HEAD_RE.match(emphasised.strip()):
             continue  # `a. Coupled cluster theory:` set in italic: a run-in heading, whose own typography says so
         if len(text.split()) <= 12 and len(re.findall(r"<a\b", inner)) >= 2:
             continue  # `globe Project page github Code cube Model`: a row of links under the title, not prose

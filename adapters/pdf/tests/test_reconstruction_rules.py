@@ -157,3 +157,61 @@ class TableLabelledCharts(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
+
+
+class SideBySideTables(unittest.TestCase):
+    @staticmethod
+    def document(captions=("Table 1: Left.", "Table 2: Right.")):
+        from docling_core.types.doc import BoundingBox, CoordOrigin, DoclingDocument, ProvenanceItem, Size, TableCell, TableData
+        doc = DoclingDocument(name="synthetic")
+        doc.add_page(1, Size(width=600.0, height=800.0))
+        def cell(text, row, column, span=1):
+            return TableCell(text=text, start_row_offset_idx=row, end_row_offset_idx=row + 1,
+                             start_col_offset_idx=column, end_col_offset_idx=column + span, row_span=1, col_span=span,
+                             bbox=BoundingBox(l=100 + 60 * column, t=700 - 20 * row, r=150 + 60 * column, b=680 - 20 * row, coord_origin=CoordOrigin.BOTTOMLEFT))
+        cells = [cell(captions[0], 0, 0, 2), cell(captions[1], 0, 2, 2)]
+        for row, values in enumerate([("Policy", "Score", "Policy", "Rate"), ("A", "1.0", "A", "2%"), ("B", "2.0", "B", "3%")], start=1):
+            cells += [cell(value, row, column) for column, value in enumerate(values)]
+        doc.add_table(data=TableData(num_rows=4, num_cols=4, table_cells=cells),
+                      prov=ProvenanceItem(page_no=1, charspan=(0, 0), bbox=BoundingBox(l=100, t=700, r=390, b=620, coord_origin=CoordOrigin.BOTTOMLEFT)))
+        return doc
+
+    def test_one_grid_with_two_captions_becomes_two_tables(self):
+        from table_split import split_side_by_side_tables
+        doc = self.document()
+        self.assertEqual(split_side_by_side_tables(doc), 1)
+        self.assertEqual(len(doc.tables), 2)
+        first, second = doc.tables
+        self.assertEqual([reference.resolve(doc).text for table in doc.tables for reference in table.captions],
+                         ["Table 1: Left.", "Table 2: Right."])
+        self.assertEqual((first.data.num_rows, first.data.num_cols), (3, 2))
+        self.assertEqual([cell.text for cell in second.data.table_cells if cell.start_row_offset_idx == 0], ["Policy", "Rate"])
+        body = [reference.cref for reference in doc.body.children]
+        self.assertEqual(body, [doc.tables[0].self_ref, doc.tables[0].captions[0].cref,
+                                doc.tables[1].self_ref, doc.tables[1].captions[0].cref])
+
+    def test_a_single_caption_grid_is_left_alone(self):
+        from table_split import split_side_by_side_tables
+        doc = self.document(captions=("Table 1: Left.", "Continued"))
+        self.assertEqual(split_side_by_side_tables(doc), 0)
+        self.assertEqual(len(doc.tables), 1)
+
+
+class ColumnGutters(unittest.TestCase):
+    @staticmethod
+    def page(entries):
+        from pdf_text import Char, PageText
+        chars = []
+        for x, y, text in entries:
+            for index, value in enumerate(text):
+                if value != " ":
+                    chars.append(Char(value, x + index * 5, 1000 - y - 10, x + index * 5 + 4, 1000 - y, "Times"))
+        return PageText(1, 1000, 1000, chars)
+
+    def test_two_columns_at_one_height_are_two_lines(self):
+        page = self.page([(100, 100, "left column words"), (600, 100, "right column words")])
+        self.assertEqual([line.text for line in page.lines], ["left column words", "right column words"])
+
+    def test_one_column_stays_one_line(self):
+        page = self.page([(100, 100, "one continuous line of words")])
+        self.assertEqual([line.text for line in page.lines], ["one continuous line of words"])

@@ -224,12 +224,24 @@ class LinkRules:
         return runs
 
     def _style_runs(self, item, text: str) -> list[dict]:
-        """Bold/italic runs from the glyph faces under the item's box."""
-        page_text = self._page_text(self._page_of(item))
-        box = self._box(item)
-        if page_text is None or box is None or len(text) < 8:
+        """Bold/italic runs from the glyph faces under every box of the item.
+
+        An item read across a column or page break has a box per part; reading
+        only the first one loses the emphasis in the rest (a run-in heading at
+        the foot of a column, a defined term overleaf).
+        """
+        if len(text) < 8:
             return []
-        runs = page_text.style_runs(box, text)
+        runs: list[dict] = []
+        for box in self._boxes(item) or []:
+            page_text = self._page_text(box["page"])
+            if page_text is None:
+                continue
+            for run in page_text.style_runs(box, text):
+                if run not in runs and not any(other["start"] < run["end"] and run["start"] < other["end"]
+                                               and other.get("bold") == run.get("bold") and other.get("italic") == run.get("italic")
+                                               for other in runs):
+                    runs.append(run)
         self.report.style_runs += len(runs)
         return runs
 
