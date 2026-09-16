@@ -1,0 +1,67 @@
+name: checks
+
+# What a reviewer can rely on without taking anyone's word for it. The corpus
+# measurement (four sets, ~1.9 GB of PDFs, Docling's layout models, ~40 min)
+# cannot run here and stays a local gate; everything below can and does.
+on:
+  pull_request:
+  push:
+    branches: [main, 'fable/**']
+
+jobs:
+  package:
+    name: package (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:source-boundary
+      # the packed tarball is what a consumer actually installs
+      - run: npm run test:package
+
+  adapter:
+    name: pdf adapter tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The adapter declares docling (and so torch) as a runtime dependency,
+      # but imports it lazily: the test suite never reaches that import, so
+      # CI installs the light half and stays under a minute instead of
+      # pulling ~700 MB of CUDA wheels onto a CPU runner.
+      - run: python -m pip install --upgrade pip
+      - run: pip install docling-core pypdf pillow pypdfium2 latex2mathml
+      - name: the adapter is not allowed to import docling at module level
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          heavy = {"docling", "torch", "transformers", "docling_parse"}
+          bad = []
+          for path in sorted(pathlib.Path("adapters/pdf").glob("*.py")):
+              tree = ast.parse(path.read_text())
+              for node in tree.body:
+                  if isinstance(node, (ast.Import, ast.ImportFrom)):
+                      names = [node.module] if isinstance(node, ast.ImportFrom) and node.module else [a.name for a in node.names]
+                      bad += [f"{path.name}: {n}" for n in names if n and n.split(".")[0] in heavy]
+          if bad:
+              print("module-level import of a heavy dependency:", *bad, sep="\n  ")
+              sys.exit(1)
+          print("clean: every heavy dependency is imported lazily")
+          PY
+      # the suite is discovered from the adapter directory: `tests/` carries no
+      # __init__.py, so it is not importable as a package from the repo root
+      - run: python -m unittest discover -s tests
+        working-directory: adapters/pdf
