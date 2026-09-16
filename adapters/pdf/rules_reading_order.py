@@ -11,13 +11,16 @@ layer and by a two-column band model, neither of which can see Docling's
 answer. A page is repaired only when both of them give the *same* order and
 Docling gives a different one, and when nothing about the page makes either
 opinion unsafe (see `compare_page`'s faults). Over the four corpora — 156
-papers, 3,400 pages — that fires on 20 pages, every one of them a page the
-layout model had walked back up a column or printed a column out of turn.
+papers, 3,400 pages — that fires on 17 pages, sixteen of them pages the layout
+model had walked back up a column, which a column being read downward settles
+without appeal to either arbiter.
 
 Floats keep their places. The repair permutes the prose blocks among the slots
-they already occupy, so a figure, a table, a caption or a note never moves
-relative to the page's other furniture: reordering floats against prose is out
-of scope, and the text layer has no opinion there worth trusting.
+they already occupy, so a block the walk has already typed as a figure, a
+table, a caption or a note never moves relative to the page's other furniture:
+reordering floats against prose is out of scope, and neither arbiter has an
+opinion there worth trusting. A caption the layout model typed as a paragraph
+is prose to this pass, and moves with the prose.
 """
 
 from __future__ import annotations
