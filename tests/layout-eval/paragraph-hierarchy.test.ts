@@ -146,3 +146,43 @@ describe('Stage 2.1 hierarchy baseline characterization', () => {
     await characterizeCodecRejection('hierarchy-negative', 'ATTRIBUTE')
   })
 })
+
+// LOCAL RED CHECKPOINT: keep uncommitted until HIER-01 is implemented.
+describe('Stage 2.1 hierarchy contract red checkpoint', () => {
+  it('nests EPUB navigation with the heading stack', async () => {
+    const publication = await characterizeRenderedCase('hierarchy-positive')
+    const navigation = inspectNavigation(
+      reopenedText(publication, 'EPUB/nav.xhtml'),
+    )
+    const [root, nested, sibling] = publication.decoded.blocks
+    const headingItems = navigation.tocs[0]!.items.filter(({ href }) =>
+      href?.includes('#'),
+    )
+
+    const expected = [
+      {
+        href: `content.xhtml#${root!.id}`,
+        label: root!.text,
+        labelTokens: ['Invented', 'Root'],
+        children: [
+          {
+            href: `content.xhtml#${nested!.id}`,
+            label: nested!.text,
+            labelTokens: ['Invented', 'Nested', 'Topic'],
+            children: [],
+          },
+          {
+            href: `content.xhtml#${sibling!.id}`,
+            label: sibling!.text,
+            labelTokens: ['Invented', 'Sibling', 'Topic'],
+            children: [],
+          },
+        ],
+      },
+    ]
+    expect(
+      JSON.stringify(headingItems) === JSON.stringify(expected),
+      'hierarchy-positive:navigation-stack',
+    ).toBe(true)
+  })
+})

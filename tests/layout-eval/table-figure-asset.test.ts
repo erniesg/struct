@@ -218,3 +218,60 @@ describe('Stage 2.1 asset baseline characterization', () => {
     await characterizeCodecRejection('assets-negative', 'BYTES_HASH')
   })
 })
+
+// LOCAL RED CHECKPOINT: keep uncommitted until TABLE-01/FIG-01/FIG-02 land.
+describe('Stage 2.1 table and figure contract red checkpoint', () => {
+  it('names verified tables from neutral content', async () => {
+    const publication = await characterizeRenderedCase('tables-positive')
+    assertTableLinks('tables-positive', inspectXhtml(publication.xhtml))
+  })
+
+  it('keeps a matched caption with its figure', async () => {
+    const document = buildSealedSyntheticFixture('figures-positive')
+    const [figureBlock, captionBlock] = document.blocks
+    document.relationships = [
+      syntheticRelationship('figures-positive', {
+        role: 'caption-association',
+        kind: 'caption',
+        from: captionBlock!.id,
+        to: [figureBlock!.id],
+        label: 'Invented caption association',
+      }),
+    ]
+    resealSyntheticDocument(document)
+
+    const publication = await characterizeSealedDocument(document)
+    const parsed = inspectXhtml(publication.xhtml)
+    const figure = xmlElements(parsed.document.root).find(
+      (element) =>
+        element.namespaceUri === XML_NAMESPACES.xhtml &&
+        element.localName === 'figure' &&
+        xmlAttribute(element, 'id') === figureBlock!.id,
+    )!
+
+    expect(
+      xmlElementText(figure).includes(captionBlock!.text),
+      'figures-positive:caption-association',
+    ).toBe(true)
+  })
+
+  it('refuses an unlabeled figure image', async () => {
+    const document = buildSealedSyntheticFixture('figures-positive')
+    const asset = syntheticAsset('figures-positive', {
+      role: 'unlabelled-asset',
+    })
+    document.assets = [asset]
+    document.blocks[0]!.text = ''
+    document.blocks[0]!.label = ''
+    document.blocks[0]!.fallbackAssetIds = [asset.id]
+    resealSyntheticDocument(document)
+
+    let refused = false
+    try {
+      await characterizeSealedDocument(document)
+    } catch {
+      refused = true
+    }
+    expect(refused, 'figures-positive:unlabeled-image-refusal').toBe(true)
+  })
+})

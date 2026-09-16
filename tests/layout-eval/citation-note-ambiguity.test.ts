@@ -189,3 +189,71 @@ describe('Stage 2.1 ambiguity baseline characterization', () => {
     },
   )
 })
+
+// LOCAL RED CHECKPOINT: keep uncommitted until CITE-01/CITE-02/NOTE-01/AMB-01 land.
+describe('Stage 2.1 semantic relationship contract red checkpoint', () => {
+  it('pairs citation references with bibliography targets', async () => {
+    const publication = await characterizeRenderedCase('citations-positive')
+    assertSemanticLinks('citations-positive', inspectXhtml(publication.xhtml))
+  })
+
+  it('has no focusable hidden grouped citation links', async () => {
+    const document = buildSealedSyntheticFixture('citations-positive')
+    const relationship = document.relationships[0]!
+    const secondTarget = syntheticBlock('citations-positive', {
+      role: 'second-target',
+      text: 'Invented second semantic target.',
+      order: document.blocks.length,
+      attributes: { bibliographyEntry: true },
+    })
+    document.blocks.push(secondTarget)
+    document.pages[0]!.blocks.push(secondTarget.id)
+    document.pages[0]!.columns[0]!.blockIds.push(secondTarget.id)
+    relationship.to.push(secondTarget.id)
+    relationship.label = 'A, B'
+    document.blocks[0]!.inline[0]!.targetIds = [...relationship.to]
+    resealSyntheticDocument(document)
+
+    const publication = await characterizeSealedDocument(document)
+    assertAccessibilityLinks(
+      'citations-positive',
+      inspectXhtml(publication.xhtml),
+    )
+  })
+
+  it('uses the endnote target role', async () => {
+    const document = buildSealedSyntheticFixture('notes-positive')
+    document.blocks[1]!.kind = 'endnote'
+    document.relationships[0]!.kind = 'endnote'
+    resealSyntheticDocument(document)
+
+    const publication = await characterizeSealedDocument(document)
+    assertSemanticLinks('notes-positive', inspectXhtml(publication.xhtml))
+  })
+
+  it('does not link non-matched semantic candidates', async () => {
+    const linkedStatuses: string[] = []
+    for (const status of [
+      'ambiguous',
+      'unresolved',
+      'source-preserved',
+    ] as const) {
+      const document = buildSealedSyntheticFixture('ambiguity-safe')
+      document.relationships[0]!.status = status
+      resealSyntheticDocument(document)
+      const publication = await characterizeSealedDocument(document)
+      const candidate = publication.normalized.relationships[0]!.candidates![0]!
+      if (
+        localHrefs(inspectXhtml(publication.xhtml)).includes(
+          `#${candidate.target}`,
+        )
+      )
+        linkedStatuses.push(status)
+    }
+
+    expect(
+      linkedStatuses.length === 0,
+      'ambiguity-safe:non-matched-semantic-links',
+    ).toBe(true)
+  })
+})

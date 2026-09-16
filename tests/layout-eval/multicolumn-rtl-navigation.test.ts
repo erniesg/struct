@@ -170,3 +170,52 @@ describe('Stage 2.1 navigation baseline characterization', () => {
     )
   })
 })
+
+// LOCAL RED CHECKPOINT: keep uncommitted until RTL-01/RTL-02/NAV-01 land.
+describe('Stage 2.1 RTL and navigation contract red checkpoint', () => {
+  it('propagates RTL through nav and spine', async () => {
+    const publication = await characterizeRenderedCase('rtl-positive')
+    const navigation = inspectNavigation(
+      reopenedText(publication, 'EPUB/nav.xhtml'),
+    )
+    const opf = inspectOpf(reopenedText(publication, 'EPUB/package.opf'))
+
+    expect(
+      navigation.document.rootLanguage.xml === 'ar' &&
+        navigation.document.rootLanguage.html === 'ar' &&
+        navigation.document.rootDirection === 'rtl' &&
+        opf.spine.pageProgressionDirection === 'rtl',
+      'rtl-positive:nav-spine-direction',
+    ).toBe(true)
+  })
+
+  it('rejects a contradictory RTL profile', async () => {
+    let refused = false
+    try {
+      await characterizeRenderedCase('rtl-positive', {
+        profile: contradictoryLtrProfile,
+      })
+    } catch {
+      refused = true
+    }
+    expect(refused, 'rtl-positive:contradictory-profile-refusal').toBe(true)
+  })
+
+  it('uses one named heading-only toc', async () => {
+    const publication = await characterizeRenderedCase('navigation-positive')
+    const navigation = inspectNavigation(
+      reopenedText(publication, 'EPUB/nav.xhtml'),
+    )
+    const headingLabels = publication.decoded.blocks
+      .filter(({ kind }) => kind === 'heading')
+      .map(({ text }) => text)
+    const toc = navigation.tocs[0]!
+
+    expect(
+      Boolean(toc.ariaLabel) &&
+        JSON.stringify(toc.items.map(({ label }) => label)) ===
+          JSON.stringify(headingLabels),
+      'navigation-positive:named-heading-only-toc',
+    ).toBe(true)
+  })
+})
