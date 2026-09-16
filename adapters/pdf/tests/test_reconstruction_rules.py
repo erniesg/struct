@@ -455,18 +455,24 @@ class SideBySideSplitGuards(unittest.TestCase):
         it is not two tables printed side by side, and clipping that cell would
         drop it from one half without a trace."""
         from table_split import split_side_by_side_tables
+        # enough rows either side that the `len(cells) < 4` safety net cannot
+        # abort the split for us: the boundary guard has to be what stops it
         cells = [("Table 1: Left.", 0, 1, 0, 2), ("Table 2: Right.", 0, 1, 2, 4),
                  ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 1, 2, 2, 3), ("d", 1, 2, 3, 4),
-                 ("spans the boundary", 2, 3, 1, 3)]
-        doc, _ = docling_table(cells, columns=4, rows=3)
+                 ("e", 2, 3, 0, 1), ("f", 2, 3, 1, 2), ("g", 2, 3, 2, 3), ("h", 2, 3, 3, 4),
+                 ("i", 3, 4, 0, 1), ("j", 3, 4, 1, 2), ("k", 3, 4, 2, 3), ("l", 3, 4, 3, 4),
+                 ("spans the boundary", 4, 5, 1, 3)]
+        doc, _ = docling_table(cells, columns=4, rows=5)
         self.assertEqual(split_side_by_side_tables(doc), 0)
         self.assertEqual(len(doc.tables), 1)
 
     def test_a_grid_that_already_has_its_caption_is_left_alone(self):
         from table_split import split_side_by_side_tables
         cells = [("Table 1: Left.", 0, 1, 0, 2), ("Table 2: Right.", 0, 1, 2, 4),
-                 ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 1, 2, 2, 3), ("d", 1, 2, 3, 4)]
-        doc, table = docling_table(cells, columns=4, rows=2, captioned=True)
+                 ("a", 1, 2, 0, 1), ("b", 1, 2, 1, 2), ("c", 1, 2, 2, 3), ("d", 1, 2, 3, 4),
+                 ("e", 2, 3, 0, 1), ("f", 2, 3, 1, 2), ("g", 2, 3, 2, 3), ("h", 2, 3, 3, 4),
+                 ("i", 3, 4, 0, 1), ("j", 3, 4, 1, 2), ("k", 3, 4, 2, 3), ("l", 3, 4, 3, 4)]
+        doc, table = docling_table(cells, columns=4, rows=4, captioned=True)
         self.assertEqual(split_side_by_side_tables(doc), 0)
         self.assertEqual(len(table.captions), 1)
 
@@ -533,3 +539,49 @@ class FurnitureExemptionIsCapped(unittest.TestCase):
         exemptions = evaluate._furniture_exemptions(path)
         self.assertEqual(exemptions["the journal of results"], 1, "only one occurrence may be excused")
         self.assertEqual(sum(exemptions.values()), 1)
+
+
+class FigureCaptionSides(unittest.TestCase):
+    """The figure-side twin of `TableCaptionSides`. Both ask the same question —
+    which side does this paper print captions on — and both must refuse to
+    answer it from a tied vote, or a correct caption is taken off the float
+    that owns it."""
+
+    @staticmethod
+    def scene(votes):
+        owns = block("fX", "figure", "Figure 1: a below-caption figure.", .1, .50, .8, .10)
+        elsewhere = block("fY", "figure", "Figure 2: an above-caption figure.", .1, .80, .8, .10)
+        bare = block("fZ", "figure", "", .1, .66, .8, .10)
+        a = adapter([owns, elsewhere, bare])
+        a._page_image = lambda page: None
+        a._figure_caption_below = votes
+        a._attached_caption_boxes = {"fX": dict(page=1, x=.1, y=.61, width=.8, height=.04, rotation=0),
+                                     "fY": dict(page=1, x=.1, y=.74, width=.8, height=.04, rotation=0)}
+        a._fix_caption_sides()
+        return owns, bare
+
+    def test_a_tied_vote_moves_nothing(self):
+        owns, bare = self.scene([True, False])
+        self.assertEqual(owns["text"], "Figure 1: a below-caption figure.")
+        self.assertEqual(bare["text"], "")
+
+    def test_a_single_measured_caption_moves_nothing(self):
+        owns, bare = self.scene([True])
+        self.assertEqual(owns["text"], "Figure 1: a below-caption figure.")
+        self.assertEqual(bare["text"], "")
+
+    def test_a_clear_captions_above_paper_still_moves_the_wrong_side_caption(self):
+        owns, bare = self.scene([False, False, True])
+        self.assertEqual(owns["text"], "")
+        self.assertEqual(bare["text"], "Figure 1: a below-caption figure.")
+
+
+class CaptionSideVote(unittest.TestCase):
+    def test_the_convention_is_read_only_from_a_clear_majority(self):
+        from adapter_common import caption_side_is_below
+        self.assertIsNone(caption_side_is_below([]))
+        self.assertIsNone(caption_side_is_below([True]))
+        self.assertIsNone(caption_side_is_below([True, False]))          # a tie says nothing
+        self.assertIsNone(caption_side_is_below([True, False, True, False]))
+        self.assertTrue(caption_side_is_below([True, True, False]))
+        self.assertFalse(caption_side_is_below([False, False, True]))

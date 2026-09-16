@@ -16,6 +16,7 @@ import re
 from docling_core.types.doc import TableItem, TextItem
 
 from adapter_common import (
+    caption_side_is_below,
     FIGURE_CAPTION_RE,
     PROSE_LIKE_RE,
     TABLE_CAPTION_RE,
@@ -268,9 +269,8 @@ class TableRules:
             if block["kind"] == "table" and block["text"] and caption and boxes:
                 sides.append(caption["y"] >= boxes[0]["y"] + boxes[0]["height"] * 0.5)
         # only a paper that clearly sets its captions above its tables can be
-        # corrected this way: on a tie, or from a single measured caption, the
-        # convention is unknown and moving a caption would invent one
-        if len(sides) < 2 or sum(sides) * 2 >= len(sides):
+        # corrected this way
+        if caption_side_is_below(sides) is not False:
             return
         for block in list(self.blocks):
             if block["kind"] != "table" or not block["text"] or not block["evidence"]["boxes"]:

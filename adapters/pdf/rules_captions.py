@@ -15,6 +15,7 @@ import re
 from docling_core.types.doc import TextItem
 
 from adapter_common import (
+    caption_side_is_below,
     FIGURE_CAPTION_RE,
     SUBCAPTION_RE,
     TABLE_CAPTION_RE,
@@ -332,9 +333,9 @@ class CaptionRules:
         caption sits right below it took its neighbour's caption: it swaps to
         the caption below, and the caption above becomes an orphan for the
         picture above to adopt (symmetric for captions-above papers)."""
-        if len(self._figure_caption_below) < 2:
-            return
-        below = sum(self._figure_caption_below) > len(self._figure_caption_below) / 2
+        below = caption_side_is_below(self._figure_caption_below)
+        if below is None:
+            return  # the paper's caption side is not settled; moving one would guess it
         for block in list(self.blocks):
             if block["kind"] != "figure" or not block["text"] or not block["evidence"]["boxes"] or block["page"] is None:
                 continue
@@ -387,7 +388,7 @@ class CaptionRules:
                 overlap = min(fbox["x"] + fbox["width"], obox["x"] + obox["width"]) - max(fbox["x"], obox["x"])
                 if not (-0.01 <= gap <= 0.09) or overlap < 0.4 * min(fbox["width"], obox["width"]):
                     continue
-                former = self._new_block("caption", None, block["text"]) if False else {
+                former = {
                     "id": self._id(f"b-caption-{block['id']}"),
                     "kind": "caption",
                     "text": block["text"],

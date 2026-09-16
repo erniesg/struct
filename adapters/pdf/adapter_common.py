@@ -107,6 +107,21 @@ def is_terminated(text: str) -> bool:
     return bool(TERMINAL_RE.search(stripped))
 
 
+def caption_side_is_below(samples: list[bool]) -> bool | None:
+    """Which side of its float a paper prints captions on, or None when the
+    sample does not say.
+
+    A caption may only be moved off the float the layout model gave it when
+    the paper's own convention is clear: two captions at least, and a strict
+    majority. On a tie the convention is unknown, and guessing it strips a
+    correct caption from the float that owns it.
+    """
+    if len(samples) < 2:
+        return None
+    below = sum(samples) * 2
+    return None if below == len(samples) else below > len(samples)
+
+
 def sentence_runs_on(text: str) -> bool:
     """Whether the sentence this text ends in carries on into the next block.
 
