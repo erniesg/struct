@@ -169,7 +169,10 @@ class ReadingOrderDiagnostic(unittest.TestCase):
         a._report_reading_order()
         self.assertEqual(a.report.reading_order_unrepaired, 1)
         self.assertEqual(a.report.reading_order_pages_disagree, 1)
-        self.assertEqual([d["category"] for d in a.diagnostics], ["reading-order"])
+        # the categories the struct codec accepts (src/document/codec/parsers.ts);
+        # a category outside them is refused at render, not here
+        self.assertEqual([d["category"] for d in a.diagnostics], ["layout"])
+        self.assertIn(a.diagnostics[0]["severity"], ("info", "warning", "error"))
         self.assertEqual(a.diagnostics[0]["pages"], [1])
 
     def test_a_page_in_the_agreed_order_reports_nothing(self):

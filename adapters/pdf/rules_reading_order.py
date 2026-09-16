@@ -73,7 +73,7 @@ class ReadingOrderRules:
                 residual += 1
                 self._diagnostic(
                     "warning",
-                    "reading-order",
+                    "layout",  # one of the codec's diagnostic categories
                     "Page order contradicts the text layer",
                     f"page {page['page']}: the text layer and the page geometry agree on an order "
                     f"the output does not follow ({page['inversions']} inverted block pairs)",
