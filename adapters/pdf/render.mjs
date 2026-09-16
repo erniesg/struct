@@ -3,6 +3,13 @@
 //
 // Usage: node render.mjs <draft.json> --out <dir> [--profiles paperPro,paperProMove,mobile]
 //                        [--struct-dir <path-to-erniesg/struct checkout>]
+//                        [--font default|serif|sans] [--font-size <px>]
+//                        [--line-height <n>] [--margin <em>]
+//
+// The four typography options are the only way to change a profile's
+// stylesheet. Each one that is left out, or set to the profile's own default,
+// contributes nothing: with no typography options the rendered bytes are the
+// bytes this tool produced before they existed.
 //
 // The adapter (pdf2struct.py) owns extraction; this tool only fills the
 // receipt counts and digest with the package's own helpers, validates the
@@ -18,17 +25,75 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 function parseArguments(argv) {
-  const args = { profiles: ['paperPro', 'paperProMove', 'mobile'], structDir: null, out: null, input: null }
+  const args = { profiles: ['paperPro', 'paperProMove', 'mobile'], structDir: null, out: null, input: null, typography: {} }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index]
     if (value === '--out') args.out = argv[++index]
     else if (value === '--profiles') args.profiles = argv[++index].split(',').filter(Boolean)
     else if (value === '--struct-dir') args.structDir = argv[++index]
+    else if (value === '--font') args.typography.font = argv[++index]
+    else if (value === '--font-size') args.typography.fontSizePx = number(argv[++index], '--font-size')
+    else if (value === '--line-height') args.typography.lineHeight = number(argv[++index], '--line-height')
+    else if (value === '--margin') args.typography.marginEm = number(argv[++index], '--margin')
     else if (value.startsWith('--')) throw new Error(`unknown option ${value}`)
     else args.input = value
   }
   if (!args.input || !args.out) throw new Error('usage: render.mjs <draft.json> --out <dir> [--profiles a,b] [--struct-dir <dir>]')
+  args.typography = validateTypography(args.typography)
   return args
+}
+
+function number(raw, option) {
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) throw new Error(`${option} needs a number, not ${JSON.stringify(raw)}`)
+  return parsed
+}
+
+// The requested values reach a stylesheet, so nothing that is not a member of
+// this enumeration or a number inside these bounds is allowed through. A font
+// is chosen by name from stacks this file owns; a caller never supplies CSS.
+const FONT_STACKS = {
+  default: "Georgia, 'Times New Roman', serif",
+  serif: "'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif",
+  sans: "'Helvetica Neue', Helvetica, Arial, 'Liberation Sans', sans-serif",
+}
+const TYPOGRAPHY_BOUNDS = { fontSizePx: [8, 40], lineHeight: [1, 2.5], marginEm: [0, 6] }
+
+function validateTypography(requested) {
+  const clean = {}
+  if (requested.font !== undefined) {
+    if (!Object.hasOwn(FONT_STACKS, requested.font))
+      throw new Error(`--font must be one of ${Object.keys(FONT_STACKS).join(', ')}`)
+    clean.fontFamily = FONT_STACKS[requested.font]
+  }
+  for (const [key, [low, high]] of Object.entries(TYPOGRAPHY_BOUNDS)) {
+    if (requested[key] === undefined) continue
+    const value = requested[key]
+    if (!(value >= low && value <= high)) throw new Error(`${key} must be between ${low} and ${high}`)
+    clean[key] = Math.round(value * 100) / 100
+  }
+  return clean
+}
+
+// Only the values that differ from the profile's own defaults become part of
+// its geometry, so `--font default --font-size 15` on paperPro is the same
+// request as passing nothing at all — same CSS, same configuration digest,
+// same EPUB bytes.
+function applyTypography(base, typography) {
+  const geometry = { ...base }
+  if (typography.fontFamily !== undefined && typography.fontFamily !== DEFAULT_FONT_FAMILY)
+    geometry.fontFamily = typography.fontFamily
+  if (typography.lineHeight !== undefined && typography.lineHeight !== DEFAULT_LINE_HEIGHT)
+    geometry.lineHeight = typography.lineHeight
+  if (typography.marginEm !== undefined && typography.marginEm !== DEFAULT_MARGIN_EM)
+    geometry.marginEm = typography.marginEm
+  if (typography.fontSizePx !== undefined && typography.fontSizePx !== base.bodyPx) {
+    const ratio = typography.fontSizePx / base.bodyPx
+    geometry.bodyPx = typography.fontSizePx
+    geometry.titlePx = Math.round(base.titlePx * ratio)
+    geometry.headingPx = Math.round(base.headingPx * ratio)
+  }
+  return geometry
 }
 
 async function loadStruct(structDir) {
@@ -59,9 +124,16 @@ const PROFILE_CSS = {
   mobile: { bodyPx: 16, titlePx: 28, headingPx: 20, fileName: 'publication-mobile.epub', flow: 'scrolled-continuous' },
 }
 
-function stylesheet({ bodyPx, titlePx, headingPx }) {
+const DEFAULT_FONT_FAMILY = FONT_STACKS.default
+const DEFAULT_LINE_HEIGHT = 1.65
+const DEFAULT_MARGIN_EM = 0.6
+
+function stylesheet({ bodyPx, titlePx, headingPx, fontFamily, lineHeight, marginEm }) {
+  const family = fontFamily ?? DEFAULT_FONT_FAMILY
+  const leading = lineHeight ?? DEFAULT_LINE_HEIGHT
+  const gutter = marginEm ?? DEFAULT_MARGIN_EM
   return `html { font-size: ${bodyPx}px; }
-body { font-family: Georgia, 'Times New Roman', serif; line-height: 1.65; margin: 0; padding: 0 0.6em; -webkit-hyphens: auto; hyphens: auto; }
+body { font-family: ${family}; line-height: ${leading}; margin: 0; padding: 0 ${gutter}em; -webkit-hyphens: auto; hyphens: auto; }
 header h1 { font-size: ${(titlePx / bodyPx).toFixed(3)}em; line-height: 1.2; margin: 1.2em 0 0.4em; }
 h2 { font-size: ${(headingPx / bodyPx).toFixed(3)}em; margin: 1.4em 0 0.5em; line-height: 1.25; break-after: avoid; }
 h3 { font-size: 1.15em; margin: 1.2em 0 0.4em; break-after: avoid; }
@@ -98,9 +170,10 @@ function stableJson(value) {
   return JSON.stringify(value)
 }
 
-function profileFor(id) {
-  const geometry = PROFILE_CSS[id]
-  if (!geometry) throw new Error(`unknown profile ${id}`)
+function profileFor(id, typography = {}) {
+  const base = PROFILE_CSS[id]
+  if (!base) throw new Error(`unknown profile ${id}`)
+  const geometry = applyTypography(base, typography)
   const css = stylesheet(geometry)
   const configuration = { id, version: '1', geometry, cssSha256: sha256(css) }
   return {
@@ -210,7 +283,7 @@ async function main() {
   const draft = JSON.parse(await readFile(args.input, 'utf8'))
   const sealed = sealDraft(draft, struct)
   await mkdir(args.out, { recursive: true })
-  const result = { structDir: struct.dir, documentId: sealed.documentId, ready: sealed.recovery.status === 'ready', droppedHrefs: sealDraft.droppedHrefs ?? 0, profiles: [], errors: [] }
+  const result = { structDir: struct.dir, documentId: sealed.documentId, ready: sealed.recovery.status === 'ready', droppedHrefs: sealDraft.droppedHrefs ?? 0, typography: args.typography, profiles: [], errors: [] }
   let decoded
   try {
     decoded = struct.decodeStructDocument(sealed)
@@ -232,7 +305,7 @@ async function main() {
   }
   for (const id of args.profiles) {
     try {
-      const profile = profileFor(id)
+      const profile = profileFor(id, args.typography)
       const exported = await struct.buildStructEpub(decoded, { profile })
       const fileName = `${basename(args.input)}-${id === 'paperProMove' ? 'papermove' : id.toLowerCase()}.epub`
       await writeFile(join(args.out, fileName), exported.bytes)
