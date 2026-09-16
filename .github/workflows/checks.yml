@@ -45,22 +45,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install docling-core pypdf pillow pypdfium2 latex2mathml
       - name: the adapter is not allowed to import docling at module level
-        run: |
-          python - <<'PY'
-          import ast, pathlib, sys
-          heavy = {"docling", "torch", "transformers", "docling_parse"}
-          bad = []
-          for path in sorted(pathlib.Path("adapters/pdf").glob("*.py")):
-              tree = ast.parse(path.read_text())
-              for node in tree.body:
-                  if isinstance(node, (ast.Import, ast.ImportFrom)):
-                      names = [node.module] if isinstance(node, ast.ImportFrom) and node.module else [a.name for a in node.names]
-                      bad += [f"{path.name}: {n}" for n in names if n and n.split(".")[0] in heavy]
-          if bad:
-              print("module-level import of a heavy dependency:", *bad, sep="\n  ")
-              sys.exit(1)
-          print("clean: every heavy dependency is imported lazily")
-          PY
+        run: python scripts/check-lazy-imports.py
       # the suite is discovered from the adapter directory: `tests/` carries no
       # __init__.py, so it is not importable as a package from the repo root
       - run: python -m unittest discover -s tests
