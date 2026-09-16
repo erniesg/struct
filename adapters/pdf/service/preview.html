@@ -713,31 +713,41 @@ async function runExport () {
   }
 }
 
+function guessProfile (name) {
+  const suffix = { paperpro: 'paperPro', papermove: 'paperProMove', mobile: 'mobile' }
+  const match = /-([a-z]+)\.epub$/.exec(name || '')
+  return match ? suffix[match[1]] : null
+}
+
 // --------------------------------------------------------------------- start
 
 async function start () {
   if (!/^[0-9a-f]{32}$/.test(jobId)) { document.body.innerHTML = '<p class="empty err">bad job id</p>'; return }
   const job = await (await api('')).json()
   state.job = job
-  state.pageCount = Math.max(1, Number(job.pages) || 1)
-  $('#doc-name').textContent = job.originalName || job.stem
-  $('#doc-meta').textContent = `${job.pages} pages · ${job.profiles.join(', ')}`
-  $('#page-total').textContent = `of ${state.pageCount}`
-  $('#page-number').max = String(state.pageCount)
+  $('#doc-name').textContent = job.originalName || job.stem || 'preview'
   $('#open-pdf').href = `/api/jobs/${encodeURIComponent(jobId)}/source.pdf`
 
+  // A job converted before this page existed records only what the converter
+  // always recorded, so anything missing is taken from the sealed document the
+  // /blocks route reads rather than assumed.
   const select = $('#profile')
-  for (const file of job.files || []) {
+  const files = (job.files || []).filter((file) => file && file.name)
+  for (const file of files) {
     const option = document.createElement('option')
-    option.value = file.profile
-    option.textContent = file.label || file.profile
+    option.value = file.profile || guessProfile(file.name) || 'paperPro'
+    option.textContent = file.label || option.value
     select.append(option)
   }
-  state.profile = (job.files || [])[0]?.profile || 'paperPro'
+  state.profile = select.options[0]?.value || 'paperPro'
   select.value = state.profile
 
   const mapped = await (await api('/blocks')).json()
   state.blocks = mapped.blocks || []
+  state.pageCount = Math.max(1, Number(mapped.pageCount) || Number(job.pages) || 1)
+  $('#doc-meta').textContent = `${state.pageCount} pages · ${(job.profiles || [state.profile]).join(', ')}`
+  $('#page-total').textContent = `of ${state.pageCount}`
+  $('#page-number').max = String(state.pageCount)
   for (const page of mapped.pages || []) {
     if (page.width > 0 && page.height > 0) state.pageAspect.set(page.page, page.width / page.height)
   }

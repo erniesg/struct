@@ -24,6 +24,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -564,13 +565,40 @@ TYPOGRAPHY_FLAGS = {"fontSizePx": "--font-size", "lineHeight": "--line-height", 
 
 
 def _finished(paths: JobPaths) -> dict:
-    """The state of a job that has something to preview, or a 404."""
+    """The state of a job that has something to preview, or a 404.
+
+    A job converted before this page existed wrote none of these routes' needs
+    into job.json, so everything is read back off disk and anything missing is
+    derived rather than demanded: the stem falls back to the stored file name,
+    the stored file name to the stem, the page count to the sealed document.
+    """
     state = _read_state(paths.root)
     if not state or state.get("status") != "done":
         raise HTTPException(status_code=404, detail="no finished job")
-    if not STORED_NAME.fullmatch(state.get("stem") or ""):
+    stem = state.get("stem") or Path(state.get("storedName") or "").stem
+    if not STORED_NAME.fullmatch(stem):
         raise HTTPException(status_code=404, detail="no finished job")
-    return state
+    return {**state, "stem": stem}
+
+
+def _page_total(paths: JobPaths, state: dict) -> int:
+    """How many pages the source has, from job.json or from the sealed document."""
+    recorded = state.get("pages")
+    if isinstance(recorded, int) and recorded > 0:
+        return recorded
+    sealed = _sealed_document(paths, state)
+    pages = [page.get("page") for page in sealed.get("pages", []) if isinstance(page.get("page"), int)]
+    return max(pages) if pages else 0
+
+
+def _sealed_document(paths: JobPaths, state: dict) -> dict:
+    document = _in_job(paths.root, "work", state["stem"], "struct.json")
+    if not document.is_file():
+        return {}
+    try:
+        return json.loads(document.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _in_job(root: Path, *parts: str) -> Path:
@@ -582,7 +610,7 @@ def _in_job(root: Path, *parts: str) -> Path:
 
 
 def _stored_pdf(paths: JobPaths, state: dict) -> Path:
-    name = state.get("storedName") or ""
+    name = state.get("storedName") or f"{state['stem']}.pdf"
     if not STORED_NAME.fullmatch(name) or not name.lower().endswith(".pdf"):
         raise HTTPException(status_code=404, detail="no source PDF")
     pdf = _in_job(paths.root, name)
@@ -593,7 +621,12 @@ def _stored_pdf(paths: JobPaths, state: dict) -> Path:
 
 def _profile_epub(paths: JobPaths, state: dict, profile: str) -> Path:
     """The EPUB a job listed for one profile — the same allowlist /file/ uses."""
-    name = next((entry.get("name") for entry in state.get("files", []) if entry.get("profile") == profile), None)
+    recorded = [entry.get("name") for entry in state.get("files", []) if isinstance(entry, dict)]
+    expected = f"{state['stem']}-{PROFILE_SUFFIX.get(profile, profile)}.epub"
+    name = next(
+        (entry.get("name") for entry in state.get("files", []) if isinstance(entry, dict) and entry.get("profile") == profile),
+        expected if expected in recorded else None,
+    )
     if not name or not STORED_NAME.fullmatch(name) or not name.endswith(".epub"):
         raise HTTPException(status_code=404, detail="no such profile")
     archive = _in_job(paths.root, "work", state["stem"], name)
@@ -645,31 +678,49 @@ def get_page_image(job_id: str, number: int) -> FileResponse:
     """
     paths = _job_paths(job_id)
     state = _finished(paths)
-    pages = int(state.get("pages") or 0)
+    pages = _page_total(paths, state)
     if number < 1 or (pages and number > pages) or number > MAX_PAGES:
         raise HTTPException(status_code=404, detail="no such page")
     pdf = _stored_pdf(paths, state)
-    cache = paths.root / "preview-pages"
-    target = cache / f"page-{number:04d}.png"
-    if not target.is_file():
-        cache.mkdir(parents=True, exist_ok=True)
-        with _rasters:
-            if not target.is_file():
-                prefix = cache / f"tmp-{uuid.uuid4().hex}"
-                try:
-                    completed = subprocess.run(
-                        ["pdftoppm", "-png", "-r", str(PREVIEW_DPI), "-f", str(number), "-l", str(number),
-                         "-singlefile", str(pdf), str(prefix)],
-                        capture_output=True, timeout=180,
-                    )
-                except (OSError, subprocess.SubprocessError) as error:
-                    raise HTTPException(status_code=503, detail="page rendering is unavailable") from error
-                rendered = prefix.with_suffix(".png")
-                if completed.returncode != 0 or not rendered.is_file():
-                    rendered.unlink(missing_ok=True)
-                    raise HTTPException(status_code=502, detail="that page could not be rendered")
-                rendered.replace(target)
-    return FileResponse(target, media_type="image/png", headers=INERT_HEADERS)
+    target = paths.root / "preview-pages" / f"page-{number:04d}.png"
+    if target.is_file():
+        return FileResponse(target, media_type="image/png", headers=INERT_HEADERS)
+    with _rasters:
+        if target.is_file():
+            return FileResponse(target, media_type="image/png", headers=INERT_HEADERS)
+        return Response(_raster_page(pdf, number, target), media_type="image/png", headers=INERT_HEADERS)
+
+
+def _raster_page(pdf: Path, number: int, target: Path) -> bytes:
+    """Render one page and keep it beside the job when the job directory takes it.
+
+    The cache is an addition to a job, never a change to one: if it cannot be
+    written — a read-only data directory, a full disk — the page is still served
+    and only the next request pays for it again.
+    """
+    scratch = Path(tempfile.mkdtemp(prefix="pdf2epub-page-"))
+    try:
+        prefix = scratch / "page"
+        try:
+            completed = subprocess.run(
+                ["pdftoppm", "-png", "-r", str(PREVIEW_DPI), "-f", str(number), "-l", str(number),
+                 "-singlefile", str(pdf), str(prefix)],
+                capture_output=True, timeout=180,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise HTTPException(status_code=503, detail="page rendering is unavailable") from error
+        rendered = prefix.with_suffix(".png")
+        if completed.returncode != 0 or not rendered.is_file():
+            raise HTTPException(status_code=502, detail="that page could not be rendered")
+        payload = rendered.read_bytes()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rendered.replace(target)
+        except OSError:
+            pass
+        return payload
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 @app.get("/api/jobs/{job_id}/blocks", dependencies=[Depends(require_auth)])
@@ -681,13 +732,9 @@ def get_blocks(job_id: str) -> JSONResponse:
     """
     paths = _job_paths(job_id)
     state = _finished(paths)
-    document = _in_job(paths.root, "work", state["stem"], "struct.json")
-    if not document.is_file():
+    sealed = _sealed_document(paths, state)
+    if not sealed:
         raise HTTPException(status_code=404, detail="no struct document")
-    try:
-        sealed = json.loads(document.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise HTTPException(status_code=404, detail="no struct document") from error
     blocks = [
         {
             "id": block.get("id"),
@@ -705,7 +752,7 @@ def get_blocks(job_id: str) -> JSONResponse:
         {"page": page.get("page"), "width": page.get("width"), "height": page.get("height")}
         for page in sealed.get("pages", [])
     ]
-    return JSONResponse({"pageCount": state.get("pages"), "pages": pages, "blocks": blocks})
+    return JSONResponse({"pageCount": _page_total(paths, state), "pages": pages, "blocks": blocks})
 
 
 @app.get("/api/jobs/{job_id}/epub/{profile}/{entry:path}", dependencies=[Depends(require_auth)])
