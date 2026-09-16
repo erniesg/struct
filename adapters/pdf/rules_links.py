@@ -23,6 +23,43 @@ from adapter_common import (
 )
 
 
+
+# An author icon's link reads as one of these labels in the output.
+ICON_WORD_RE = re.compile(r"\[?(?:orcid|email|envelope)\]?", re.I)
+ICON_WORDS_RE = re.compile(r"\[?\b(?:orcid|email|envelope)\b\]?|\s", re.I)
+# the glyph names an icon font exposes for the two icons, exactly as read
+GLYPH_NAMES = {"[email]": ("envelope",), "[ORCID]": ("orcid",)}
+
+
+UNLINKED_ICONS = (
+    (re.compile(r"\benvelope(?=\s+[\w.{},+-]*[\w}]@[\w-]+\.)"), "[email]"),
+    (re.compile(r"\borcid(?=\s+\d{4}-\d{4}-\d{4}-\d{3}[\dX]\b)"), "[ORCID]"),
+)
+
+
+def _replace_span(block: dict, start: int, end: int, label: str, owner: dict | None = None) -> None:
+    """Replace `text[start:end]` with `label`, keeping every inline run on the
+    characters it covered; `owner` is a run that covered exactly the span."""
+    delta = len(label) - (end - start)
+    block["text"] = block["text"][:start] + label + block["text"][end:]
+    for run in block.get("inline", []):
+        if run is owner:
+            run["end"] = start + len(label)
+            continue
+        if run["start"] >= end:
+            run["start"] += delta
+        if run["end"] >= end:
+            run["end"] += delta
+
+
+def _icon_label(uri: str) -> str | None:
+    if re.match(r"https?://orcid\.org/", uri, re.I):
+        return "[ORCID]"
+    if uri.lower().startswith("mailto:"):
+        return "[email]"
+    return None
+
+
 class LinkRules:
     """`StructAdapter` mixin (see pdf2struct.py): state lives on the adapter and is read through `self`."""
 
@@ -144,7 +181,7 @@ class LinkRules:
             identity = (link.page, tuple(link.rect), uri)
             if identity in processed or not uri or any(ch.isalnum() for ch in link.text):
                 continue
-            label = "ORCID" if re.match(r"https?://orcid\.org/", uri, re.I) else "email" if uri.lower().startswith("mailto:") else None
+            label = _icon_label(uri)
             if not label or link.page not in self.doc.pages or link.page > len(self.word_boxes):
                 continue
             size = self.doc.pages[link.page].size
@@ -178,8 +215,8 @@ class LinkRules:
                 existing = next((run for run in block["inline"]
                                  if id(run) not in claimed and run.get("href") == uri
                                  and run["start"] >= position
-                                 and not re.sub(r"\b(?:ORCID|email|envelope)\b|\s", "", block["text"][position:run["start"]], flags=re.I)
-                                 and block["text"][run["start"]:run["end"]].lower() in ("orcid", "email", "envelope")), None)
+                                 and not ICON_WORDS_RE.sub("", block["text"][position:run["start"]])
+                                 and ICON_WORD_RE.fullmatch(block["text"][run["start"]:run["end"]])), None)
                 if existing is not None:
                     claimed.add(id(existing))
                     processed.add(identity)
@@ -202,6 +239,35 @@ class LinkRules:
                 self.report.links_mapped += 1
                 self.report.links_unmapped = max(0, self.report.links_unmapped - 1)
                 break
+        self._label_icon_runs(claimed)
+
+    def _label_icon_runs(self, claimed: set[int]) -> None:
+        """Show an author icon's link as `[email]` or `[ORCID]`.
+
+        The anchor is either a label inserted above or the glyph name the
+        layout model read out of the icon font (`envelope`, `orcid`), which
+        reads as a stray word. A glyph name is recognised without a claim; a
+        plain `email` or `ORCID` only when the recovery claimed it as an icon,
+        so a linked word in prose keeps its text. An unlinked glyph name is a
+        label only directly before an address or an ORCID iD.
+        """
+        for block in self.blocks:
+            for run in sorted(block.get("inline", []), key=lambda r: r["start"]):
+                label = _icon_label(run.get("href") or "")
+                if not label:
+                    continue
+                start, end = run["start"], run["end"]
+                shown = block["text"][start:end]
+                if shown == label or not ICON_WORD_RE.fullmatch(shown):
+                    continue
+                if id(run) not in claimed and shown not in GLYPH_NAMES.get(label, ()):
+                    continue
+                _replace_span(block, start, end, label, owner=run)
+            # an icon with no annotation of its own: the glyph name counts only
+            # when what follows it is what the icon stands for
+            for pattern, label in UNLINKED_ICONS:
+                for match in reversed(list(pattern.finditer(block["text"]))):
+                    _replace_span(block, match.start(), match.end(), label)
 
     def _runs_for(self, item: TextItem, text: str, styles: bool = True) -> list[dict]:
         runs: list[dict] = []
