@@ -323,7 +323,13 @@ function basename(path) {
   return path.split('/').pop().replace(/\.struct-draft\.json$|\.json$/, '')
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error?.stack ?? error}\n`)
-  process.exitCode = 1
-})
+// Run when invoked as a program; import when a test wants the typography rules
+// on their own, which needs no built dist and no draft.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`${error?.stack ?? error}\n`)
+    process.exitCode = 1
+  })
+}
+
+export { FONT_STACKS, PROFILE_CSS, applyTypography, parseArguments, profileFor, stylesheet, validateTypography }
