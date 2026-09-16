@@ -17,6 +17,18 @@ GET  /health              unauthenticated liveness + the current limits
 GET  /                    the browser UI
 ```
 
+and, for a finished job, the preview:
+
+```
+GET  /jobs/{id}/preview          the PDF beside its rendition (the login form, 401, without a token)
+GET  /api/jobs/{id}/source.pdf   the uploaded PDF, inline
+GET  /api/jobs/{id}/page/{n}.png one source page, rastered by poppler and cached
+GET  /api/jobs/{id}/blocks       block id → source page and normalised evidence boxes
+GET  /api/jobs/{id}/epub/{profile}/{entry}  one entry out of that profile's EPUB
+POST /api/jobs/{id}/export       {profile, typography} → re-render + EPUBCheck  → 201
+GET  /api/jobs/{id}/export/{eid} the exported EPUB
+```
+
 Every route except `/health` needs the token, as `Authorization: Bearer …`,
 `X-Auth-Token:`, `?token=`, or the cookie the login form sets.
 
@@ -37,6 +49,36 @@ service assumes the upload is hostile:
 
 It is still a service that parses attacker-controlled files. Keep the token
 private, and do not put it behind a hostname you would hand out.
+
+### …and about showing it back to you
+
+The preview puts markup derived from that PDF on a page that holds the token,
+so the rendition is treated as hostile all the way through:
+
+- it renders in an iframe whose sandbox is `allow-same-origin` and nothing
+  else. Without `allow-scripts` the document cannot execute anything — no
+  `<script>`, no inline handler, no `javascript:` URL. `allow-same-origin`
+  grants the *parent* reach into the frame, which is what lets a font-size
+  change be a `<style>` rewrite with no request; it grants the frame nothing,
+  because the frame cannot run code. The pair that is dangerous,
+  `allow-scripts allow-same-origin`, is exactly the pair that is refused;
+- the frame document carries `default-src 'none'; img-src blob:` of its own,
+  and inherits the page's policy on top of that (a `srcdoc` document must
+  satisfy both), so no script source exists and no subresource can leave;
+- the markup is rebuilt from an element and attribute allowlist before it is
+  handed over, and images and fonts enter as `blob:` URLs the page fetched
+  with its own credentials — the frame never issues a request;
+- every route that hands back a job's derived bytes sends `nosniff` and
+  `Content-Security-Policy: default-src 'none'; sandbox`, so navigating a
+  browser straight at EPUB XHTML gets an opaque origin with scripting off
+  rather than a script at the token's origin;
+- the source page is rastered here by poppler and shown as a PNG, so no PDF
+  engine parses the upload in the reviewer's browser.
+
+Typography is four `render.mjs` parameters — a font chosen by name from stacks
+that file owns, and three bounded numbers — never a stylesheet a caller
+supplies. Passing none of them, or passing the profile's own defaults, renders
+the same bytes the job already produced.
 
 ## Run it locally
 
@@ -67,6 +109,24 @@ PDF2EPUB_TOKEN=… ./deploy.sh pdf2epub.129-150-32-215.sslip.io
 To update after a pull: `git pull && sudo systemctl restart pdf2epub`.
 Rebuild `dist/` as well if anything under `src/` changed.
 
+## Tests
+
+The preview's tests need Node, a built `dist/` and poppler, but never Docling:
+the fixture writes its own two-page PDF and its own draft.
+
+```bash
+~/.venvs/docling/bin/python -m pytest adapters/pdf/tests/test_service_preview.py
+node adapters/pdf/tests/preview.playwright.mjs --playwright-root <dir with node_modules/playwright>
+```
+
+The Playwright run also drives a service that is already up, which is how a
+deployment is checked against a job that finished before it:
+
+```bash
+PDF2EPUB_TOKEN=… node adapters/pdf/tests/preview.playwright.mjs \
+  --base https://… --job <id> --shots ./shots
+```
+
 ## Environment
 
 | variable | default | meaning |
@@ -81,6 +141,9 @@ Rebuild `dist/` as well if anything under `src/` changed.
 | `PDF2EPUB_KEEP_INTERMEDIATES` | unset | keep the Docling JSON and page images after a successful job (they dominate a job's footprint) |
 | `PDF2EPUB_PYTHON` | this interpreter | the venv that has Docling |
 | `PDF2EPUB_STRUCT_DIR` | — | passed to `render.mjs` as `--struct-dir` |
+| `PDF2EPUB_PREVIEW_DPI` | 110 | resolution the preview rasters a source page at (36–300) |
+| `PDF2EPUB_EXPORT_TIMEOUT` | 600 | wall clock for one export re-render |
+| `PDF2EPUB_EXPORT_KEEP` | 12 | exports kept per job before the oldest are dropped |
 
 ## What to expect
 
