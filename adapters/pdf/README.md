@@ -76,6 +76,11 @@ and patching `pdf2struct.StructAdapter._<rule>` keep working.
   `_table_from_blocks` (text blocks in a region to rows and columns).
 - `rules_ruled_boxes.py` (`RuledBoxRules`) — drawn rules, frames and shaded boxes
   beside a caption, read as a text table or a figure crop.
+- `rules_reading_order.py` (`ReadingOrderRules`) — the only pass that may
+  reorder a page's prose on reading evidence: it prints a page in the order the
+  text layer and a two-column band model agree on, where the layout model
+  disagrees and nothing about the page makes either opinion unsafe. The
+  comparison itself is `reading_order.py`. Floats never move against the prose.
 - `rules_code_equations.py` (`CodeEquationRules`) — code items checked against
   glyph faces, monospace listings, equation blocks (MathML or crop), split
   listings rejoined.
@@ -92,7 +97,9 @@ from a rule: `layout_normalization.py` (impossible cross-page items, before the
 walk), `figure_recovery.py` (sideways captions, picture galleries, caption
 columns, caption evidence), `source_tables.py` (glyph cell grids, caption
 reconciliation), `note_bodies.py`, `internal_links.py`, `equation_recovery.py`
-with `equation_geometry.py` and `equation_matrix.py`, `ocr_region.py`, and
+with `equation_geometry.py` and `equation_matrix.py`, `ocr_region.py`,
+`reading_order.py` (the order sensor, read by `rules_reading_order.py` and
+reported through `evaluate.py`'s `readingOrderDiagnostics`), and
 `inline_offsets.py` (UTF-16 offsets at emission). `inline_equations.py` is
 tested but not yet called by the adapter. Source signals come from
 `pdf_text.py`, `pdf_links.py` and `source_raster.py`.
