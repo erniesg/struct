@@ -82,13 +82,16 @@ class ColumnOrderRepair(unittest.TestCase):
         self.assertEqual([b["id"] for b in a.blocks], ["l1", "l2", "l3", "r1", "r2", "r3"])
         self.assertEqual(a.report.reading_order_pages_repaired, 0)
 
-    def test_floats_keep_their_places_while_the_prose_moves(self):
+    def test_a_float_keeps_its_place_and_the_prose_moves_around_it(self):
+        """A float the prose does not have to pass keeps its slot in the block
+        list while the prose is permuted among the slots it already held."""
         blocks, page_layout = two_column_page()
         figure = block("fig", "figure", "Figure 1. A picture.", LEFT, 0.70, 0.8, 0.15)
-        emitted = [blocks[0], blocks[3], figure, blocks[4], blocks[5], blocks[1], blocks[2]]
+        emitted = [figure, blocks[0], blocks[3], blocks[4], blocks[5], blocks[1], blocks[2]]
         a = adapter(emitted, page_layout)
         a._repair_column_order()
-        self.assertEqual([b["id"] for b in a.blocks], ["l1", "l2", "fig", "l3", "r1", "r2", "r3"])
+        self.assertEqual([b["id"] for b in a.blocks], ["fig", "l1", "l2", "l3", "r1", "r2", "r3"])
+        self.assertEqual(a.report.reading_order_pages_repaired, 1)
 
     def test_the_text_layer_alone_does_not_move_a_page(self):
         """Poppler reading the columns in one order and the geometry in another
@@ -142,7 +145,7 @@ class ColumnOrderRepair(unittest.TestCase):
         blocks[5]["evidence"]["pages"] = [1, 2]  # the last paragraph runs on
         emitted = [blocks[0], blocks[3], blocks[4], blocks[5], blocks[1], blocks[2]]
         result = reading_order.compare_page(emitted, 1, page_layout[0])
-        self.assertIn("a block would move across a heading or a page-spanning paragraph",
+        self.assertIn("a block would move across a heading, a float or a page-spanning paragraph",
                       result["faults"])
         a = adapter(emitted, page_layout)
         a._repair_column_order()
@@ -216,7 +219,7 @@ class ColumnOrderRepair(unittest.TestCase):
         page_layout = layout(lines)
         result = reading_order.compare_page(emitted, 1, page_layout[0])
         self.assertTrue(result["geometryAgrees"])  # both arbiters, and both wrong
-        self.assertIn("a block would move across a heading or a page-spanning paragraph",
+        self.assertIn("a block would move across a heading, a float or a page-spanning paragraph",
                       result["faults"])
         a = adapter(emitted, page_layout)
         a._repair_column_order()
@@ -263,6 +266,134 @@ class ColumnOrderRepair(unittest.TestCase):
         a = adapter(emitted, page_layout)
         a._repair_column_order()
         self.assertEqual([b["id"] for b in a.blocks], ["head", "l1", "l2", "r1", "r2"])
+        self.assertEqual(a.report.reading_order_pages_repaired, 1)
+
+
+    def test_a_full_width_float_bounds_the_prose_around_it(self):
+        """A figure spanning both columns splits the page into two stacks. It
+        carries no text, so poppler sees two uninterrupted columns and reads
+        them straight through; it is not prose, so the band model never sees it
+        either. Both arbiters then agree on an order that walks the whole left
+        column past the figure."""
+        above = [block("L1", "paragraph", "left above", LEFT, 0.08, COLUMN, 0.12),
+                 block("L2", "paragraph", "left above two", LEFT, 0.21, COLUMN, 0.12),
+                 block("R1", "paragraph", "right above", RIGHT, 0.08, COLUMN, 0.12),
+                 block("R2", "paragraph", "right above two", RIGHT, 0.21, COLUMN, 0.12)]
+        figure = block("FIG", "figure", "Figure 1. Spanning both columns.", LEFT, 0.37, 0.83, 0.16)
+        below = [block("L3", "paragraph", "left below", LEFT, 0.57, COLUMN, 0.12),
+                 block("L4", "paragraph", "left below two", LEFT, 0.70, COLUMN, 0.12),
+                 block("R3", "paragraph", "right below", RIGHT, 0.57, COLUMN, 0.12),
+                 block("R4", "paragraph", "right below two", RIGHT, 0.70, COLUMN, 0.12)]
+        lines = []
+        for x in (LEFT, RIGHT):
+            for y in (0.08, 0.21, 0.57, 0.70):
+                lines += [line("t", x, y + 0.02 * n) for n in range(3)]
+        emitted = above[:2] + above[2:] + [figure] + below[:2] + below[2:]  # the correct order
+        page_layout = layout(lines)
+        result = reading_order.compare_page(emitted, 1, page_layout[0])
+        self.assertTrue(result["geometryAgrees"])  # both arbiters, and both wrong
+        self.assertIn("a block would move across a heading, a float or a page-spanning paragraph",
+                      result["faults"])
+        a = adapter(emitted, page_layout)
+        a._repair_column_order()
+        self.assertEqual([b["id"] for b in a.blocks],
+                         ["L1", "L2", "R1", "R2", "FIG", "L3", "L4", "R3", "R4"])
+        self.assertEqual(a.report.reading_order_pages_repaired, 0)
+
+    def test_a_wide_block_reaching_into_the_margin_leaves_it_a_margin(self):
+        """The measure of a side is its median block, not its widest: one wide
+        block that happens to start in the margin must not turn the margin into
+        a column."""
+        wide = block("cap", "paragraph", "a standfirst across the measure", 0.06, 0.03, 0.38, 0.04)
+        notes = [block(f"n{n}", "paragraph", f"note {n}", 0.06, y, 0.20, 0.06)
+                 for n, y in enumerate((0.12, 0.42))]
+        body = [block(f"b{n}", "paragraph", f"body {n}", 0.46, y, 0.46, 0.20)
+                for n, y in enumerate((0.10, 0.34, 0.60))]
+        lines = [line("standfirst", 0.06, 0.03, 0.38)]
+        for n, y in enumerate((0.10, 0.34, 0.60)):
+            if n < 2:
+                lines.append(line(f"note {n}", 0.06, (0.12, 0.42)[n], 0.20))
+            lines += [line(f"body {n}", 0.46, y + 0.02 * k, 0.46) for k in range(3)]
+        emitted = [wide, body[0], notes[0], body[1], notes[1], body[2]]
+        page_layout = layout(lines)
+        result = reading_order.compare_page(emitted, 1, page_layout[0])
+        self.assertIn("the two sides are not one measure", result["faults"])
+        a = adapter(emitted, page_layout)
+        a._repair_column_order()
+        self.assertEqual([b["id"] for b in a.blocks], ["cap", "b0", "n0", "b1", "n1", "b2"])
+        self.assertEqual(a.report.reading_order_pages_repaired, 0)
+
+    def test_a_full_width_heading_opens_a_band(self):
+        """The columns above a full-width heading and the columns below it are
+        two bands, read one after the other. Without that the page is one pair
+        of columns and the order is wrong on both sides of the heading."""
+        blocks = [
+            block("L1", "paragraph", "left above", LEFT, 0.08, COLUMN, 0.30),
+            block("R1", "paragraph", "right above", RIGHT, 0.08, COLUMN, 0.30),
+            block("H", "heading", "4 Results", 0.30, 0.45, 0.40, 0.02),
+            block("L2", "paragraph", "left below", LEFT, 0.50, COLUMN, 0.30),
+            block("R2", "paragraph", "right below", RIGHT, 0.50, COLUMN, 0.30),
+        ]
+        lines = ([line("la", LEFT, 0.08 + 0.02 * n) for n in range(3)]
+                 + [line("ra", RIGHT, 0.08 + 0.02 * n) for n in range(3)]
+                 + [line("4 Results", 0.30, 0.45, 0.40)]
+                 + [line("lb", LEFT, 0.50 + 0.02 * n) for n in range(3)]
+                 + [line("rb", RIGHT, 0.50 + 0.02 * n) for n in range(3)])
+        emitted = [blocks[0], blocks[1], blocks[2], blocks[4], blocks[3]]  # R2 before L2
+        page_layout = layout(lines)
+        result = reading_order.compare_page(emitted, 1, page_layout[0])
+        self.assertEqual(result["faults"], [])
+        a = adapter(emitted, page_layout)
+        a._repair_column_order()
+        self.assertEqual([b["id"] for b in a.blocks], ["L1", "R1", "H", "L2", "R2"])
+        self.assertEqual(a.report.reading_order_pages_repaired, 1)
+
+    def test_the_heading_guard_is_a_partition_not_a_count(self):
+        """Blocks may not be exchanged across a heading even when the number
+        before it is unchanged. The right column above the heading and the left
+        column below it is a shape where the counts match and the sets do not,
+        and the two-column model has no way to be sure which band is which."""
+        above = [block("B1", "paragraph", "right above", RIGHT, 0.10, COLUMN, 0.12),
+                 block("B2", "paragraph", "right above two", RIGHT, 0.24, COLUMN, 0.12)]
+        head = block("H", "heading", "5 Discussion", 0.30, 0.45, 0.40, 0.02)
+        below = [block("A1", "paragraph", "left below", LEFT, 0.52, COLUMN, 0.12),
+                 block("A2", "paragraph", "left below two", LEFT, 0.66, COLUMN, 0.12)]
+        lines = ([line("b", RIGHT, 0.10 + 0.02 * n) for n in range(3)]
+                 + [line("b", RIGHT, 0.24 + 0.02 * n) for n in range(3)]
+                 + [line("5 Discussion", 0.30, 0.45, 0.40)]
+                 + [line("a", LEFT, 0.52 + 0.02 * n) for n in range(3)]
+                 + [line("a", LEFT, 0.66 + 0.02 * n) for n in range(3)])
+        emitted = [below[0], below[1], head, above[0], above[1]]
+        page_layout = layout(lines)
+        result = reading_order.compare_page(emitted, 1, page_layout[0])
+        self.assertEqual(result["doclingOrder"].index(2), result["textOrder"].index(2))
+        self.assertIn("a block would move across a heading, a float or a page-spanning paragraph",
+                      result["faults"])
+        a = adapter(emitted, page_layout)
+        a._repair_column_order()
+        self.assertEqual([b["id"] for b in a.blocks], ["A1", "A2", "H", "B1", "B2"])
+
+    def test_a_two_column_bibliography_is_put_back_in_order(self):
+        """The shape the layout model fails on most often, and the one the
+        join counter cannot see: list items, not paragraphs."""
+        heading = block("H", "heading", "References", 0.30, 0.06, 0.40, 0.02)
+        left = [block(f"l{n}", "list-item", f"[{n}] left entry", LEFT, y, width, 0.05)
+                # one short entry: the measure of a side is its median block,
+                # not its narrowest one either
+                for n, (y, width) in enumerate(((0.12, COLUMN), (0.20, 0.18), (0.28, COLUMN)))]
+        right = [block(f"r{n}", "list-item", f"[{n}] right entry", RIGHT, y, COLUMN, 0.05)
+                 for n, y in enumerate((0.12, 0.20, 0.28))]
+        lines = [line("References", 0.30, 0.06, 0.40)]
+        for column in (left, right):
+            for entry in column:
+                box = entry["evidence"]["boxes"][0]
+                lines += [line("e", box["x"], box["y"] + 0.015 * n, box["width"])
+                          for n in range(2)]
+        emitted = [heading, left[1], left[0], left[2], right[0], right[1], right[2]]
+        page_layout = layout(lines)
+        a = adapter(emitted, page_layout)
+        a._repair_column_order()
+        self.assertEqual([b["id"] for b in a.blocks], ["H", "l0", "l1", "l2", "r0", "r1", "r2"])
         self.assertEqual(a.report.reading_order_pages_repaired, 1)
 
 
@@ -323,6 +454,49 @@ class SensorVocabulary(unittest.TestCase):
         self.assertIsNone(reading_order.geometric_order(both[:3]))
         self.assertIsNone(reading_order.geometric_order(both[1:]))
 
+    def test_a_side_narrower_than_the_measure_minimum_is_not_a_column(self):
+        def entry(x, width):
+            return {"position": 0, "boxes": [dict(page=1, x=x, y=0.1, width=width, height=0.05)]}
+        self.assertFalse(reading_order.measure_fault(
+            [entry(LEFT, COLUMN), entry(LEFT, COLUMN), entry(RIGHT, COLUMN), entry(RIGHT, COLUMN)]))
+        narrow = [entry(0.20, 0.12), entry(0.20, 0.12), entry(0.60, 0.12), entry(0.60, 0.12)]
+        self.assertTrue(reading_order.measure_fault(narrow))
+
+    def test_a_span_over_a_single_line_is_still_a_span(self):
+        """The floor that lets a heading abut the paragraph under it must not
+        blind the check to a box standing over one 8 pt line."""
+        def entry(x, y, width, height):
+            return {"position": 0, "boxes": [dict(page=1, x=x, y=y, width=width, height=height)]}
+        one_line = entry(LEFT, 0.300, COLUMN, 0.008)     # 6.3 pt, under BAND_FLOOR
+        span = entry(LEFT, 0.28, 0.83, 0.05)             # covers all of it
+        self.assertTrue(reading_order.band_faults([span, one_line]))
+
+    def test_a_page_carrying_a_right_to_left_quotation_is_left_alone(self):
+        latin = "abcdefghijklmnopqrstuvwxyz"
+        arabic = "\u0645\u0631\u062d\u0628\u0627"
+        share = len(arabic) / (len(latin) + len(arabic))
+        self.assertGreater(share, reading_order.RTL_SHARE)
+        self.assertLess(share, 0.5)
+        self.assertTrue(reading_order.rtl_fault([{"text": latin + " " + arabic}]))
+        self.assertFalse(reading_order.rtl_fault([{"text": latin}]))
+
+    def test_a_block_carried_over_the_column_break_owns_lines_in_both_columns(self):
+        entry = {"position": 0, "lines": [], "boxes": [
+            dict(page=1, x=LEFT, y=0.80, width=COLUMN, height=0.10),
+            dict(page=1, x=RIGHT, y=0.08, width=COLUMN, height=0.10)]}
+        page = dict(width=WIDTH, height=HEIGHT,
+                    lines=[line("tail", LEFT, 0.82), line("head", RIGHT, 0.10)])
+        lines, aspect = reading_order._normalized_lines(page)
+        reading_order._assign([entry], lines, aspect)
+        self.assertEqual(entry["lines"], [0, 1])
+
+    def test_only_this_page_s_boxes_are_this_page_s_evidence(self):
+        carried = block("p", "paragraph", "over the break", LEFT, 0.80, COLUMN, 0.10, pages=[1, 2])
+        carried["evidence"]["boxes"].append(
+            dict(page=2, x=LEFT, y=0.08, width=COLUMN, height=0.10, rotation=0))
+        self.assertEqual([b["page"] for b in reading_order._page_boxes(carried, 1)], [1])
+        self.assertEqual([b["page"] for b in reading_order._page_boxes(carried, 2)], [2])
+
     def test_a_block_is_full_width_only_when_it_crosses_the_whole_gutter(self):
         """The gutter is the middle tenth, and a full-width block crosses all
         of it. A block that merely straddles the midline is too narrow to be a
@@ -347,6 +521,13 @@ class SensorVocabulary(unittest.TestCase):
         self.assertGreater(0.006, reading_order.BAND_OVERLAP * 0.015)
         self.assertLess(0.006, reading_order.BAND_FLOOR)
         self.assertFalse(reading_order.band_faults([heading, line_block]))
+        # a fifteen-thousandth of the page is over the floor and under twice it
+        short = entry(LEFT, 0.300, COLUMN, 0.05)
+        band = entry(LEFT, 0.27, 0.83, 0.045)         # 0.015 of the page, 30 % of the block
+        self.assertTrue(reading_order.band_faults([band, short]))
+        # and every column block is checked, not just the first
+        far = entry(LEFT, 0.05, COLUMN, 0.05)
+        self.assertTrue(reading_order.band_faults([band, far, short]))
 
     def test_the_line_tolerance_is_a_distance_not_a_fraction_of_the_width(self):
         """A tenth of a line's height is a physical distance. Applied to x

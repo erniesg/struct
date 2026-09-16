@@ -31,6 +31,8 @@ Vocabulary, per page:
 
 from __future__ import annotations
 
+from statistics import median
+
 # Prose the reader follows as one thread. Floats (figures, tables, their
 # captions and notes) are out of scope: neither arbiter has an opinion about
 # where a float belongs relative to the prose that is worth trusting.
@@ -49,7 +51,9 @@ GUTTER = (0.45, 0.55)
 # Two columns of one body are cut to one measure, and a column is a measure: a
 # narrow strip beside a wide one is a margin, and a pair of glyph marks in the
 # two margins of a one-column page is not a pair of columns at all. Reading
-# either as columns hoists text out of the flow it belongs to.
+# either as columns hoists text out of the flow it belongs to. The measure is
+# the median block on a side, not the widest: one wide block that happens to
+# reach into the margin must not make the margin a column.
 MEASURE_RATIO = 2.0
 MEASURE_MIN = 0.15
 
@@ -59,8 +63,11 @@ MEASURE_MIN = 0.15
 # a hundredth of the page, the box is a merged span over both columns and
 # neither its place nor its lines mean anything. Both tests are needed: a
 # heading box that abuts the paragraph under it by a point or two is not a span.
+# The floor yields where the column block is shorter than it — a span over a
+# single 8 pt line is still a span.
 BAND_OVERLAP = 0.25
 BAND_FLOOR = 0.01
+BAND_ENGULFED = 0.8
 
 # A block may hold lines the text layer does not give it — a footnote rule, a
 # margin number. More gaps than that and the box is over something else.
@@ -162,7 +169,7 @@ def measure_fault(entries: list[dict]) -> bool:
             widths[side].append(entry["boxes"][0]["width"])
     if not widths["left"] or not widths["right"]:
         return True
-    left, right = max(widths["left"]), max(widths["right"])
+    left, right = median(widths["left"]), median(widths["right"])
     if min(left, right) < MEASURE_MIN:
         return True
     return max(left, right) / min(left, right) > MEASURE_RATIO
@@ -180,7 +187,8 @@ def band_faults(entries: list[dict]) -> bool:
         for entry in columns:
             other = entry["boxes"][0]
             overlap = min(bottom, other["y"] + other["height"]) - max(top, other["y"])
-            if overlap > BAND_OVERLAP * other["height"] and overlap > BAND_FLOOR:
+            floor = min(BAND_FLOOR, BAND_ENGULFED * other["height"])
+            if overlap > BAND_OVERLAP * other["height"] and overlap > floor:
                 return True
     return False
 
@@ -212,15 +220,31 @@ def rtl_fault(lines: list[dict]) -> bool:
     return strong > 0 and rtl / strong > RTL_SHARE
 
 
-def barrier_crossed(docling_order: list[int], text_order: list[int], barriers: set[int]) -> bool:
-    """Whether the repair would carry a block past a block that must not be
-    passed: a heading, which bounds the prose under it in a way the two-column
-    model cannot see, or a paragraph carried onto the next page, which is held
-    in place by a page this one has no evidence about."""
+def barrier_crossed(docling_order: list[int], text_order: list[int],
+                    barriers: set[int], obstacles: set[int]) -> bool:
+    """Whether the repair would carry a block past something that bounds it.
+
+    Two kinds. A *barrier* is one of the prose blocks itself — a heading, which
+    bounds the prose under it in a way the two-column model cannot see, or a
+    paragraph carried onto the next page, which is held in place by a page this
+    one has no evidence about.
+
+    An *obstacle* is everything else on the page: a figure, a table, a caption,
+    a note, an equation, a line of page furniture. None of them is in the
+    comparison, so neither arbiter has an opinion about it — and a full-width
+    float carrying no text is invisible to both, while it splits the page into
+    two stacks the column model reads straight through. Nothing may cross one,
+    which is also the literal reading of "floats keep their places".
+    """
     for position in barriers:
         before_now = set(docling_order[: docling_order.index(position)])
         before_then = set(text_order[: text_order.index(position)])
         if before_now != before_then:
+            return True
+    for position in obstacles:
+        # `docling_order` is in page order, so this counts the prose before it
+        seats = sum(1 for other in docling_order if other < position)
+        if set(docling_order[:seats]) != set(text_order[:seats]):
             return True
     return False
 
@@ -277,8 +301,9 @@ def compare_page(blocks: list[dict], page: int, page_layout: dict) -> dict | Non
         faults.append("the page is not left-to-right")
     barriers = {entry["position"] for entry in known
                 if entry["block"].get("kind") == "heading" or entry["spansPages"]}
-    if barrier_crossed(docling_order, text_order, barriers):
-        faults.append("a block would move across a heading or a page-spanning paragraph")
+    obstacles = set(range(len(blocks))) - {entry["position"] for entry in known}
+    if barrier_crossed(docling_order, text_order, barriers, obstacles):
+        faults.append("a block would move across a heading, a float or a page-spanning paragraph")
 
     inversions = 0
     pairs = 0
