@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   FONT_STACKS,
@@ -104,6 +109,21 @@ describe('a changed value reaches the stylesheet', () => {
   it('cannot smuggle a declaration through a font stack', () => {
     for (const stack of Object.values(FONT_STACKS)) {
       expect(stack).not.toMatch(/[;{}]|url\(/)
+    }
+  })
+})
+
+describe('the program guard', () => {
+  const script = resolve(dirname(fileURLToPath(import.meta.url)), '../adapters/pdf/render.mjs')
+
+  // Importing this module must not run it, and invoking it must — including
+  // through a symlink, which is how a deployed copy is often reached.
+  it('runs when it is the program, directly or through a symlink', () => {
+    const link = join(mkdtempSync(join(tmpdir(), 'render-link-')), 'render.mjs')
+    symlinkSync(script, link)
+    for (const path of [script, link]) {
+      const ran = spawnSync('node', [path], { encoding: 'utf8' })
+      expect(ran.stderr, path).toMatch(/usage: render\.mjs/)
     }
   })
 })

@@ -17,8 +17,10 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -271,9 +273,12 @@ def test_an_export_with_settings_carries_them_in_the_stylesheet(service, tmp_pat
     [
         {"font": "comic sans"},
         {"font": "Georgia; } body { background: url(http://example.invalid/x) }"},
+        {"font": ["sans"]},  # not a string at all
+        {"font": {"$ne": None}},
         {"fontSizePx": 400},
         {"fontSizePx": "22"},
         {"fontSizePx": True},
+        {"fontSizePx": 10**400},  # JSON integers have no width limit
         {"lineHeight": 40},
         {"marginEm": -3},
     ],
@@ -286,6 +291,63 @@ def test_an_export_refuses_typography_it_cannot_bound(service, typography):
 def test_an_export_refuses_an_unknown_profile(service):
     client, job, _ = service
     assert client.post(f"/api/jobs/{job}/export", json={"profile": "kindle"}, headers=AUTH).status_code == 400
+
+
+# --------------------------------------------------- what a hostile PDF costs
+
+
+def test_a_page_with_an_absurd_box_still_costs_one_page(service, tmp_path):
+    """A PDF page box has no upper bound in the format. It decides which side
+    to scale, never the resolution, so the raster stays the same size."""
+    client, job, data = service
+    huge_id = "d" * 32
+    huge = data / huge_id
+    shutil.copytree(data / job, huge)
+    shutil.rmtree(huge / "preview-pages", ignore_errors=True)
+    # a 200-inch square page: at 110 dpi that would be 22000 x 22000 pixels
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 14400 14400] /Contents 4 0 R >>",
+        b"<< /Length 33 >>\nstream\n0 0 1 rg 10 10 14000 14000 re f\nendstream",
+    ]
+    pdf = b"%PDF-1.4\n"
+    offsets = []
+    for index, body in enumerate(objects):
+        offsets.append(len(pdf))
+        pdf += b"%d 0 obj\n" % (index + 1) + body + b"\nendobj\n"
+    startxref = len(pdf)
+    pdf += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    pdf += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, startxref)
+    (huge / f"{STEM}.pdf").write_bytes(pdf)
+    state = json.loads((huge / "job.json").read_text())
+    state["id"] = huge_id
+    state["pages"] = 1
+    (huge / "job.json").write_text(json.dumps(state))
+    # the sealed document still claims the old page geometry, so this also
+    # covers the path where job.json and the document disagree
+    shutil.rmtree(huge / "work" / STEM, ignore_errors=True)
+    (huge / "work" / STEM).mkdir(parents=True)
+
+    try:
+        started = time.monotonic()
+        response = client.get(f"/api/jobs/{huge_id}/page/1.png", headers=AUTH)
+        assert response.status_code == 200
+        assert time.monotonic() - started < 20, "an unbounded raster takes half a minute"
+        width, height = struct.unpack(">II", response.content[16:24])
+        assert max(width, height) <= 2200, f"{width}x{height} is not a bounded raster"
+        assert len(response.content) < 4 * 1024 * 1024
+    finally:
+        shutil.rmtree(huge, ignore_errors=True)
+
+
+def test_an_ordinary_page_keeps_the_size_it_had(service):
+    """The cap must not quietly shrink a normal page: US Letter at 110 dpi."""
+    client, job, _ = service
+    response = client.get(f"/api/jobs/{job}/page/1.png", headers=AUTH)
+    width, height = struct.unpack(">II", response.content[16:24])
+    assert (width, height) == (935, 1210), f"{width}x{height}"
 
 
 # ------------------------------------------- a job that predates this feature

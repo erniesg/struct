@@ -56,6 +56,7 @@ QUEUE_LIMIT = int(os.environ.get("PDF2EPUB_QUEUE_LIMIT", 20))
 RETENTION_HOURS = float(os.environ.get("PDF2EPUB_RETENTION_HOURS", 72))
 KEEP_INTERMEDIATES = os.environ.get("PDF2EPUB_KEEP_INTERMEDIATES", "").strip() in {"1", "true", "yes"}
 PREVIEW_DPI = max(36, min(300, int(os.environ.get("PDF2EPUB_PREVIEW_DPI", 110))))
+PREVIEW_MAX_PX = max(400, min(6000, int(os.environ.get("PDF2EPUB_PREVIEW_MAX_PX", 2200))))
 EXPORT_TIMEOUT = int(os.environ.get("PDF2EPUB_EXPORT_TIMEOUT", 600))
 EXPORT_KEEP = max(1, int(os.environ.get("PDF2EPUB_EXPORT_KEEP", 12)))
 PYTHON = os.environ.get("PDF2EPUB_PYTHON", sys.executable)
@@ -685,25 +686,58 @@ def get_page_image(job_id: str, number: int) -> FileResponse:
     target = paths.root / "preview-pages" / f"page-{number:04d}.png"
     if target.is_file():
         return FileResponse(target, media_type="image/png", headers=INERT_HEADERS)
-    with _rasters:
+    # Rastering is the only expensive read here, so it is bounded twice: two at
+    # a time, and a caller that would have to queue is told to come back rather
+    # than parking a thread of the server's small pool.
+    if not _rasters.acquire(timeout=20.0):
+        raise HTTPException(status_code=429, detail="too many pages are rendering; try again shortly")
+    try:
         if target.is_file():
             return FileResponse(target, media_type="image/png", headers=INERT_HEADERS)
-        return Response(_raster_page(pdf, number, target), media_type="image/png", headers=INERT_HEADERS)
+        payload = _raster_page(pdf, number, target, _long_side_points(paths, state, number))
+    finally:
+        _rasters.release()
+    return Response(payload, media_type="image/png", headers=INERT_HEADERS)
 
 
-def _raster_page(pdf: Path, number: int, target: Path) -> bytes:
+def _long_side_points(paths: JobPaths, state: dict, number: int) -> float:
+    """The page's long side in PDF points, from the sealed document or pypdf.
+
+    A page box is attacker-controlled and has no upper bound in the format, so
+    it is never handed to the rasteriser as a resolution: it only decides which
+    side to scale, and the pixels are capped either way.
+    """
+    for page in _sealed_document(paths, state).get("pages", []):
+        if page.get("page") == number:
+            side = max(float(page.get("width") or 0), float(page.get("height") or 0))
+            if side > 0:
+                return side
+    try:
+        from pypdf import PdfReader
+
+        box = PdfReader(str(_stored_pdf(paths, state)), strict=False).pages[number - 1].mediabox
+        return max(float(box.width), float(box.height))
+    except Exception:
+        return 792.0  # US Letter, the shape almost every paper here has
+
+
+def _raster_page(pdf: Path, number: int, target: Path, long_side_points: float) -> bytes:
     """Render one page and keep it beside the job when the job directory takes it.
 
     The cache is an addition to a job, never a change to one: if it cannot be
     written — a read-only data directory, a full disk — the page is still served
     and only the next request pays for it again.
     """
+    wanted = round(long_side_points * PREVIEW_DPI / 72)
+    scale_to = max(200, min(wanted, PREVIEW_MAX_PX))
     scratch = Path(tempfile.mkdtemp(prefix="pdf2epub-page-"))
     try:
         prefix = scratch / "page"
         try:
             completed = subprocess.run(
-                ["pdftoppm", "-png", "-r", str(PREVIEW_DPI), "-f", str(number), "-l", str(number),
+                # -scale-to, not -r: the output raster is capped in pixels, so a
+                # page whose box is 200 inches wide costs the same as any other
+                ["pdftoppm", "-png", "-scale-to", str(scale_to), "-f", str(number), "-l", str(number),
                  "-singlefile", str(pdf), str(prefix)],
                 capture_output=True, timeout=180,
             )
@@ -715,7 +749,7 @@ def _raster_page(pdf: Path, number: int, target: Path) -> bytes:
         payload = rendered.read_bytes()
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            rendered.replace(target)
+            shutil.move(str(rendered), str(target))  # move, not rename: /tmp may be another filesystem
         except OSError:
             pass
         return payload
@@ -797,7 +831,7 @@ def _typography_arguments(raw: object) -> tuple[list[str], dict]:
     echo: dict = {}
     font = raw.get("font")
     if font not in (None, ""):
-        if font not in FONTS:
+        if not isinstance(font, str) or font not in FONTS:
             raise HTTPException(status_code=400, detail=f"font must be one of {', '.join(sorted(FONTS))}")
         flags += ["--font", font]
         echo["font"] = font
@@ -808,7 +842,9 @@ def _typography_arguments(raw: object) -> tuple[list[str], dict]:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise HTTPException(status_code=400, detail=f"{key} must be a number")
         low, high = TYPOGRAPHY_BOUNDS[key]
-        if not low <= float(value) <= high:
+        # JSON integers have no width limit; comparing before converting keeps
+        # an absurd one a 400 rather than an OverflowError
+        if not low <= value <= high:
             raise HTTPException(status_code=400, detail=f"{key} must be between {low} and {high}")
         rounded = round(float(value), 2)
         flags += [flag, f"{rounded:g}"]

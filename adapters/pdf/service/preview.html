@@ -367,13 +367,18 @@ function sanitizeElement (element, images) {
 }
 
 function sanitizeCss (css, assets) {
+  // The frame may only reach blob: URLs the page made, so a reference this
+  // side did not resolve is dropped rather than left for the CSP to refuse.
+  // Neutralising `</style` has to come last: an earlier pass that deletes
+  // text can splice a `<` onto a following `/style>` and re-form the very
+  // sequence that ends the element.
   return css
-    .replace(/<\/\s*style/gi, '<\\/style')
     .replace(/@import[^;]*;/gi, '')
     .replace(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi, (whole, quote, target) => {
       const resolved = assets.get(target.trim())
       return resolved ? `url("${resolved}")` : 'none'
     })
+    .replace(/<\/\s*style/gi, '<\\/style')
 }
 
 // ------------------------------------------------------------------ the frame
@@ -388,8 +393,12 @@ function resolveEntry (base, reference) {
   return parts.join('/')
 }
 
+function entryPath (profile, entry) {
+  return `/epub/${encodeURIComponent(profile)}/${entry.split('/').map(encodeURIComponent).join('/')}`
+}
+
 async function fetchBlob (profile, entry, type) {
-  const response = await api(`/epub/${encodeURIComponent(profile)}/${entry.split('/').map(encodeURIComponent).join('/')}`)
+  const response = await api(entryPath(profile, entry))
   const blob = await response.blob()
   const url = URL.createObjectURL(type ? new Blob([blob], { type }) : blob)
   state.blobUrls.push(url)
@@ -399,7 +408,7 @@ async function fetchBlob (profile, entry, type) {
 async function loadRendition (profile) {
   for (const url of state.blobUrls) URL.revokeObjectURL(url)
   state.blobUrls = []
-  const source = await (await api(`/epub/${encodeURIComponent(profile)}/content.xhtml`)).text()
+  const source = await (await api(entryPath(profile, 'content.xhtml'))).text()
   const parsed = new DOMParser().parseFromString(source, 'application/xhtml+xml')
   const failed = parsed.getElementsByTagName('parsererror').length > 0
   const document_ = failed ? new DOMParser().parseFromString(source, 'text/html') : parsed
@@ -425,7 +434,7 @@ async function loadRendition (profile) {
   for (const link of document_.querySelectorAll('link[rel~="stylesheet"][href]')) {
     const entry = resolveEntry('content.xhtml', link.getAttribute('href'))
     let css
-    try { css = await (await api(`/epub/${encodeURIComponent(profile)}/${entry}`)).text() } catch { continue }
+    try { css = await (await api(entryPath(profile, entry))).text() } catch { continue }
     for (const match of css.matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi)) {
       const reference = match[2].trim()
       if (!reference || /^[a-z]+:/i.test(reference) || assets.has(reference)) continue

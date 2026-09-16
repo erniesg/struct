@@ -147,6 +147,25 @@ async function main () {
     check('the rendition pane shows the EPUB body', renditionBlocks > 0, `${renditionBlocks} blocks`)
     if (args.shots) await page.screenshot({ path: join(args.shots, 'preview-default.png') })
 
+    // 1a — the two sanitisers, exercised on the page that owns them. The
+    // stylesheet one is the only place attacker-shaped text is spliced into a
+    // raw-text element, and an escape that runs too early can be undone by a
+    // later pass that deletes characters.
+    const sanitised = await page.evaluate(() => ({
+      spliced: window.sanitizeCss('<@import ;/style><img src=x onerror=alert(1)>', new Map()),
+      remote: window.sanitizeCss('@import url(http://example.invalid/x.css);\nbody { color: red }', new Map()),
+      unresolved: window.sanitizeCss('body { background: url(images/nope.png) }', new Map()),
+      resolved: window.sanitizeCss('body { background: url(images/yes.png) }', new Map([['images/yes.png', 'blob:fake']])),
+    }))
+    check('the stylesheet sanitiser cannot be made to close its own element',
+      !/<\/\s*style/i.test(sanitised.spliced), sanitised.spliced)
+    check('a stylesheet cannot pull in a remote sheet',
+      !sanitised.remote.includes('example.invalid') && sanitised.remote.includes('color: red'), sanitised.remote)
+    check('a reference the page did not resolve is dropped',
+      sanitised.unresolved.includes('none') && !sanitised.unresolved.includes('images/nope'), sanitised.unresolved)
+    check('a reference the page did resolve becomes its blob',
+      sanitised.resolved.includes('url("blob:fake")'), sanitised.resolved)
+
     // 2 — typography and device changes reflow with no request
     const before = await page.evaluate(() => {
       const frame = document.querySelector('#frame').contentDocument

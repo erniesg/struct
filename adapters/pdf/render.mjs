@@ -17,7 +17,7 @@
 // XHTML and the profiled EPUBs. Any codec or renderer refusal is reported as
 // a fail-closed result, never patched around.
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -324,8 +324,20 @@ function basename(path) {
 }
 
 // Run when invoked as a program; import when a test wants the typography rules
-// on their own, which needs no built dist and no draft.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// on their own, which needs no built dist and no draft. Node resolves the main
+// module through realpath, so the comparison has to as well, or a symlinked
+// invocation would exit 0 having rendered nothing.
+function isProgram() {
+  if (!process.argv[1]) return false
+  const here = fileURLToPath(import.meta.url)
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(here)
+  } catch {
+    return resolve(process.argv[1]) === here
+  }
+}
+
+if (isProgram()) {
   main().catch((error) => {
     process.stderr.write(`${error?.stack ?? error}\n`)
     process.exitCode = 1
