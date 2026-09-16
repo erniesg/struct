@@ -1,0 +1,7 @@
+name: smoke
+on: [pull_request]
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
