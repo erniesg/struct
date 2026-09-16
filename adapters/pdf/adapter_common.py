@@ -24,6 +24,12 @@ CAPTION_LIKE_RE = re.compile(r"^(?:(?:Extended\s+Data\s+)?(?:Figure|Fig\.?)|Tabl
 FIGURE_OWNER_RE = re.compile(r"^(?:Extended\s+Data\s+)?(?:Figure|Fig\.?)\s*(?:[A-Z]\.?)?\d+", re.IGNORECASE)
 SUBCAPTION_RE = re.compile(r"^\(?[a-z]\)\s*\S", re.IGNORECASE)
 TRAILING_MARKER_RE = re.compile(r"(?:(?<!\d)\.|[!?:;\"”’)\]])\s?(?:\d{1,3}|[*†‡§¶]{1,3})$")
+# an abbreviation and its number (`while Fig. 2`, `Eq. 5`, `Sec. 3`) is a
+# cross-reference the sentence runs on from, not terminal punctuation plus a note marker
+ABBREVIATED_REFERENCE_RE = re.compile(
+    r"\b(?:Fig|Figs|Eq|Eqs|Sec|Secs|Ref|Refs|Tab|Tabs|No|Nos|Ch|App|Alg|Thm|Def|Lem|Cor|Prop|Rem|vol|pp|ed|al)\.\s?\d{1,3}$",
+    re.IGNORECASE,
+)
 LOWER_START_RE = re.compile(r"^[a-zß-ÿ]")
 # the layout model spaces out mathematics: `κ = 0 . 946` is a decimal, not a full
 # stop and a note marker, and `Q Y ( j )` closes a bracket in a formula, not a
@@ -90,7 +96,7 @@ def is_terminated(text: str) -> bool:
     stripped = text.rstrip()
     if SPACED_MATH_TAIL_RE.search(stripped):
         return False
-    if TRAILING_MARKER_RE.search(stripped):
+    if TRAILING_MARKER_RE.search(stripped) and not ABBREVIATED_REFERENCE_RE.search(stripped):
         return True
     tail = stripped[-60:]
     if tail.count("(") > tail.count(")") and re.search(r"\([^()]*$", tail):
@@ -149,10 +155,15 @@ def footnote_parts(text: str) -> tuple[str | None, str]:
     return normalize_marker(match.group(1) or match.group(2)), text[match.end() :].strip()
 
 
+ZERO_WIDTH = "\u00ad\u200b\u200c\u200d\u2060\ufeff"
+
+
 def loose_pattern(needle: str) -> re.Pattern:
-    """`needle` with any whitespace, soft hyphen or zero-width space allowed
-    between its characters (line-wrapped URLs, `http://\u200bwww.\u200b…`)."""
-    return re.compile(r"[\s\u00ad\u200b]*".join(re.escape(ch) for ch in needle if not ch.isspace() and ch not in "\u00ad\u200b"))
+    """`needle` with any whitespace, soft hyphen or zero-width format character
+    allowed between its characters (line-wrapped URLs, `http://\u200bwww.\u200b…`,
+    `S5\u200d Table.` in a publisher's supporting-information list)."""
+    separator = r"[\s" + ZERO_WIDTH + r"]*"
+    return re.compile(separator.join(re.escape(ch) for ch in needle if not ch.isspace() and ch not in ZERO_WIDTH))
 
 
 QUOTE_VARIANTS = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'"})

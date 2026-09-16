@@ -47,6 +47,7 @@ from pdf_text import SourceText, normalize_marker  # noqa: F401  (re-exported)
 from source_raster import SourceRasterError  # noqa: F401  (re-exported)
 from layout_normalization import normalize_provenance
 from figure_recovery import normalize_sideways_captions
+from overlap_repair import repair_overlapping_items
 from adapter_common import (  # noqa: F401  (re-exported: tests and sibling modules import these names from pdf2struct)
     TERMINAL_RE,
     CITATION_TAIL_RE,
@@ -156,6 +157,7 @@ class AdapterReport:
     footnotes_with_marker: int = 0
     orphan_figure_captions: int = 0
     ocr_text_regions: int = 0
+    overlapping_items_rebuilt: int = 0
     edge_page_numbers_dropped: int = 0
     invisible_items_dropped: int = 0
     tick_label_runs_dropped: int = 0
@@ -233,6 +235,8 @@ class StructAdapter(
     def __init__(self, doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None, source_text: SourceText | None = None, page_layout: list | None = None, source_raster=None) -> None:
         doc, self._original_source_ids = normalize_provenance(doc)
         normalize_sideways_captions(doc)
+        self.report = AdapterReport()
+        self.report.overlapping_items_rebuilt = repair_overlapping_items(doc, page_layout or [])
         self.doc = doc
         self.source_raster = source_raster
         self.word_boxes = word_boxes or []
@@ -243,7 +247,6 @@ class StructAdapter(
         self.pdf_path = pdf_path
         self.sha = source_sha256
         self.links = links
-        self.report = AdapterReport()
         self.blocks: list[dict] = []
         self.assets: list[dict] = []
         self.relationships: list[dict] = []

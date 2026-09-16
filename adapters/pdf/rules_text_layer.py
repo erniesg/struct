@@ -328,7 +328,9 @@ class TextLayerRules:
             if not width or not height:
                 continue
             compact_block = re.sub(r"[^a-z0-9]", "", block["text"].lower())
-            page_compacts = [re.sub(r"[^a-z0-9]", "", other["text"].lower()) for other in self.blocks if other is not block and other["page"] == page_index and other["text"]]
+            neighbours = [other for other in self.blocks if other is not block and other["text"]
+                          and any(region["page"] == page_index for region in other["evidence"]["boxes"])]
+            page_compacts = [re.sub(r"[^a-z0-9]", "", other["text"].lower()) for other in neighbours]
             equation_boxes = [region for other in self.blocks if other["kind"] == "equation"
                               for region in other["evidence"]["boxes"] if region["page"] == page_index]
             lines = []
@@ -411,6 +413,9 @@ class TextLayerRules:
                     insertion = source_region[source_positions[a0 - 1] + 1:source_positions[a1]]
                     if not re.search(r"[A-Za-z]", insertion):
                         continue
+                    missing = re.sub(r"[^a-z0-9]", "", insertion.lower())
+                    if len(missing) >= 12 and any(missing in other for other in page_compacts):
+                        continue  # a neighbour on this page already carries the clause
                     block["text"] = block["text"][:start] + insertion + block["text"][end:]
                     delta = len(insertion) - (end - start)
                     for run in block["inline"]:
@@ -433,7 +438,7 @@ class TextLayerRules:
                     continue
                 if _line_words_present(text, compact_block) or any(_line_words_present(text, other) for other in page_compacts):
                     continue  # a line of mathematics whose symbols the text layer orders differently, already carried here or by a neighbour
-                if any(re.sub(r"[^a-z0-9]", "", t.lower()) and re.sub(r"[^a-z0-9]", "", t.lower())[:24] in re.sub(r"[^a-z0-9]", "", other["text"].lower()) for other in self.blocks if other is not block and other["page"] == page_index for t in [text]):
+                if any(compact[:24] in other for other in page_compacts):
                     continue  # the words live in another block (a caption, a note)
                 # anchor: the tail of the line above, located in the block text
                 position = len(block["text"])

@@ -123,8 +123,15 @@ class NoteRules:
                     r"\s*(?:\([^)]{0,24}\)\s*)?(?:indicate|denote|represent|mark|show)\b",
                     legend_text, re.I,
                 )
-                if (not notation_cue or not note_sizes or not body_sizes or not re.match(r"[A-Z]", sanitize(text).lstrip())
-                    or note_sizes[len(note_sizes) // 2] >= 0.85 * body_sizes[len(body_sizes) // 2]):
+                # an abbreviation key (`UH = University of Houston; P1 = Safe Divide; …`)
+                # is a legend too, and a segment on another page or column cannot be
+                # the paragraph's own next line
+                key_cue = len(re.findall(r"\w\s*=\s*\w", legend_text)) >= 2
+                discontinuous = previous is not None and (previous["page"] != box["page"] or abs(previous["x"] - box["x"]) > 0.05)
+                if (not note_sizes or not body_sizes or not re.match(r"[A-Z]", sanitize(text).lstrip())
+                    or note_sizes[len(note_sizes) // 2] >= 0.85 * body_sizes[len(body_sizes) // 2]
+                    or not (notation_cue or (key_cue and discontinuous))
+                    or FIGURE_CAPTION_RE.match(sanitize(text)) or TABLE_CAPTION_RE.match(sanitize(text))):
                     continue
             if previous is not None and previous["page"] == box["page"] and self._table_above(previous) == table:
                 continue  # the note's own second line, not the paragraph's end
