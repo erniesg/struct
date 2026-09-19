@@ -49,6 +49,10 @@ ITALIC_RE = re.compile(
     re.IGNORECASE,
 )
 MARKER_CHAR_RE = re.compile(r"[0-9*†‡§¶‖#,a-z]")
+# A listing's indents are read only from a face whose glyphs agree on one body
+# width, and only while every line starts within this much of a whole character.
+CODE_CELL_SHARE = 0.6
+CODE_INDENT_TOLERANCE = 0.25
 SYMBOL_ALIASES = str.maketrans({"∗": "*", "⋆": "*", "★": "*", "✱": "*", "＊": "*", "⁎": "*"})
 
 
@@ -496,6 +500,54 @@ class PageText:
     def region_text(self, box: dict) -> str:
         """Source text of a region with its own line breaks (code listings)."""
         return "\n".join(line.text for line in self.lines_in(box))
+
+    def _character_cell(self, lines: list[Line]) -> float | None:
+        """The advance of one character in a fixed-pitch region.
+
+        Every glyph of a monospace face is set on one body, so the region's
+        monospace glyphs agree on one box width and that width is one
+        character. Glyphs that do not agree are not on a character grid, and
+        their left edges measure nothing.
+        """
+        widths: dict[float, int] = {}
+        for line in lines:
+            for char in line.chars:
+                if char.text.strip() and classify_font(char.font)["mono"]:
+                    body = round(char.r - char.l, 2)
+                    widths[body] = widths.get(body, 0) + 1
+        if not widths:
+            return None
+        cell, count = max(widths.items(), key=lambda item: (item[1], item[0]))
+        return cell if cell > 0 and count >= CODE_CELL_SHARE * sum(widths.values()) else None
+
+    def listing_text(self, box: dict) -> str:
+        """Source text of a code region with its line breaks and its indents.
+
+        A listing's leading whitespace carries its structure — a Python body
+        is unreadable without it — and the text layer throws it away: the
+        source sets an indent by starting the line further right, not by
+        encoding spaces, so every line arrives flush left.
+
+        On a fixed-pitch face that starting position is a whole number of
+        character widths from the listing's own leftmost line, which restores
+        the indent exactly, from the listing's own measurements rather than a
+        guessed tab width. A region whose left edges do not all land on that
+        grid is not an indented listing and keeps its lines as they are.
+        """
+        lines = self.lines_in(box)
+        plain = "\n".join(line.text for line in lines)
+        cell = self._character_cell(lines) if len(lines) > 1 else None
+        if cell is None:
+            return plain
+        left = min(line.l for line in lines)
+        depths: list[int] = []
+        for line in lines:
+            offset = (line.l - left) / cell
+            depth = round(offset)
+            if abs(offset - depth) > CODE_INDENT_TOLERANCE:
+                return plain
+            depths.append(depth)
+        return "\n".join(" " * depth + line.text for depth, line in zip(depths, lines))
 
     def style_runs(self, box: dict, text: str) -> list[dict]:
         return self._emphasis_runs(box, text) + self.script_runs(box, text)

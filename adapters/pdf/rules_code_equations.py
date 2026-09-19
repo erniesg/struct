@@ -39,7 +39,7 @@ class CodeEquationRules:
         if len(lines) < 2:
             return False
         self._flush()
-        block = self._new_block("code", item, sanitize(page_text.region_text(box)) or text)
+        block = self._new_block("code", item, sanitize(page_text.listing_text(box)) or text)
         block["evidence"]["signals"].append("monospace-face")
         block["inline"] = [run for run in self._runs_for(item, block["text"]) if run.get("href")]
         self.blocks.append(block)
@@ -68,9 +68,11 @@ class CodeEquationRules:
                 self.report.code_relabelled_paragraph += 1
                 self._emit_paragraph(item)
                 return
+            # the region replaces the layout text on the strength of its own
+            # characters; its reconstructed indents do not vote for it
             region = sanitize(page_text.region_text(box))
             if region and len(region) >= 0.5 * len(text):
-                text = region
+                text = sanitize(page_text.listing_text(box))
         block = self._new_block("code", item, text)
         block["inline"] = [run for run in self._runs_for(item, text) if run.get("href")]
         self.blocks.append(block)

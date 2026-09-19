@@ -230,8 +230,8 @@ def recover_equation(page_text, box):
                 width=(x1 - x0) / page_text.width, height=(y1 - y0) / page_text.height)
     reason = None
     try:
-        from equation_geometry import atom, accent_atoms, delimiter_atoms, fraction_atoms, radical_atoms, operator_atoms, display_rows, arrow_atoms
-        atoms = accent_atoms([atom(c) for c in chars], _token)
+        from equation_geometry import atom, accent_atoms, delimiter_atoms, fraction_atoms, radical_atoms, operator_atoms, display_rows, arrow_atoms, font_scales
+        atoms = accent_atoms([atom(c, font_scales(page_text)) for c in chars], _token)
         atoms = arrow_atoms(atoms)
         atoms = delimiter_atoms(atoms)
         bars = []

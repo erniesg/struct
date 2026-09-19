@@ -28,13 +28,89 @@ class Atom:
     def height(self): return self.t-self.b
 
 
+def family(font):
+    return font.split('+')[-1]
+
+
 def nominal(char):
-    match=re.search(r'(?:Roman|Italic|Symbols|CMMI[B]?|CMBX|CMSY|CMR|MSAM|MSBM)(\d+)',char.font.split('+')[-1],re.I)
+    match=re.search(r'(?:Roman|Italic|Symbols|CMMI[B]?|CMBX|CMSY|CMR|MSAM|MSBM)(\d+)',family(char.font),re.I)
     return float(match.group(1)) if match else None
 
 
-def atom(char):
-    return Atom(char.text,char.l,char.b,char.r,char.t,char.font,nominal(char),
+# A face must be measured this many times, by this many separate neighbouring
+# faces, and agree with itself this closely, before its heights read as sizes.
+SCALE_SAMPLES=8
+SCALE_NEIGHBOURS=1
+SCALE_TOLERANCE=.02
+# Two faces set at one size have comparable box heights; a script is 70% or
+# 50% of its base. The band separates the two without assuming either ratio.
+SCALE_HEIGHT_BAND=.8
+
+
+def font_scales(page_text):
+    """Points per unit of glyph-box height, for faces that do not name a size.
+
+    docling-parse reports one box height per face and size, so inside one face
+    the height is exactly proportional to the point size; only the constant
+    differs, and it belongs to the font program, not to the page. Two glyphs
+    set side by side on one baseline are set at one size, so a neighbour whose
+    name does state its size (`CMR10`) measures the face beside it.
+
+    A `mathptmx` or `newtx` document sets an equation's upright text, and its
+    tag, in the document text face, whose name carries no size at all. Without
+    a size for those glyphs no script in the expression can be separated from
+    its base, and the whole equation falls back to a picture.
+
+    Only a face several independent neighbours agree on is calibrated. One
+    measured rarely, or inconsistently, stays unsized and keeps its equations'
+    honest fallback rather than receiving a guessed scale.
+    """
+    cached=getattr(page_text,'_equation_font_scales',None)
+    if cached is None:
+        cached=_measure_font_scales(page_text)
+        try:page_text._equation_font_scales=cached
+        except AttributeError:pass
+    return cached
+
+
+def _measure_font_scales(page_text):
+    samples={}
+    for line in getattr(page_text,'lines',None) or []:
+        chars=sorted([c for c in line.chars if c.text.strip()],key=lambda c:c.l)
+        for left,right in zip(chars,chars[1:]):
+            heights=(left.t-left.b,right.t-right.b)
+            if min(heights)<=0:continue
+            near=min(heights)
+            # Side by side, and on one baseline. A raised or lowered glyph is
+            # a script set at another size and measures nothing.
+            if right.l-left.r>.5*near or abs(left.b-right.b)>.08*near:continue
+            # A box bottom sits a face's own descender below the baseline, so
+            # a subscript of a shallow face can share a box bottom with the
+            # base beside it. Comparable box heights separate the two.
+            if near<SCALE_HEIGHT_BAND*max(heights):continue
+            for char,other,height in ((left,right,heights[0]),(right,left,heights[1])):
+                size=nominal(other)
+                if size is None or nominal(char) is not None:continue
+                if family(char.font)==family(other.font):continue
+                samples.setdefault(family(char.font),[]).append((size/height,family(other.font)))
+    scales={}
+    for name,measured in samples.items():
+        values=[value for value,_ in measured]
+        if len(values)<SCALE_SAMPLES or len({neighbour for _,neighbour in measured})<SCALE_NEIGHBOURS:continue
+        scale=statistics.median(values)
+        if scale<=0:continue
+        # One face at one size has one height: a real measurement repeats.
+        if sum(1 for value in values if abs(value-scale)<=SCALE_TOLERANCE*scale)<.9*len(values):continue
+        scales[name]=scale
+    return scales
+
+
+def atom(char,scales=None):
+    em=nominal(char)
+    if em is None and scales:
+        scale=scales.get(family(char.font))
+        if scale:em=scale*(char.t-char.b)
+    return Atom(char.text,char.l,char.b,char.r,char.t,char.font,em,
                 extension=bool(re.search(r'Extension|CMEX',char.font,re.I)))
 
 
@@ -44,17 +120,41 @@ def composite(members, text, xml, *, anchor=None, em=None, extension=False):
                 xml,anchor,sum(c.count for c in members),extension)
 
 
+ACCENTS={'˜':'~','̂':'^','̃':'~','̄':'¯','̇':'˙','̈':'¨'}
+# TeX sets an accent by overprinting: `\bar{a}` kerns back and puts the bar
+# glyph in the same advance slot as the `a` beneath it, so the two boxes very
+# nearly coincide. These accent characters are ordinary spacing glyphs that
+# also stand on their own -- a circumflex, a tilde between two operands -- and
+# only that overprint tells the two apart. Without it the accent reads as a
+# base of its own and takes the scripts of the letter it sits on, which
+# silently rewrites `\bar{a}_s` as `¯_s a`.
+OVERPRINTED={'¯':'¯','ˉ':'¯','ˆ':'^','^':'^','~':'~','˙':'˙','¨':'¨'}
+OVERPRINT_SHARE=.6
+ACCENT_RISE=.45
+
+
 def accent_atoms(atoms, token):
-    accents={'˜':'~','\u0302':'^','\u0303':'~','\u0304':'¯','\u0307':'˙','\u0308':'¨'}
     atoms=list(atoms)
     for mark in list(atoms):
-        if mark.text not in accents:continue
+        overprint=mark.text not in ACCENTS and mark.text in OVERPRINTED
+        label=ACCENTS.get(mark.text) or (OVERPRINTED[mark.text] if overprint else None)
+        if label is None:continue
         candidates=[c for c in atoms if c is not mark and not any(unicodedata.combining(k) for k in c.text)
                     and c.l-1 <= mark.cx <= c.r+1 and abs(c.cy-mark.cy)<max(c.em or 12,12)]
-        if not candidates: raise ValueError('accent has no source-supported base')
+        if overprint:
+            # TeX lifts an accent clear of a tall base (`J̄` above `ā`), so the
+            # mark sits at or above its base's box and never below it, at the
+            # base's own size: a script beneath one is neither.
+            candidates=[c for c in candidates if c.text not in ACCENTS and c.text not in OVERPRINTED
+                        and min(c.r,mark.r)-max(c.l,mark.l) > OVERPRINT_SHARE*min(c.r-c.l,mark.r-mark.l)
+                        and -.06*(c.t-c.b) <= mark.b-c.b <= ACCENT_RISE*(c.t-c.b)
+                        and min(c.t-c.b,mark.t-mark.b) >= .8*max(c.t-c.b,mark.t-mark.b)]
+            # a spacing accent printed on nothing of its own size is an operator
+            if not candidates:continue
+        elif not candidates: raise ValueError('accent has no source-supported base')
         base=min(candidates,key=lambda c:abs(c.cx-mark.cx))
-        xml='<mover accent="true">'+token(base)+'<mo>'+escape(accents[mark.text])+'</mo></mover>'
-        node=composite([base,mark],'\\'+{'^':'hat','~':'tilde','¯':'bar','˙':'dot','¨':'ddot'}[accents[mark.text]]+'{'+base.text+'}',xml,anchor=base.cy,em=base.em)
+        xml='<mover accent="true">'+token(base)+'<mo>'+escape(label)+'</mo></mover>'
+        node=composite([base,mark],'\\'+{'^':'hat','~':'tilde','¯':'bar','˙':'dot','¨':'ddot'}[label]+'{'+base.text+'}',xml,anchor=base.cy,em=base.em)
         atoms.remove(mark);atoms[atoms.index(base)]=node
     return atoms
 

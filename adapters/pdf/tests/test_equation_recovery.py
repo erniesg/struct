@@ -130,6 +130,83 @@ class EquationRecoveryTests(unittest.TestCase):
         self.assertEqual((a.blocks[0]['text'],a.blocks[0]['attributes']['transcript']),('','x=1'))
         self.assertIn('left operand',a._diagnostic.call_args.args[3])
 
+    def test_an_overprinted_accent_does_not_take_its_base_letter_s_scripts(self):
+        """TeX sets `\\bar{a}` by kerning back and printing the bar glyph in
+        the `a`'s own advance slot. Read as an ordinary glyph the bar becomes
+        a base of its own, collects the subscript belonging to the `a`, and
+        `ā_s` is published as `¯_s a` — a silent rewrite of the notation."""
+        chars=[Char('v',10,95,16.2,104.5,'ABCDEF+CMBX10'),
+               Char('=',20,95,28,104.5,'ABCDEF+CMR10'),
+               Char('¯',31.0,95,37.2,104.5,'ABCDEF+CMBX10'),
+               Char('a',31.1,95,37.1,104.5,'ABCDEF+CMBX10'),
+               Char('s',37.2,91,40.6,97.6,'ABCDEF+CMMI8')]
+        result=recover_equation(PageText(1,100,200,chars),dict(page=1,x=.05,y=.4,width=.6,height=.15))
+        self.assertIsNone(result.limitation)
+        self.assertEqual(result.text,'v=\\bar{a}_{s}')
+        self.assertEqual(len(ET.fromstring(result.mathml).findall('.//{*}mover')),1)
+
+    def test_an_accent_lifted_clear_of_a_tall_base_is_still_its_accent(self):
+        """TeX raises the accent over a tall letter, so `J̄` sets its bar a
+        third of the box higher than `ā` does. Source geometry from
+        2609.15891v1 (15), where the bar is CMR12 over a CMMI12 `J`."""
+        chars=[Char('t',250,200.44,254,210.89,'ABCDEF+CMMI12'),
+               Char('=',258,200.44,266,210.89,'ABCDEF+CMR12'),
+               Char('β',270.75,200.44,277.36,210.89,'ABCDEF+CMMI12'),
+               Char('¯',280.83,203.46,286.69,213.91,'ABCDEF+CMR12'),
+               Char('J',278.02,200.44,284.49,210.89,'ABCDEF+CMMI12')]
+        result=recover_equation(PageText(1,600,400,chars),dict(page=1,x=.4,y=.45,width=.1,height=.05))
+        self.assertIsNone(result.limitation)
+        self.assertEqual(result.text,'t=β\\bar{J}')
+
+    def test_a_circumflex_standing_on_its_own_stays_an_ordinary_operator(self):
+        """The same characters set maths on their own. Only the overprint
+        makes one an accent, so a circumflex in its own advance slot is left
+        exactly as the source set it."""
+        chars=[Char('a',10,95,16,104.5,'ABCDEF+CMR10'),
+               Char('^',20,95,26,104.5,'ABCDEF+CMR10'),
+               Char('b',30,95,36,104.5,'ABCDEF+CMR10')]
+        result=recover_equation(PageText(1,100,200,chars),dict(page=1,x=.05,y=.4,width=.6,height=.15))
+        self.assertEqual(result.text,'a^b')
+        self.assertNotIn('mover',result.mathml)
+
+    def test_a_face_that_omits_its_size_is_measured_against_one_that_states_it(self):
+        """`mathptmx` sets an equation's upright text, and its tag, in the
+        document text face, whose name carries no size. A run of body text
+        where that face sits on one baseline beside a face that does name its
+        size measures it, and the expression's scripts separate from their
+        bases instead of the whole equation becoming a picture."""
+        chars=[]
+        for index,letter in enumerate('thebodyoftheparagraphsetsthemeasure'):
+            x=10+index*9
+            chars.append(Char(letter,x,20,x+4.3,28.552,'ABCDEF+TimesLike-Roman'))
+            chars.append(Char('.',x+4.5,20,x+5,29.963,'ABCDEF+CMR10'))
+        # x_i = y, with the subscript in the face the body text measured
+        chars += [Char('x',10,95,16,104.963,'ABCDEF+CMR10'),
+                  Char('i',16.5,92.5,19.5,98.486,'ABCDEF+TimesLike-Roman'),
+                  Char('=',25,95,31,104.963,'ABCDEF+CMR10'),
+                  Char('y',37,95,43,104.963,'ABCDEF+CMR10')]
+        page=PageText(1,400,200,chars)
+        result=recover_equation(page,dict(page=1,x=.01,y=.4,width=.9,height=.2))
+        self.assertIsNone(result.limitation)
+        self.assertEqual(result.text,'x_{i}=y')
+        self.assertEqual(len(ET.fromstring(result.mathml).findall('.//{*}msub')),1)
+
+    def test_a_script_is_not_measured_as_if_it_were_its_own_base(self):
+        """A box bottom sits a face's own descender below the baseline, so a
+        subscript of a shallow face can share a box bottom with the base it
+        follows. Measuring the face there would call the subscript full size
+        and flatten it into the expression; the equation stays a picture."""
+        from equation_geometry import font_scales
+        chars=[]
+        for index in range(30):
+            x=10+index*11
+            chars.append(Char('K',x,150,x+5,159.963,'ABCDEF+CMR10'))
+            # a subscript: two thirds the size, lowered, but its shallow box
+            # bottom lands within a twelfth of a character of the base's
+            chars.append(Char('s',x+5.2,150.4,x+9,156.6,'ABCDEF+TimesLike-Roman'))
+        page=PageText(1,400,300,chars)
+        self.assertNotIn('TimesLike-Roman',font_scales(page))
+
     def test_emitter_uses_original_page_crop_and_reports_unresolved_structure(self):
         from pdf2struct import StructAdapter
         a=StructAdapter.__new__(StructAdapter)
