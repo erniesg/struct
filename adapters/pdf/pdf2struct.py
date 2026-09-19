@@ -48,6 +48,7 @@ from source_raster import SourceRasterError  # noqa: F401  (re-exported)
 from layout_normalization import normalize_provenance
 from figure_recovery import normalize_sideways_captions
 from overlap_repair import repair_overlapping_items
+from small_caps import restore_small_capitals
 from table_split import lift_caption_rows, split_side_by_side_tables
 from adapter_common import (  # noqa: F401  (re-exported: tests and sibling modules import these names from pdf2struct)
     TERMINAL_RE,
@@ -161,6 +162,7 @@ class AdapterReport:
     overlapping_items_rebuilt: int = 0
     tables_split_side_by_side: int = 0
     tables_caption_row_lifted: int = 0
+    small_capitals_restored: int = 0
     front_matter_hoisted: int = 0
     edge_page_numbers_dropped: int = 0
     invisible_items_dropped: int = 0
@@ -537,6 +539,7 @@ class StructAdapter(
         self._fold_panels_by_geometry()
         self._join_split_paragraphs()  # captions adopted above may now claim their continuation
         self._merge_continued_tables()
+        self.report.small_capitals_restored = restore_small_capitals(self.blocks, self._page_text)
         self._drop_duplicate_captions()
         self._rejoin_split_listings()
         from note_bodies import recover_note_bodies

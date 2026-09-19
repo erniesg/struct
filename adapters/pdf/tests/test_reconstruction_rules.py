@@ -585,3 +585,74 @@ class CaptionSideVote(unittest.TestCase):
         self.assertIsNone(caption_side_is_below([True, False, True, False]))
         self.assertTrue(caption_side_is_below([True, True, False]))
         self.assertFalse(caption_side_is_below([False, False, True]))
+
+
+class SmallCapitals(unittest.TestCase):
+    """`\\textsc{Fuzzing}` reaches the text layer as `FUZZING`. The glyphs keep
+    the distinction: the letters that were lowercase are drawn at about four
+    fifths the height of the ones that were not."""
+
+    @staticmethod
+    def page(entries):
+        """entries: (x, text, height) laid out on one line at y=100."""
+        from pdf_text import Char, PageText
+        # small capitals share the baseline and stop short of cap height
+        chars, x, baseline = [], 0, 900.0
+        for text, height in entries:
+            for value in text:
+                if value != " ":
+                    chars.append(Char(value, x, baseline, x + 4, baseline + height, "NimbusRomNo9L-Regu"))
+                x += 5
+        return PageText(1, 1000, 1000, chars)
+
+    BOX = dict(page=1, x=0.0, y=0.0, width=1.0, height=1.0, rotation=0)
+
+    def restore(self, entries, text):
+        from small_caps import restore_case
+        return restore_case(self.page(entries), self.BOX, text)
+
+    def test_reduced_capitals_were_lowercase(self):
+        self.assertEqual(self.restore([("F", 8.55), ("UZZING", 6.84)], "FUZZING"), "Fuzzing")
+
+    def test_a_heading_set_in_full_capitals_is_left_alone(self):
+        """`\\MakeUppercase` draws every letter at one height: there is nothing
+        to restore, and guessing would corrupt a real all-caps heading."""
+        self.assertIsNone(self.restore([("FUZZING", 8.55)], "FUZZING"))
+
+    def test_an_acronym_inside_a_small_caps_run_keeps_its_capitals(self):
+        """The capitals the author typed stay capitals: only the reduced
+        letters were lowercase."""
+        self.assertEqual(self.restore([("SAE E", 8.55), ("VALUATION", 6.84)], "SAE EVALUATION"), "SAE Evaluation")
+
+    def test_ordinary_mixed_case_text_is_untouched(self):
+        """Lowercase heights say nothing: an `x` is shorter than an `h` in
+        every font, and counting them makes ordinary prose look like small
+        capitals. Only capitals are measured."""
+        self.assertIsNone(self.restore([("The", 8.55), ("quick", 6.0)], "The quick"))
+
+    def test_a_subscripted_capital_is_never_recased(self):
+        """`P_X` is reduced but sits below the baseline. Lowercasing it would
+        rewrite the paper's notation."""
+        from pdf_text import Char, PageText
+        from small_caps import restore_case
+        chars = [Char("P", 0, 900.0, 4, 908.55, "F"), Char("X", 5, 896.0, 9, 902.0, "F")]
+        page = PageText(1, 1000, 1000, chars)
+        self.assertIsNone(restore_case(page, self.BOX, "PX"))
+
+    def test_a_block_the_glyphs_do_not_cover_is_refused(self):
+        """Half a word re-cased (`FuzzING`) is worse than the capitals it
+        started from, so a block the glyphs run out on is left alone."""
+        self.assertIsNone(self.restore([("F", 8.55), ("UZZ", 6.84)], "FUZZING AND MORE"))
+
+    def test_a_block_never_opens_on_a_small_capital(self):
+        """The first letter is the one the author capitalised; lowercasing it
+        invents a paragraph that starts midway through a sentence."""
+        self.assertEqual(self.restore([("F", 8.55), ("UZZING", 6.84)], "FUZZING")[0], "F")
+
+    def test_text_that_does_not_match_the_glyphs_is_refused(self):
+        """A block the layout model rewrote must not be re-cased on a guess."""
+        self.assertIsNone(self.restore([("F", 8.55), ("UZZING", 6.84)], "DETECTION"))
+
+    def test_restoring_case_keeps_the_length_so_inline_offsets_stay_valid(self):
+        restored = self.restore([("F", 8.55), ("UZZING", 6.84)], "FUZZING")
+        self.assertEqual(len(restored), len("FUZZING"))
