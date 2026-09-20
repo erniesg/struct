@@ -48,13 +48,13 @@ class FootnoteMarkers(unittest.TestCase):
         self.assertTrue(affiliations.has_label("2", loose=True))
 
 
-def _listing(lines, font="ABCDEF+LMMono10-Regular", cell=5.0, leading=14.0):
+def _listing(lines, font="ABCDEF+LMMono10-Regular", cell=5.0, leading=14.0, top=150.0, margin=20.0):
     """Glyph lines of a fixed-pitch listing, each indented by whole characters."""
     chars = []
     for index, (indent, text) in enumerate(lines):
-        bottom = 150.0 - index * leading
+        bottom = top - index * leading
         for position, letter in enumerate(text):
-            left = 20.0 + (indent + position) * cell
+            left = margin + (indent + position) * cell
             chars.append(Char(letter, left, bottom, left + cell, bottom + 9.0, font))
     return chars
 
@@ -98,6 +98,38 @@ class GlyphLines(unittest.TestCase):
         page = PageText(1, 200.0, 200.0, chars)
         box = dict(page=1, x=0.0, y=0.0, width=1.0, height=1.0)
         self.assertEqual(page.listing_text(box), page.region_text(box))
+
+    def test_a_box_holding_two_listings_one_above_the_other_invents_no_indent(self):
+        """A layout box can hold two listings with the caption between them
+        dropped. Their left margins are unrelated, so measuring the second
+        from the first's margin gives every one of its lines an indent it
+        never had. The gap between them is far wider than the leading."""
+        chars = _listing([(0, "def f(n):"), (4, "while n:"), (8, "n -= 1"), (4, "return n")])
+        chars += _listing([(0, "print(x)")], top=150.0 - 9 * 14.0, margin=50.0)
+        page = PageText(1, 200.0, 300.0, chars)
+        box = dict(page=1, x=0.0, y=0.0, width=1.0, height=1.0)
+        self.assertEqual(page.listing_text(box), page.region_text(box))
+        self.assertNotIn("      print(x)", page.listing_text(box))
+
+    def test_two_listings_printed_side_by_side_invent_no_indent(self):
+        """Two listings in adjacent columns run down the same rows in
+        horizontal bands of their own; the right one's margin is not an
+        indent of the left one's."""
+        chars = _listing([(0, "def f(n):"), (4, "while n:"), (8, "n -= 1")])
+        chars += _listing([(0, "def g(n):"), (4, "pass")], margin=140.0)
+        page = PageText(1, 400.0, 300.0, chars)
+        box = dict(page=1, x=0.0, y=0.0, width=1.0, height=1.0)
+        self.assertEqual(page.listing_text(box), page.region_text(box))
+
+    def test_a_blank_line_inside_a_listing_does_not_cost_it_its_indents(self):
+        """A listing's own blank lines leave no glyphs, so its lines arrive
+        two leadings apart. That is the listing breathing, not two listings."""
+        chars = _listing([(0, "def f(n):"), (4, "while n:"), (8, "n -= 1")])
+        chars += _listing([(4, "return n")], top=150.0 - 4 * 14.0)
+        page = PageText(1, 200.0, 300.0, chars)
+        box = dict(page=1, x=0.0, y=0.0, width=1.0, height=1.0)
+        self.assertEqual(page.listing_text(box).split("\n"),
+                         ["def f(n):", "    while n:", "        n -= 1", "    return n"])
 
     def test_a_region_whose_glyphs_disagree_on_one_body_is_not_a_character_grid(self):
         """Only a face whose glyphs agree on one body width is fixed pitch;
