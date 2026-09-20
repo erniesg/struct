@@ -243,6 +243,39 @@ class EquationRecoveryTests(unittest.TestCase):
         page=PageText(1,400,300,chars)
         self.assertNotIn('TimesLike-Roman',font_scales(page))
 
+    def test_a_defect_is_never_reported_to_the_reader_as_a_refusal(self):
+        """Refusals and bugs both raised `ValueError`, and the one handler
+        caught both: an empty `max()` reached the reader as `max() iterable
+        argument is empty`, an ordinary limitation of the mathematics. Only a
+        deliberate refusal is a limitation; anything else must surface."""
+        from unittest.mock import patch
+        import equation_geometry
+        from equation_geometry import EquationRefused
+        self.assertTrue(issubclass(EquationRefused, ValueError))
+        page, box = PageText(1,100,100,[glyph('x',10),glyph('=',22),glyph('1',34)]), dict(page=1,x=.05,y=.2,width=.9,height=.5)
+        self.assertIsNotNone(recover_equation(page,box).mathml)
+        with patch.object(equation_geometry,'arrow_atoms',side_effect=ValueError('not a refusal')):
+            with self.assertRaises(ValueError) as caught:
+                recover_equation(PageText(1,100,100,[glyph('x',10),glyph('=',22),glyph('1',34)]),box)
+            self.assertNotIsInstance(caught.exception, EquationRefused)
+        with patch.object(equation_geometry,'arrow_atoms',side_effect=EquationRefused('a stated refusal')):
+            result=recover_equation(PageText(1,100,100,[glyph('x',10),glyph('=',22),glyph('1',34)]),box)
+            self.assertEqual(result.limitation,'a stated refusal')
+
+    def test_an_expression_of_extensible_pieces_alone_states_its_own_reason(self):
+        """`operator_atoms` and `display_rows` took the largest size of no
+        atoms at all, and the empty `max()` was published as the reason the
+        equation could not be rebuilt. A region carrying only extensible
+        delimiter pieces has no glyph set at the expression's own size."""
+        from equation_geometry import operator_atoms, display_rows
+        self.assertEqual(operator_atoms([],None,None),[])
+        self.assertEqual(display_rows([]),[[]])
+        pieces=[Char('',10,60,16,72,'ABCDEF+CMEX10'),Char('',10,40,16,52,'ABCDEF+CMEX10'),
+                Char('',30,60,36,72,'ABCDEF+CMEX10'),Char('',30,40,36,52,'ABCDEF+CMEX10')]
+        result=recover_equation(PageText(1,100,100,pieces),dict(page=1,x=.05,y=.2,width=.9,height=.5))
+        self.assertIsNone(result.mathml)
+        self.assertEqual(result.limitation,'no stable expression baseline')
+
     def test_emitter_uses_original_page_crop_and_reports_unresolved_structure(self):
         from pdf2struct import StructAdapter
         a=StructAdapter.__new__(StructAdapter)
