@@ -656,3 +656,44 @@ class SmallCapitals(unittest.TestCase):
     def test_restoring_case_keeps_the_length_so_inline_offsets_stay_valid(self):
         restored = self.restore([("F", 8.55), ("UZZING", 6.84)], "FUZZING")
         self.assertEqual(len(restored), len("FUZZING"))
+
+
+class SmallCapitalsAreNotAppliedBlindly(unittest.TestCase):
+    """Three defects an adversarial review found after the corpus was green."""
+
+    BOX_LEFT_HALF = dict(page=1, x=0.0, y=0.0, width=0.5, height=1.0, rotation=0)
+
+    @staticmethod
+    def chars(entries, x0=0, baseline=900.0):
+        from pdf_text import Char
+        out, x = [], x0
+        for text, height in entries:
+            for value in text:
+                if value != " ":
+                    out.append(Char(value, x, baseline, x + 4, baseline + height, "F"))
+                x += 5
+        return out
+
+    def test_a_greek_capital_is_not_lowercased(self):
+        """`Σ` is a capital to Python. Lowercasing it to `σ` changes the
+        paper's notation, not its typography."""
+        from pdf_text import PageText
+        from small_caps import restore_case, recasable
+        self.assertFalse(recasable("Σ"))
+        glyphs = self.chars([("F", 8.55), ("UZZING", 6.84)]) + self.chars([("Σ", 6.84)], x0=200)
+        self.assertEqual(restore_case(PageText(1, 1000, 1000, glyphs), self.BOX_LEFT_HALF, "FUZZING Σ"), "Fuzzing Σ")
+
+    def test_a_capital_that_grows_when_lowercased_is_refused(self):
+        """`İ` lowercases to two code points, which would shift every inline
+        run indexed after it."""
+        from small_caps import recasable
+        self.assertEqual(len("İ".lower()), 2)
+        self.assertFalse(recasable("İ"))
+
+    def test_a_neighbouring_column_does_not_set_the_cap_height(self):
+        """`lines_in` admits a line on a majority vote, so a merged line can
+        carry glyphs from the next column; they must not be measured."""
+        from pdf_text import PageText
+        from small_caps import restore_case
+        glyphs = self.chars([("F", 8.55), ("UZZING", 6.84)]) + self.chars([("XY", 12.0)], x0=900)
+        self.assertEqual(restore_case(PageText(1, 1000, 1000, glyphs), self.BOX_LEFT_HALF, "FUZZING"), "Fuzzing")

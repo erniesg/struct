@@ -26,11 +26,16 @@ than by reasoning about it:
 A block never opens on a small capital either: the first letter is the one the
 author capitalised, and lowercasing it invents a sentence that starts midway.
 
-Case is restored in place, so the text keeps its length and the inline runs
-that index into it — links, note references, emphasis — stay valid.
+Only Latin capitals are re-cased, and only when lowercasing them leaves the
+text the same length. `Σ` is a capital to Python and would become `σ`,
+rewriting the notation; `İ` lowercases to two code points, which would shift
+every inline run — links, note references, emphasis — indexed after it. Both
+are refused rather than guessed.
 """
 
 from __future__ import annotations
+
+import unicodedata
 
 # a small capital is drawn well below cap height
 REDUCED_LOW = 0.55
@@ -41,12 +46,29 @@ TIER_GAP = 0.04
 BASELINE_TOLERANCE = 0.08
 
 
+def recasable(char: str) -> bool:
+    """A Latin capital whose lowercase is a single character.
+
+    Greek and Cyrillic capitals are capitals to Python, and a maths paper's
+    `Σ` lowercased to `σ` is a change of notation, not of typography. `İ`
+    lowercases to two code points and would shift every inline run after it.
+    """
+    return (char.isupper() and len(char.lower()) == 1
+            and "LATIN" in unicodedata.name(char, ""))
+
+
 def _capitals_in_reading_order(page_text, box: dict):
-    """Every uppercase glyph under `box` that sits on its line's baseline, in
-    source order, with its height as a fraction of the tallest capital there."""
+    """Every re-casable capital under `box` that sits on its line's baseline,
+    in source order, with its height as a fraction of the tallest capital there.
+
+    Only glyphs actually inside `box` count. `lines_in` admits a line on a
+    majority vote, so up to two fifths of a merged line can belong to the next
+    column, and those glyphs would otherwise set the cap height this reads.
+    """
     found = []
     for line in page_text.lines_in(box):
-        capitals = [c for c in line.chars if c.text.isalpha() and c.text.isupper() and not c.superscript]
+        inside = [c for c in line.chars if page_text._inside(c, box)]
+        capitals = [c for c in inside if recasable(c.text) and not c.superscript]
         if len(capitals) < 2:
             continue
         baseline = min(c.b for c in capitals)
@@ -73,7 +95,7 @@ def restore_from_capitals(glyphs, text: str) -> str | None:
     matched would leave a word half re-cased (`FuzzING`), which is worse than
     the all-capitals text it started from.
     """
-    if not text or not any(c.isupper() for c in text) or not glyphs:
+    if not text or not any(recasable(c) for c in text) or not glyphs:
         return None
     tall = [ratio for _, ratio in glyphs if ratio > REDUCED_HIGH]
     reduced = [ratio for _, ratio in glyphs if REDUCED_LOW <= ratio <= REDUCED_HIGH]
@@ -86,7 +108,7 @@ def restore_from_capitals(glyphs, text: str) -> str | None:
     first_letter = next((i for i, c in enumerate(restored) if c.isalpha()), None)
     index = 0
     for char, ratio in glyphs:
-        while index < len(restored) and not restored[index].isupper():
+        while index < len(restored) and not recasable(restored[index]):
             index += 1
         if index >= len(restored) or restored[index] != char.text:
             return None  # the text is not this run of capitals; do not touch it
@@ -94,9 +116,11 @@ def restore_from_capitals(glyphs, text: str) -> str | None:
             restored[index] = restored[index].lower()
         index += 1
     # every capital in the text must be accounted for by a glyph
-    if any(c.isupper() for c in restored[index:]):
+    if any(recasable(c) for c in restored[index:]):
         return None
     rebuilt = "".join(restored)
+    if len(rebuilt) != len(text):
+        return None  # the inline runs index into this text by offset
     return rebuilt if rebuilt != text else None
 
 
