@@ -5,6 +5,8 @@ import re
 import statistics
 import unicodedata
 
+from pdf_text import classify_font
+
 
 @dataclass
 class Atom:
@@ -142,6 +144,16 @@ def accent_atoms(atoms, token):
         candidates=[c for c in atoms if c is not mark and not any(unicodedata.combining(k) for k in c.text)
                     and c.l-1 <= mark.cx <= c.r+1 and abs(c.cy-mark.cy)<max(c.em or 12,12)]
         if overprint:
+            # An accent and a relation can be the same character, and a sloppy
+            # `ToUnicode` map gives `\sim` the tilde's own codepoint. The family
+            # separates them: TeX sets `\hat`, `\bar` and `\tilde` with
+            # `\mathaccent` out of the roman family, and `\sim`, `\approx` and
+            # the rest of the relations out of the symbol family. Every one of
+            # the 773 accents this corpus attaches is set in a text face and
+            # none in a symbol face. A mark from a symbol face stands between
+            # its two operands rather than over one, and absorbing it would
+            # delete the relation and orphan its right operand.
+            if classify_font(mark.font)['math']:continue
             # TeX lifts an accent clear of a tall base (`J̄` above `ā`), so the
             # mark sits at or above its base's box and never below it, at the
             # base's own size: a script beneath one is neither.

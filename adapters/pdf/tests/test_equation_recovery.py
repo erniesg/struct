@@ -169,6 +169,25 @@ class EquationRecoveryTests(unittest.TestCase):
         self.assertEqual(result.text,'a^b')
         self.assertNotIn('mover',result.mathml)
 
+    def test_a_relation_set_in_a_symbol_face_is_never_absorbed_as_an_accent(self):
+        """`a ∼ b` reaches the text layer as a tilde between two operands, and
+        a sloppy `ToUnicode` map gives it the accent's own codepoint. Read as
+        an accent the relation is deleted outright and `b` is left orphaned —
+        `a ∼ b` published as `ã b`. The family decides: TeX sets accents out
+        of the roman family and relations out of the symbol family."""
+        from equation_geometry import Atom, accent_atoms
+        from equation_recovery import _token
+        marked=[Atom('a',10,95,16,104.5,'ABCDEF+CMMI10',em=10),
+                Atom('~',12,95.5,18,103.5,'ABCDEF+CMSY10',em=10),
+                Atom('b',22,95,28,104.5,'ABCDEF+CMMI10',em=10)]
+        self.assertEqual([a.text for a in accent_atoms(marked,_token)],['a','~','b'])
+        chars=[Char('a',10,95,16,104.5,'ABCDEF+CMMI10'),
+               Char('~',12,95.5,18,103.5,'ABCDEF+CMSY10'),
+               Char('b',22,95,28,104.5,'ABCDEF+CMMI10')]
+        result=recover_equation(PageText(1,100,200,chars),dict(page=1,x=.05,y=.4,width=.6,height=.15))
+        self.assertEqual(result.text,'a~b')
+        self.assertNotIn('mover',result.mathml or '')
+
     def test_a_face_that_omits_its_size_is_measured_against_one_that_states_it(self):
         """`mathptmx` sets an equation's upright text, and its tag, in the
         document text face, whose name carries no size. A run of body text
