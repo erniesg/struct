@@ -130,6 +130,152 @@ class EquationRecoveryTests(unittest.TestCase):
         self.assertEqual((a.blocks[0]['text'],a.blocks[0]['attributes']['transcript']),('','x=1'))
         self.assertIn('left operand',a._diagnostic.call_args.args[3])
 
+    def test_an_overprinted_accent_does_not_take_its_base_letter_s_scripts(self):
+        """TeX sets `\\bar{a}` by kerning back and printing the bar glyph in
+        the `a`'s own advance slot. Read as an ordinary glyph the bar becomes
+        a base of its own, collects the subscript belonging to the `a`, and
+        `ā_s` is published as `¯_s a` — a silent rewrite of the notation."""
+        chars=[Char('v',10,95,16.2,104.5,'ABCDEF+CMBX10'),
+               Char('=',20,95,28,104.5,'ABCDEF+CMR10'),
+               Char('¯',31.0,95,37.2,104.5,'ABCDEF+CMBX10'),
+               Char('a',31.1,95,37.1,104.5,'ABCDEF+CMBX10'),
+               Char('s',37.2,91,40.6,97.6,'ABCDEF+CMMI8')]
+        result=recover_equation(PageText(1,100,200,chars),dict(page=1,x=.05,y=.4,width=.6,height=.15))
+        self.assertIsNone(result.limitation)
+        self.assertEqual(result.text,'v=\\bar{a}_{s}')
+        self.assertEqual(len(ET.fromstring(result.mathml).findall('.//{*}mover')),1)
+
+    def test_an_accent_lifted_clear_of_a_tall_base_is_still_its_accent(self):
+        """TeX raises the accent over a tall letter, so `J̄` sets its bar a
+        third of the box higher than `ā` does. Source geometry from
+        2609.15891v1 (15), where the bar is CMR12 over a CMMI12 `J`."""
+        chars=[Char('t',250,200.44,254,210.89,'ABCDEF+CMMI12'),
+               Char('=',258,200.44,266,210.89,'ABCDEF+CMR12'),
+               Char('β',270.75,200.44,277.36,210.89,'ABCDEF+CMMI12'),
+               Char('¯',280.83,203.46,286.69,213.91,'ABCDEF+CMR12'),
+               Char('J',278.02,200.44,284.49,210.89,'ABCDEF+CMMI12')]
+        result=recover_equation(PageText(1,600,400,chars),dict(page=1,x=.4,y=.45,width=.1,height=.05))
+        self.assertIsNone(result.limitation)
+        self.assertEqual(result.text,'t=β\\bar{J}')
+
+    def test_a_circumflex_standing_on_its_own_stays_an_ordinary_operator(self):
+        """The same characters set maths on their own. Only the overprint
+        makes one an accent, so a circumflex in its own advance slot is left
+        exactly as the source set it."""
+        chars=[Char('a',10,95,16,104.5,'ABCDEF+CMR10'),
+               Char('^',20,95,26,104.5,'ABCDEF+CMR10'),
+               Char('b',30,95,36,104.5,'ABCDEF+CMR10')]
+        result=recover_equation(PageText(1,100,200,chars),dict(page=1,x=.05,y=.4,width=.6,height=.15))
+        self.assertEqual(result.text,'a^b')
+        self.assertNotIn('mover',result.mathml)
+
+    def test_a_relation_set_in_a_symbol_face_is_never_absorbed_as_an_accent(self):
+        """`a ∼ b` reaches the text layer as a tilde between two operands, and
+        a sloppy `ToUnicode` map gives it the accent's own codepoint. Read as
+        an accent the relation is deleted outright and `b` is left orphaned —
+        `a ∼ b` published as `ã b`. The family decides: TeX sets accents out
+        of the roman family and relations out of the symbol family."""
+        from equation_geometry import Atom, accent_atoms
+        from equation_recovery import _token
+        marked=[Atom('a',10,95,16,104.5,'ABCDEF+CMMI10',em=10),
+                Atom('~',12,95.5,18,103.5,'ABCDEF+CMSY10',em=10),
+                Atom('b',22,95,28,104.5,'ABCDEF+CMMI10',em=10)]
+        self.assertEqual([a.text for a in accent_atoms(marked,_token)],['a','~','b'])
+        chars=[Char('a',10,95,16,104.5,'ABCDEF+CMMI10'),
+               Char('~',12,95.5,18,103.5,'ABCDEF+CMSY10'),
+               Char('b',22,95,28,104.5,'ABCDEF+CMMI10')]
+        result=recover_equation(PageText(1,100,200,chars),dict(page=1,x=.05,y=.4,width=.6,height=.15))
+        self.assertEqual(result.text,'a~b')
+        self.assertNotIn('mover',result.mathml or '')
+
+    def test_a_face_that_omits_its_size_is_measured_against_one_that_states_it(self):
+        """`mathptmx` sets an equation's upright text, and its tag, in the
+        document text face, whose name carries no size. A run of body text
+        where that face sits on one baseline beside a face that does name its
+        size measures it, and the expression's scripts separate from their
+        bases instead of the whole equation becoming a picture."""
+        chars=[]
+        for index,letter in enumerate('thebodyoftheparagraphsetsthemeasure'):
+            x=10+index*9
+            chars.append(Char(letter,x,20,x+4.3,28.552,'ABCDEF+TimesLike-Roman'))
+            chars.append(Char('.',x+4.5,20,x+5,29.963,'ABCDEF+CMR10'))
+        # x_i = y, with the subscript in the face the body text measured
+        chars += [Char('x',10,95,16,104.963,'ABCDEF+CMR10'),
+                  Char('i',16.5,92.5,19.5,98.486,'ABCDEF+TimesLike-Roman'),
+                  Char('=',25,95,31,104.963,'ABCDEF+CMR10'),
+                  Char('y',37,95,43,104.963,'ABCDEF+CMR10')]
+        page=PageText(1,400,200,chars)
+        result=recover_equation(page,dict(page=1,x=.01,y=.4,width=.9,height=.2))
+        self.assertIsNone(result.limitation)
+        self.assertEqual(result.text,'x_{i}=y')
+        self.assertEqual(len(ET.fromstring(result.mathml).findall('.//{*}msub')),1)
+
+    def test_digits_that_are_part_of_a_face_s_name_are_not_read_as_its_size(self):
+        """`HardingText-RegularItalic2` is in this corpus and is not a
+        two-point face. Believed, it measures every unsized face beside it at
+        a fifth of its real size, for the whole page — so the face beside it
+        would have its full-sized glyphs read as scripts."""
+        from equation_geometry import nominal, font_scales
+        from types import SimpleNamespace as NS
+        self.assertEqual(nominal(NS(font='ABCDEF+CMR10')),10.)
+        self.assertEqual(nominal(NS(font='ABCDEF+LMRoman8-Regular')),8.)
+        self.assertIsNone(nominal(NS(font='ABCDEF+HardingText-RegularItalic2')))
+        chars=[]
+        for index,letter in enumerate('measuredagainstonlythatoneneighbour'):
+            x=10+index*9
+            chars.append(Char(letter,x,20,x+4.3,28.552,'ABCDEF+TimesLike-Roman'))
+            chars.append(Char('.',x+4.5,20,x+5,29.963,'ABCDEF+HardingText-RegularItalic2'))
+        self.assertNotIn('TimesLike-Roman',font_scales(PageText(1,400,200,chars)))
+
+    def test_a_script_is_not_measured_as_if_it_were_its_own_base(self):
+        """A box bottom sits a face's own descender below the baseline, so a
+        subscript of a shallow face can share a box bottom with the base it
+        follows. Measuring the face there would call the subscript full size
+        and flatten it into the expression; the equation stays a picture."""
+        from equation_geometry import font_scales
+        chars=[]
+        for index in range(30):
+            x=10+index*11
+            chars.append(Char('K',x,150,x+5,159.963,'ABCDEF+CMR10'))
+            # a subscript: two thirds the size, lowered, but its shallow box
+            # bottom lands within a twelfth of a character of the base's
+            chars.append(Char('s',x+5.2,150.4,x+9,156.6,'ABCDEF+TimesLike-Roman'))
+        page=PageText(1,400,300,chars)
+        self.assertNotIn('TimesLike-Roman',font_scales(page))
+
+    def test_a_defect_is_never_reported_to_the_reader_as_a_refusal(self):
+        """Refusals and bugs both raised `ValueError`, and the one handler
+        caught both: an empty `max()` reached the reader as `max() iterable
+        argument is empty`, an ordinary limitation of the mathematics. Only a
+        deliberate refusal is a limitation; anything else must surface."""
+        from unittest.mock import patch
+        import equation_geometry
+        from equation_geometry import EquationRefused
+        self.assertTrue(issubclass(EquationRefused, ValueError))
+        page, box = PageText(1,100,100,[glyph('x',10),glyph('=',22),glyph('1',34)]), dict(page=1,x=.05,y=.2,width=.9,height=.5)
+        self.assertIsNotNone(recover_equation(page,box).mathml)
+        with patch.object(equation_geometry,'arrow_atoms',side_effect=ValueError('not a refusal')):
+            with self.assertRaises(ValueError) as caught:
+                recover_equation(PageText(1,100,100,[glyph('x',10),glyph('=',22),glyph('1',34)]),box)
+            self.assertNotIsInstance(caught.exception, EquationRefused)
+        with patch.object(equation_geometry,'arrow_atoms',side_effect=EquationRefused('a stated refusal')):
+            result=recover_equation(PageText(1,100,100,[glyph('x',10),glyph('=',22),glyph('1',34)]),box)
+            self.assertEqual(result.limitation,'a stated refusal')
+
+    def test_an_expression_of_extensible_pieces_alone_states_its_own_reason(self):
+        """`operator_atoms` and `display_rows` took the largest size of no
+        atoms at all, and the empty `max()` was published as the reason the
+        equation could not be rebuilt. A region carrying only extensible
+        delimiter pieces has no glyph set at the expression's own size."""
+        from equation_geometry import operator_atoms, display_rows
+        self.assertEqual(operator_atoms([],None,None),[])
+        self.assertEqual(display_rows([]),[[]])
+        pieces=[Char('',10,60,16,72,'ABCDEF+CMEX10'),Char('',10,40,16,52,'ABCDEF+CMEX10'),
+                Char('',30,60,36,72,'ABCDEF+CMEX10'),Char('',30,40,36,52,'ABCDEF+CMEX10')]
+        result=recover_equation(PageText(1,100,100,pieces),dict(page=1,x=.05,y=.2,width=.9,height=.5))
+        self.assertIsNone(result.mathml)
+        self.assertEqual(result.limitation,'no stable expression baseline')
+
     def test_emitter_uses_original_page_crop_and_reports_unresolved_structure(self):
         from pdf2struct import StructAdapter
         a=StructAdapter.__new__(StructAdapter)

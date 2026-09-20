@@ -13,6 +13,8 @@ import re
 import statistics
 import unicodedata
 
+from equation_geometry import EquationRefused
+
 
 @dataclass
 class EquationRecovery:
@@ -98,10 +100,14 @@ def _row(parts):
 def _sequence(chars, depth=0):
     """Return expression/text only when every glyph has a supported owner."""
     if depth > 3 or not chars:
-        raise ValueError('unsupported nested script geometry')
+        raise EquationRefused('unsupported nested script geometry')
     sizes = [_size(c) for c in chars if not _extension(c)]
     if any(s is None for s in sizes):
-        raise ValueError('font size unavailable for script reconstruction')
+        raise EquationRefused('font size unavailable for script reconstruction')
+    # Only extensible pieces: nothing here is set at the expression's own size,
+    # so there is no scale to measure the rest against.
+    if not sizes:
+        raise EquationRefused('no stable expression baseline')
     # TeX can retain full-sized parentheses around a script-style fraction
     # numerator. Delimiter font names do not determine its text style.
     body_sizes = [_size(c) for c in chars if not _extension(c) and c.text not in '()[]{}']
@@ -109,7 +115,7 @@ def _sequence(chars, depth=0):
     # strictly larger than 0.8: an 8 pt glyph beside 10 pt glyphs is a script
     base = [c for c in chars if _extension(c) or _size(c) > .8 * main_size]
     if not base:
-        raise ValueError('no stable expression baseline')
+        raise EquationRefused('no stable expression baseline')
     body = [c for c in base if not _extension(c)]
     baseline = statistics.median(c.cy for c in body)
     # Text-style fractions may use smaller glyphs while the fraction itself
@@ -118,12 +124,12 @@ def _sequence(chars, depth=0):
              and c.xml.startswith('<mfrac>') and abs(c.cy-baseline)<.3*main_size]
     # Distinct full-sized lines indicate fractions, limits or a matrix.
     if max(c.cy for c in body) - min(c.cy for c in body) > .48 * main_size:
-        raise ValueError('multiple expression baselines require structural recovery')
+        raise EquationRefused('multiple expression baselines require structural recovery')
     # a base glyph well above or below the main baseline is a script the sizes
     # did not reveal: no MathML is better than a flattened superscript
     for char in body:
         if not getattr(char, 'xml', None) and char.text not in '()[]{}|' and abs(char.cy - baseline) > .3 * main_size:
-            raise ValueError('raised or lowered glyph not recognised as a script')
+            raise EquationRefused('raised or lowered glyph not recognised as a script')
     base.sort(key=lambda c: c.l)
     scripts = [c for c in chars if c not in base]
     attached = {id(c): {'sub': [], 'sup': []} for c in base}
@@ -140,11 +146,11 @@ def _sequence(chars, depth=0):
         else:
             owners = [c for c in base if c.l < char.l and c.r <= char.l + .20 * main_size]
             if not owners:
-                raise ValueError('script has no unambiguous preceding base')
+                raise EquationRefused('script has no unambiguous preceding base')
             owner = max(owners, key=lambda c: c.r)
             delta = char.cy - baseline
             if abs(delta) < .08 * main_size:
-                raise ValueError('small glyph does not form a clear script')
+                raise EquationRefused('small glyph does not form a clear script')
             direction = 'sup' if delta > 0 else 'sub'
         attached[id(owner)][direction].append(char)
         script_owner[id(char)] = (owner, direction)
@@ -230,8 +236,8 @@ def recover_equation(page_text, box):
                 width=(x1 - x0) / page_text.width, height=(y1 - y0) / page_text.height)
     reason = None
     try:
-        from equation_geometry import atom, accent_atoms, delimiter_atoms, fraction_atoms, radical_atoms, operator_atoms, display_rows, arrow_atoms
-        atoms = accent_atoms([atom(c) for c in chars], _token)
+        from equation_geometry import atom, accent_atoms, delimiter_atoms, fraction_atoms, radical_atoms, operator_atoms, display_rows, arrow_atoms, font_scales
+        atoms = accent_atoms([atom(c, font_scales(page_text)) for c in chars], _token)
         atoms = arrow_atoms(atoms)
         atoms = delimiter_atoms(atoms)
         bars = []
@@ -249,22 +255,22 @@ def recover_equation(page_text, box):
         rows = [operator_atoms(row, _sequence, _token) for row in display_rows(atoms)]
         atoms = [a for row in rows for a in row]
         if any(unicodedata.category(c).startswith('C') for a in atoms for c in a.text):
-            raise ValueError('unmapped source glyphs')
+            raise EquationRefused('unmapped source glyphs')
         if any(unicodedata.combining(c) or c in '√∑∫∏' for a in atoms if not a.xml for c in a.text):
-            raise ValueError('large operators or unsupported accents require structural recovery')
+            raise EquationRefused('large operators or unsupported accents require structural recovery')
         ordered = sorted(atoms, key=lambda c: c.l)
         if ordered[0].text in '=≈≤≥':
-            raise ValueError('layout fragment begins with a relation and omits its left operand')
+            raise EquationRefused('layout fragment begins with a relation and omits its left operand')
         stack = []
         pairs = {')': '(', ']': '[', '}': '{'}
         for c in ordered:
             if c.text in '([{': stack.append(c.text)
             elif c.text in pairs:
                 if not stack or (stack[-1] != pairs[c.text] and {stack[-1], pairs[c.text]} != {'(', '['}):
-                    raise ValueError('unbalanced source delimiters in layout fragment')
+                    raise EquationRefused('unbalanced source delimiters in layout fragment')
                 stack.pop()
         if stack:
-            raise ValueError('unbalanced source delimiters in layout fragment')
+            raise EquationRefused('unbalanced source delimiters in layout fragment')
         rendered = [_sequence(row) for row in rows]
         if len(rendered) == 1:
             node, text = rendered[0]
@@ -272,8 +278,10 @@ def recover_equation(page_text, box):
             node = '<mtable columnalign="left">' + ''.join('<mtr><mtd>'+xml+'</mtd></mtr>' for xml, _ in rendered) + '</mtable>'
             text = '\n'.join(value for _, value in rendered)
         if sum(c.count for c in atoms) != len(chars):
-            raise ValueError('source glyph ownership changed during reconstruction')
+            raise EquationRefused('source glyph ownership changed during reconstruction')
         return EquationRecovery(text, _merge_numbers('<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">' + node + '</math>'), crop, glyph_count=len(chars))
-    except ValueError as exc:
+    except EquationRefused as exc:
+        # Only a refusal. Any other ValueError is a defect in this
+        # reconstruction and must not be published as a property of the maths.
         reason = str(exc)
     return EquationRecovery(source_text, None, crop, reason, len(chars))

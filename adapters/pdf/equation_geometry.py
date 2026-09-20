@@ -5,6 +5,20 @@ import re
 import statistics
 import unicodedata
 
+from pdf_text import classify_font
+
+
+class EquationRefused(ValueError):
+    """A layout this reconstruction deliberately declines to interpret.
+
+    Every refusal here is a decision: the source does not say enough for the
+    expression to be rebuilt without guessing, so the caller keeps the page's
+    own picture and the reason is reported to the reader. A plain `ValueError`
+    cannot carry that meaning, because the same exception is what an ordinary
+    bug raises — an empty `max()`, a median of nothing — and swallowing those
+    as refusals reports a defect as if the mathematics were merely too hard.
+    """
+
 
 @dataclass
 class Atom:
@@ -28,13 +42,99 @@ class Atom:
     def height(self): return self.t-self.b
 
 
+def family(font):
+    return font.split('+')[-1]
+
+
+# Digits in a face's name state its design size only inside the range a
+# document is actually set in. `HardingText-RegularItalic2` is not a two-point
+# face, and a face that claimed to be one would measure every unsized face
+# beside it five times too small, for the whole page.
+NOMINAL_RANGE=(4.,30.)
+
+
 def nominal(char):
-    match=re.search(r'(?:Roman|Italic|Symbols|CMMI[B]?|CMBX|CMSY|CMR|MSAM|MSBM)(\d+)',char.font.split('+')[-1],re.I)
-    return float(match.group(1)) if match else None
+    match=re.search(r'(?:Roman|Italic|Symbols|CMMI[B]?|CMBX|CMSY|CMR|MSAM|MSBM)(\d+)',family(char.font),re.I)
+    if match is None:return None
+    size=float(match.group(1))
+    return size if NOMINAL_RANGE[0]<=size<=NOMINAL_RANGE[1] else None
 
 
-def atom(char):
-    return Atom(char.text,char.l,char.b,char.r,char.t,char.font,nominal(char),
+# A face must be measured this many times, and agree with itself this closely,
+# before its heights read as sizes.
+SCALE_SAMPLES=8
+SCALE_TOLERANCE=.02
+# Two faces set at one size have comparable box heights; a script is 70% or
+# 50% of its base. The band separates the two without assuming either ratio.
+SCALE_HEIGHT_BAND=.8
+
+
+def font_scales(page_text):
+    """Points per unit of glyph-box height, for faces that do not name a size.
+
+    docling-parse reports one box height per face and size, so inside one face
+    the height is exactly proportional to the point size; only the constant
+    differs, and it belongs to the font program, not to the page. Two glyphs
+    set side by side on one baseline are set at one size, so a neighbour whose
+    name does state its size (`CMR10`) measures the face beside it.
+
+    A `mathptmx` or `newtx` document sets an equation's upright text, and its
+    tag, in the document text face, whose name carries no size at all. Without
+    a size for those glyphs no script in the expression can be separated from
+    its base, and the whole equation falls back to a picture.
+
+    Only a face its neighbours agree on is calibrated. One measured rarely, or
+    inconsistently, stays unsized and keeps its equations' honest fallback
+    rather than receiving a guessed scale. That agreement is also what guards
+    the measurement against a neighbour that misstates its own size: a face
+    measured by two neighbours that disagree is thrown out rather than
+    resolved in favour of either.
+    """
+    cached=getattr(page_text,'_equation_font_scales',None)
+    if cached is None:
+        cached=_measure_font_scales(page_text)
+        try:page_text._equation_font_scales=cached
+        except AttributeError:pass
+    return cached
+
+
+def _measure_font_scales(page_text):
+    samples={}
+    for line in getattr(page_text,'lines',None) or []:
+        chars=sorted([c for c in line.chars if c.text.strip()],key=lambda c:c.l)
+        for left,right in zip(chars,chars[1:]):
+            heights=(left.t-left.b,right.t-right.b)
+            if min(heights)<=0:continue
+            near=min(heights)
+            # Side by side, and on one baseline. A raised or lowered glyph is
+            # a script set at another size and measures nothing.
+            if right.l-left.r>.5*near or abs(left.b-right.b)>.08*near:continue
+            # A box bottom sits a face's own descender below the baseline, so
+            # a subscript of a shallow face can share a box bottom with the
+            # base beside it. Comparable box heights separate the two.
+            if near<SCALE_HEIGHT_BAND*max(heights):continue
+            for char,other,height in ((left,right,heights[0]),(right,left,heights[1])):
+                size=nominal(other)
+                if size is None or nominal(char) is not None:continue
+                if family(char.font)==family(other.font):continue
+                samples.setdefault(family(char.font),[]).append(size/height)
+    scales={}
+    for name,values in samples.items():
+        if len(values)<SCALE_SAMPLES:continue
+        scale=statistics.median(values)
+        if scale<=0:continue
+        # One face at one size has one height: a real measurement repeats.
+        if sum(1 for value in values if abs(value-scale)<=SCALE_TOLERANCE*scale)<.9*len(values):continue
+        scales[name]=scale
+    return scales
+
+
+def atom(char,scales=None):
+    em=nominal(char)
+    if em is None and scales:
+        scale=scales.get(family(char.font))
+        if scale:em=scale*(char.t-char.b)
+    return Atom(char.text,char.l,char.b,char.r,char.t,char.font,em,
                 extension=bool(re.search(r'Extension|CMEX',char.font,re.I)))
 
 
@@ -44,17 +144,51 @@ def composite(members, text, xml, *, anchor=None, em=None, extension=False):
                 xml,anchor,sum(c.count for c in members),extension)
 
 
+ACCENTS={'˜':'~','̂':'^','̃':'~','̄':'¯','̇':'˙','̈':'¨'}
+# TeX sets an accent by overprinting: `\bar{a}` kerns back and puts the bar
+# glyph in the same advance slot as the `a` beneath it, so the two boxes very
+# nearly coincide. These accent characters are ordinary spacing glyphs that
+# also stand on their own -- a circumflex, a tilde between two operands -- and
+# only that overprint tells the two apart. Without it the accent reads as a
+# base of its own and takes the scripts of the letter it sits on, which
+# silently rewrites `\bar{a}_s` as `¯_s a`.
+OVERPRINTED={'¯':'¯','ˉ':'¯','ˆ':'^','^':'^','~':'~','˙':'˙','¨':'¨'}
+OVERPRINT_SHARE=.6
+ACCENT_RISE=.45
+
+
 def accent_atoms(atoms, token):
-    accents={'˜':'~','\u0302':'^','\u0303':'~','\u0304':'¯','\u0307':'˙','\u0308':'¨'}
     atoms=list(atoms)
     for mark in list(atoms):
-        if mark.text not in accents:continue
+        overprint=mark.text not in ACCENTS and mark.text in OVERPRINTED
+        label=ACCENTS.get(mark.text) or (OVERPRINTED[mark.text] if overprint else None)
+        if label is None:continue
         candidates=[c for c in atoms if c is not mark and not any(unicodedata.combining(k) for k in c.text)
                     and c.l-1 <= mark.cx <= c.r+1 and abs(c.cy-mark.cy)<max(c.em or 12,12)]
-        if not candidates: raise ValueError('accent has no source-supported base')
+        if overprint:
+            # An accent and a relation can be the same character, and a sloppy
+            # `ToUnicode` map gives `\sim` the tilde's own codepoint. The family
+            # separates them: TeX sets `\hat`, `\bar` and `\tilde` with
+            # `\mathaccent` out of the roman family, and `\sim`, `\approx` and
+            # the rest of the relations out of the symbol family. Every one of
+            # the 773 accents this corpus attaches is set in a text face and
+            # none in a symbol face. A mark from a symbol face stands between
+            # its two operands rather than over one, and absorbing it would
+            # delete the relation and orphan its right operand.
+            if classify_font(mark.font)['math']:continue
+            # TeX lifts an accent clear of a tall base (`J̄` above `ā`), so the
+            # mark sits at or above its base's box and never below it, at the
+            # base's own size: a script beneath one is neither.
+            candidates=[c for c in candidates if c.text not in ACCENTS and c.text not in OVERPRINTED
+                        and min(c.r,mark.r)-max(c.l,mark.l) > OVERPRINT_SHARE*min(c.r-c.l,mark.r-mark.l)
+                        and -.06*(c.t-c.b) <= mark.b-c.b <= ACCENT_RISE*(c.t-c.b)
+                        and min(c.t-c.b,mark.t-mark.b) >= .8*max(c.t-c.b,mark.t-mark.b)]
+            # a spacing accent printed on nothing of its own size is an operator
+            if not candidates:continue
+        elif not candidates: raise EquationRefused('accent has no source-supported base')
         base=min(candidates,key=lambda c:abs(c.cx-mark.cx))
-        xml='<mover accent="true">'+token(base)+'<mo>'+escape(accents[mark.text])+'</mo></mover>'
-        node=composite([base,mark],'\\'+{'^':'hat','~':'tilde','¯':'bar','˙':'dot','¨':'ddot'}[accents[mark.text]]+'{'+base.text+'}',xml,anchor=base.cy,em=base.em)
+        xml='<mover accent="true">'+token(base)+'<mo>'+escape(label)+'</mo></mover>'
+        node=composite([base,mark],'\\'+{'^':'hat','~':'tilde','¯':'bar','˙':'dot','¨':'ddot'}[label]+'{'+base.text+'}',xml,anchor=base.cy,em=base.em)
         atoms.remove(mark);atoms[atoms.index(base)]=node
     return atoms
 
@@ -78,14 +212,14 @@ def delimiter_atoms(atoms):
         delim=PIECES[char.text][0]
         members=[c for c in atoms if c.text in PIECES and PIECES[c.text][0]==delim and abs(c.l-char.l)<1.5]
         roles={PIECES[c.text][1] for c in members}
-        if not {'top','bottom'} <= roles:raise ValueError('incomplete assembled source delimiter')
+        if not {'top','bottom'} <= roles:raise EquationRefused('incomplete assembled source delimiter')
         node=composite(members,delim,'<mo stretchy="true">'+delim+'</mo>',extension=True)
         atoms=[c for c in atoms if c not in members]+[node]
     # Extensible brace middle bars use U+F8F4, shared between left/right.
     for char in list(atoms):
         if char.text=='\uf8f4':
             candidates=[c for c in atoms if c.extension and c.text in '{}' and abs(c.l-char.l)<2]
-            if len(candidates)!=1: raise ValueError('brace extender has no complete delimiter')
+            if len(candidates)!=1: raise EquationRefused('brace extender has no complete delimiter')
             base=candidates[0];base.count+=char.count;base.b=min(base.b,char.b);base.t=max(base.t,char.t);atoms.remove(char)
     for symbol in ('∥','∣','|'):
         for char in list(atoms):
@@ -127,7 +261,7 @@ def fraction_atoms(atoms,bars,sequence):
         numerator=nearest_band([c for c in members if c.cy>y])
         denominator=nearest_band([c for c in members if c.cy<y])
         members=numerator+denominator
-        if not numerator or not denominator:raise ValueError('fraction rule has no complete numerator and denominator')
+        if not numerator or not denominator:raise EquationRefused('fraction rule has no complete numerator and denominator')
         n,nt=sequence(numerator);d,dt=sequence(denominator)
         em=max(c.em or 0 for c in members) or None
         node=composite(members,'\\frac{'+nt+'}{'+dt+'}','<mfrac>'+n+d+'</mfrac>',anchor=y,em=em)
@@ -140,13 +274,13 @@ def radical_atoms(atoms,bars,sequence):
     atoms=list(atoms);bars=list(bars)
     for root in [c for c in atoms if c.text=='√']:
         matches=[b for b in bars if abs(b[0]-root.r)<1.5 and root.b-1<=b[2]<=root.t+1]
-        if len(matches)!=1:raise ValueError('radical has no unambiguous source vinculum')
+        if len(matches)!=1:raise EquationRefused('radical has no unambiguous source vinculum')
         bar=matches[0];left,right,y=bar
         # The vinculum bounds the radicand horizontally. Other enclosing
         # fraction bars supply its vertical boundary when present.
         lower=max([b[2] for b in bars if b[0]<=left and b[1]>=right and b[2]<y] or [-float('inf')])
         members=[c for c in atoms if c is not root and left-.75<=c.cx<=right+.75 and lower<c.cy<y]
-        if not members:raise ValueError('radical has no complete radicand')
+        if not members:raise EquationRefused('radical has no complete radicand')
         xml,text=sequence(members)
         node=composite([root]+members,'\\sqrt{'+text+'}','<msqrt>'+xml+'</msqrt>',
                        anchor=statistics.median(c.cy for c in members),em=max(c.em or 0 for c in members) or None)
@@ -157,6 +291,7 @@ def radical_atoms(atoms,bars,sequence):
 def operator_atoms(atoms,sequence,token):
     """Join upright function names and attach centered source limits."""
     atoms=list(atoms)
+    if not atoms:return atoms
     main=max(c.em or 0 for c in atoms)
     body=[c for c in atoms if not c.extension and (c.em or 0)>=.8*main]
     if not body:return atoms
@@ -196,7 +331,7 @@ def operator_atoms(atoms,sequence,token):
                     clusters.append([char])
                 else:clusters[-1].append(char)
             matching=[g for g in clusters if min(c.l for c in g)<=op.cx<=max(c.r for c in g)]
-            if len(matching)>1:raise ValueError('operator has ambiguous source limit rows')
+            if len(matching)>1:raise EquationRefused('operator has ambiguous source limit rows')
             if matching:groups[direction]=matching[0]
         # Upright ordinary operators without centered limits remain ordinary.
         if not groups:
@@ -218,6 +353,7 @@ def operator_atoms(atoms,sequence,token):
 
 def display_rows(atoms):
     """Split separated full expression baselines after fractions collapse."""
+    if not atoms:return [atoms]
     main=max(c.em or 0 for c in atoms)
     body=sorted([c for c in atoms if not c.extension and (c.em or 0)>=.8*main],key=lambda c:c.cy,reverse=True)
     groups=[]
@@ -227,7 +363,7 @@ def display_rows(atoms):
     if len(groups)<=1:return [atoms]
     # A pair of isolated glyphs could be an unparsed fraction. Separate rows
     # require independently meaningful source expressions on both baselines.
-    if any(len(g)<4 for g in groups):raise ValueError('multiple expression baselines require structural recovery')
+    if any(len(g)<4 for g in groups):raise EquationRefused('multiple expression baselines require structural recovery')
     centers=[statistics.median(c.cy for c in g) for g in groups]
     rows=[[]for _ in groups]
     for char in atoms:

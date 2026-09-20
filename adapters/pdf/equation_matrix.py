@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import statistics
 
-from equation_geometry import composite
+from equation_geometry import EquationRefused, composite
 
 
 _CLOSING = {'(': ')', '[': ']', '{': '}'}
@@ -72,7 +72,7 @@ def matrix_atoms(atoms, sequence):
             continue
         try:
             rendered = [[sequence(cell) for cell in row] for row in cells]
-        except ValueError:
+        except EquationRefused:
             continue
         table = '<mtable>' + ''.join(
             '<mtr>' + ''.join('<mtd>' + xml + '</mtd>' for xml, _ in row) + '</mtr>'
@@ -105,7 +105,7 @@ def cases_atoms(atoms, sequence, operator_atoms, token):
             rows=display_rows(members)
             if len(rows)<2 or any(not any(c.text in {'=','≤','≥','<','>'} for c in row) for row in rows):continue
             rendered=[sequence(operator_atoms(row,sequence,token)) for row in rows]
-        except ValueError:continue
+        except EquationRefused:continue
         table='<mtable columnalign="left">'+''.join('<mtr><mtd>'+xml+'</mtd></mtr>'for xml,_ in rendered)+'</mtable>'
         text='\\begin{cases}'+'\\\\'.join(text for _,text in rendered)+'\\end{cases}'
         node=composite([brace]+members,text,'<mrow>'+brace.xml+table+'</mrow>',anchor=brace.cy,
