@@ -42,6 +42,8 @@ class SourceRaster:
             raise ValueError("max_cached_pages must be at least 1")
         self.pdf_path = Path(pdf_path)
         self.dpi = dpi
+        # page number -> the resolution it had to fall back to
+        self.degraded_pages: dict[int, int] = {}
         self.renderer = renderer
         self.max_cached_pages = max_cached_pages
         self._images: OrderedDict[int, Image.Image] = OrderedDict()
@@ -132,6 +134,24 @@ class SourceRaster:
         return image.copy()
 
     def _render_page(self, page_number: int) -> Image.Image:
+        """The page as an image, at the coarsest resolution that renders in time.
+
+        A page of dense vector artwork can take longer to raster than the
+        budget allows, and a document is not worth losing over one slow page:
+        a crop taken at half resolution is a far better answer than refusing
+        the whole reconstruction. Resolution is halved and retried, twice,
+        before giving up.
+        """
+        for dpi in (self.dpi, self.dpi // 2, self.dpi // 4):
+            try:
+                return self._render_page_at(page_number, dpi)
+            except SourceRasterError as error:
+                if "timed out" not in str(error) or dpi <= self.dpi // 4:
+                    raise
+                self.degraded_pages[page_number] = dpi // 2
+        raise SourceRasterError(f"cannot render original PDF with {self.renderer}: timed out on page {page_number}")
+
+    def _render_page_at(self, page_number: int, dpi: int) -> Image.Image:
         if self._snapshot_path is None:
             raise SourceRasterError("source raster has no PDF snapshot")
         with tempfile.TemporaryDirectory(prefix="struct-source-raster-") as directory:
@@ -143,7 +163,7 @@ class SourceRaster:
                 "-l",
                 str(page_number),
                 "-r",
-                str(self.dpi),
+                str(dpi),
                 "-png",
                 "-singlefile",
                 str(self._snapshot_path),

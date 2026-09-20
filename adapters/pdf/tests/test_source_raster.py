@@ -186,3 +186,48 @@ class SourceRasterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlowPageDegradesRatherThanFails(unittest.TestCase):
+    """A page of dense artwork can outrun the raster budget. A document is not
+    worth losing over one slow page: the resolution drops and it tries again."""
+
+    def _raster(self):
+        from source_raster import SourceRaster
+        raster = SourceRaster.__new__(SourceRaster)
+        raster.renderer = "pdftoppm"
+        raster.dpi = 144
+        raster.degraded_pages = {}
+        raster._snapshot_path = Path("snapshot.pdf")
+        return raster
+
+    def test_a_page_that_times_out_is_retried_at_half_resolution(self):
+        from source_raster import SourceRasterError
+        raster = self._raster()
+        attempted = []
+
+        def render_at(page_number, dpi):
+            attempted.append(dpi)
+            if dpi > 36:
+                raise SourceRasterError("cannot render original PDF with pdftoppm: timed out on page 11")
+            return "image at 36"
+
+        raster._render_page_at = render_at
+        self.assertEqual(raster._render_page(11), "image at 36")
+        self.assertEqual(attempted, [144, 72, 36])
+        self.assertEqual(raster.degraded_pages[11], 36)
+
+    def test_a_renderer_that_is_missing_is_not_retried(self):
+        """Only a timeout is worth a coarser attempt; a broken renderer is not."""
+        from source_raster import SourceRasterError
+        raster = self._raster()
+        attempted = []
+
+        def render_at(page_number, dpi):
+            attempted.append(dpi)
+            raise SourceRasterError("cannot render original PDF with pdftoppm: renderer is unavailable")
+
+        raster._render_page_at = render_at
+        with self.assertRaises(SourceRasterError):
+            raster._render_page(11)
+        self.assertEqual(attempted, [144])
