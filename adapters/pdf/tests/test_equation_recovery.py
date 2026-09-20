@@ -210,6 +210,23 @@ class EquationRecoveryTests(unittest.TestCase):
         self.assertEqual(result.text,'x_{i}=y')
         self.assertEqual(len(ET.fromstring(result.mathml).findall('.//{*}msub')),1)
 
+    def test_digits_that_are_part_of_a_face_s_name_are_not_read_as_its_size(self):
+        """`HardingText-RegularItalic2` is in this corpus and is not a
+        two-point face. Believed, it measures every unsized face beside it at
+        a fifth of its real size, for the whole page — so the face beside it
+        would have its full-sized glyphs read as scripts."""
+        from equation_geometry import nominal, font_scales
+        from types import SimpleNamespace as NS
+        self.assertEqual(nominal(NS(font='ABCDEF+CMR10')),10.)
+        self.assertEqual(nominal(NS(font='ABCDEF+LMRoman8-Regular')),8.)
+        self.assertIsNone(nominal(NS(font='ABCDEF+HardingText-RegularItalic2')))
+        chars=[]
+        for index,letter in enumerate('measuredagainstonlythatoneneighbour'):
+            x=10+index*9
+            chars.append(Char(letter,x,20,x+4.3,28.552,'ABCDEF+TimesLike-Roman'))
+            chars.append(Char('.',x+4.5,20,x+5,29.963,'ABCDEF+HardingText-RegularItalic2'))
+        self.assertNotIn('TimesLike-Roman',font_scales(PageText(1,400,200,chars)))
+
     def test_a_script_is_not_measured_as_if_it_were_its_own_base(self):
         """A box bottom sits a face's own descender below the baseline, so a
         subscript of a shallow face can share a box bottom with the base it

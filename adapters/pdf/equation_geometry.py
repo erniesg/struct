@@ -34,15 +34,23 @@ def family(font):
     return font.split('+')[-1]
 
 
+# Digits in a face's name state its design size only inside the range a
+# document is actually set in. `HardingText-RegularItalic2` is not a two-point
+# face, and a face that claimed to be one would measure every unsized face
+# beside it five times too small, for the whole page.
+NOMINAL_RANGE=(4.,30.)
+
+
 def nominal(char):
     match=re.search(r'(?:Roman|Italic|Symbols|CMMI[B]?|CMBX|CMSY|CMR|MSAM|MSBM)(\d+)',family(char.font),re.I)
-    return float(match.group(1)) if match else None
+    if match is None:return None
+    size=float(match.group(1))
+    return size if NOMINAL_RANGE[0]<=size<=NOMINAL_RANGE[1] else None
 
 
-# A face must be measured this many times, by this many separate neighbouring
-# faces, and agree with itself this closely, before its heights read as sizes.
+# A face must be measured this many times, and agree with itself this closely,
+# before its heights read as sizes.
 SCALE_SAMPLES=8
-SCALE_NEIGHBOURS=1
 SCALE_TOLERANCE=.02
 # Two faces set at one size have comparable box heights; a script is 70% or
 # 50% of its base. The band separates the two without assuming either ratio.
@@ -63,9 +71,12 @@ def font_scales(page_text):
     a size for those glyphs no script in the expression can be separated from
     its base, and the whole equation falls back to a picture.
 
-    Only a face several independent neighbours agree on is calibrated. One
-    measured rarely, or inconsistently, stays unsized and keeps its equations'
-    honest fallback rather than receiving a guessed scale.
+    Only a face its neighbours agree on is calibrated. One measured rarely, or
+    inconsistently, stays unsized and keeps its equations' honest fallback
+    rather than receiving a guessed scale. That agreement is also what guards
+    the measurement against a neighbour that misstates its own size: a face
+    measured by two neighbours that disagree is thrown out rather than
+    resolved in favour of either.
     """
     cached=getattr(page_text,'_equation_font_scales',None)
     if cached is None:
@@ -94,11 +105,10 @@ def _measure_font_scales(page_text):
                 size=nominal(other)
                 if size is None or nominal(char) is not None:continue
                 if family(char.font)==family(other.font):continue
-                samples.setdefault(family(char.font),[]).append((size/height,family(other.font)))
+                samples.setdefault(family(char.font),[]).append(size/height)
     scales={}
-    for name,measured in samples.items():
-        values=[value for value,_ in measured]
-        if len(values)<SCALE_SAMPLES or len({neighbour for _,neighbour in measured})<SCALE_NEIGHBOURS:continue
+    for name,values in samples.items():
+        if len(values)<SCALE_SAMPLES:continue
         scale=statistics.median(values)
         if scale<=0:continue
         # One face at one size has one height: a real measurement repeats.
