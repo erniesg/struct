@@ -44,5 +44,8 @@ describe('STRUCT package API manifest', () => {
     expect(manifest.runtimeExports['./identity']).toEqual(
       stableIdentityExports,
     )
+    expect(manifest.runtimeExports['./renderers/xhtml']).toEqual([
+      'renderPublicationXhtml',
+    ])
   })
 })
