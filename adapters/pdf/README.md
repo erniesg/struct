@@ -120,7 +120,17 @@ python triage.py out/ --pdfs ~/Papers
 
 # visual evidence: raster a block at Paper Pro geometry
 node screenshot.mjs out/<stem>/<stem>-paperpro.epub --out page.png --anchor <blockId>
+
+# re-render an existing draft with different typography (never re-extracts)
+node render.mjs out/<stem>/<stem>.struct-draft.json --out /tmp/try --profiles paperPro \
+  --font sans --font-size 18 --line-height 1.8 --margin 1.2
 ```
+
+`--font` picks from three stacks `render.mjs` owns (`default` is the Georgia
+stack every EPUB has always used); the three numbers are bounded. An option left
+out, or set to the profile's own default, changes nothing at all — the CSS, the
+configuration digest and the EPUB bytes are the ones the renderer produced
+before the options existed.
 
 Outputs per PDF: `<stem>.docling.json`, `<stem>.struct-draft.json`, the sealed
 `struct.json`, struct's `content.xhtml`, one EPUB per profile, and
@@ -143,7 +153,9 @@ repository's `node_modules` or the sibling `erniesg` checkout).
 
 - [`service/`](service/README.md) — a token-gated HTTP front for the same
   pipeline: upload a PDF in a browser, get both EPUBs and the spec-052 criteria
-  back. It wraps `pdf2epub.py` and changes nothing about the conversion.
+  back, and read a finished conversion beside its PDF with live device and
+  typography controls. It wraps `pdf2epub.py` and changes nothing about the
+  conversion.
 - [`bench/`](bench/README.md) — what a bounded model adjudicator (spec 046) is
   worth: six models across three tiers on the caption-to-region residual, scored
   against ground truth that does not come from these rules, with token counts
