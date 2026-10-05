@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { sha256HexSync } from '../src/sha256'
 import { verifyEmbeddedAssets, EmbeddedAssetError, type EmbeddedAssetLimits } from '../src/bundle/assets'
 
@@ -68,6 +69,34 @@ describe('private embedded asset integrity pilot', () => {
       payload: { kind: 'embedded', base64: 'AQJ=' } }], 'BASE64')
     fails([asset.document], [{ ...asset.envelope, payload: { kind: 'embedded', base64: 'Ag==' } }], 'DIGEST')
   })
+
+  it('accepts a valid 4 MiB embedded payload within every caller cap', () => {
+    const bytes = new Uint8Array(4 * 1024 * 1024)
+    bytes[0] = 1
+    bytes[bytes.length - 1] = 2
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    const base64 = Buffer.from(bytes).toString('base64')
+    const document = [{ id: 'large', mediaType: 'image/png', sha256 }]
+    const envelope = [{ id: 'large', mediaType: 'image/png', sha256,
+      byteLength: bytes.length, payload: { kind: 'embedded', base64 } }]
+    const result = verifyEmbeddedAssets(document, envelope, {
+      maxAssets: 1, maxAssetBytes: bytes.length, maxTotalBytes: bytes.length,
+      maxBase64Chars: base64.length,
+    })
+    const decoded = result.assetBytes('large')!
+    expect(decoded.length).toBe(bytes.length)
+    expect(decoded[0]).toBe(1)
+    expect(decoded[decoded.length - 1]).toBe(2)
+  })
+
+  it.each(['AQ=', 'A===', 'AQ==\n', 'AQ-_', 'A=AA', 'AQ==AAAA', 'AR==', 'AQJ='])(
+    'rejects noncanonical base64 %s in the Bundle helper', (base64) => {
+      const asset = pair('a', [1])
+      fails([asset.document], [{ ...asset.envelope, payload: {
+        kind: 'embedded', base64,
+      } }], 'BASE64')
+    },
+  )
 
   it('leaves external references unresolved without invoking their contents', () => {
     const asset = pair('a', [1])

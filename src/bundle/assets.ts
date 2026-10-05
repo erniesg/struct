@@ -1,4 +1,5 @@
 import { sha256HexSync } from '../sha256'
+import { canonicalBase64Padding } from '../document/codec/base64-lexical'
 
 /** Private S-03 input to the future approved versioned limit profile. */
 export type EmbeddedAssetLimits = Readonly<{
@@ -126,8 +127,8 @@ const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 
 function decodeCanonicalBase64(base64: string, declaredLength: number): Uint8Array {
   // Validate representation and pad bits before allocating the decoded buffer.
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(base64)) invalid('BASE64')
-  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  const padding = canonicalBase64Padding(base64)
+  if (padding === undefined) invalid('BASE64')
   const length = (base64.length / 4) * 3 - padding
   if (length !== declaredLength) invalid('BASE64')
   if (padding === 2 && (alphabet.indexOf(base64[base64.length - 3]!) & 15) !== 0) invalid('BASE64')
