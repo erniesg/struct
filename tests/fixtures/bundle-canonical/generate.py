@@ -1,7 +1,7 @@
 """Regenerate fixed canonical Bundle vectors using only Python's standard library.
 
-Domain is deliberately restricted to ASCII object keys/strings, booleans,
-nulls, arrays, and safe integers. In this domain json.dumps with sorted keys
+Domain is deliberately restricted to ASCII below DEL in object keys/strings,
+booleans, nulls, arrays, and safe integers. In this domain json.dumps with sorted keys
 and compact separators agrees with the required UTF-8 JCS bytes; this is not
 a general RFC 8785 serializer (notably for Unicode and noninteger numbers).
 The seed is a schema-valid byte-free 0.1.0 document frozen in base-document.json.
@@ -17,8 +17,29 @@ HERE = Path(__file__).resolve().parent
 
 
 def canonical(value):
-    text = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    assert text.isascii()
+    def check(item):
+        if item is None or isinstance(item, bool):
+            return
+        if isinstance(item, int) and not isinstance(item, bool):
+            assert abs(item) <= (2 ** 53 - 1)
+            return
+        if isinstance(item, str):
+            assert all(ord(char) < 127 for char in item)
+            return
+        if isinstance(item, list):
+            for child in item:
+                check(child)
+            return
+        if isinstance(item, dict):
+            for key, child in item.items():
+                assert isinstance(key, str)
+                check(key)
+                check(child)
+            return
+        raise AssertionError("outside restricted canonical vector domain")
+
+    check(value)
+    text = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return text
 
 
@@ -33,20 +54,15 @@ def seal_current(document):
     return document
 
 
-def envelope(document, asset_order):
-    asset = document["assets"][0]
-    entries = {
-        "asset-a": {"id": "asset-a", "sha256": asset["sha256"],
-                    "mediaType": asset["mediaType"], "byteLength": 3,
-                    "payload": {"kind": "embedded", "base64": "AP+A"}},
-        "asset-z": {"id": "asset-z", "sha256": asset["sha256"],
-                    "mediaType": asset["mediaType"], "byteLength": 3,
-                    "payload": {"kind": "external", "resourceId": "sha256:" + asset["sha256"]}},
-    }
+def envelope(document):
+    entries = [{"id": asset["id"], "sha256": asset["sha256"],
+                "mediaType": asset["mediaType"], "byteLength": 3,
+                "payload": {"kind": "embedded", "base64": "AP+A"}}
+               for asset in document["assets"]]
     return {"mediaType": "application/vnd.erniesg.struct+json",
             "bundleVersion": "1.0.0", "schemaVersion": document["schemaVersion"],
             "documentSha256": digest(document), "document": document,
-            "assets": [entries[name] for name in asset_order],
+            "assets": entries,
             "receipt": document["receipt"]}
 
 
@@ -71,7 +87,7 @@ def main():
                            ("current-title", title), ("current-source-receipt", source)]:
         assert document["schemaVersion"] in ("0.1.0", "0.2.0")
         for label, value in [("document", document),
-                             ("envelope", envelope(document, ["asset-z", "asset-a"]))]:
+                             ("envelope", envelope(document))]:
             normalized = copy.deepcopy(value)
             if label == "envelope":
                 normalized["assets"].sort(key=lambda asset: asset["id"])
