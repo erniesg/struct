@@ -1,0 +1,174 @@
+{
+  "protocolVersion": "2.0.0",
+  "protocolState": "development-open",
+  "aggregateReportSchemaVersion": "2.0.0",
+  "categories": [
+    "paragraph",
+    "hierarchy",
+    "tables",
+    "figures",
+    "citations",
+    "notes",
+    "multicolumn",
+    "rtl",
+    "navigation",
+    "assets",
+    "metadata",
+    "malformed",
+    "bounds",
+    "ambiguity"
+  ],
+  "outcomes": [
+    "rendered-ready",
+    "source-preserved-ready",
+    "expected-review-refusal",
+    "invalid-bridge-document",
+    "unexpected-renderer-refusal",
+    "conformance-failure"
+  ],
+  "versionAxes": [
+    "protocolVersion",
+    "fixtureVersion",
+    "rendererVersion",
+    "profileVersion",
+    "bridgeVersion",
+    "cohortVersion"
+  ],
+  "reporting": {
+    "minimumPopulation": 5,
+    "maximumCount": 1000000,
+    "rateDecimalPlaces": 6,
+    "rateRounding": "half-up",
+    "rateInputPolicy": "trusted-aggregator-derived-only",
+    "gateInputPolicy": "exact-counter-ratio-before-rounding",
+    "suppressedFields": [
+      "numerator",
+      "denominator",
+      "rate"
+    ],
+    "zeroToleranceSuppression": "forbidden"
+  },
+  "determinism": {
+    "runsPerInput": 2,
+    "mismatchCounters": [
+      "xhtmlByteMismatchCount",
+      "epubByteMismatchCount"
+    ]
+  },
+  "execution": {
+    "development": {
+      "allowedProtocolStates": [
+        "development-open",
+        "frozen"
+      ],
+      "qualifyingTransactionPolicy": "repeatable"
+    },
+    "holdout": {
+      "requiredProtocolState": "frozen",
+      "maximumQualifyingTransactions": 1,
+      "retryPolicy": "infrastructure-only-without-semantic-counters"
+    }
+  },
+  "ownerPrivateHoldoutState": {
+    "storage": "outside-struct",
+    "freezeTiming": "before-holdout-input-open",
+    "authorizationOperation": "atomic-consult-and-consume",
+    "authorizationTiming": "before-holdout-input-open",
+    "authorizationEvidenceInReport": "forbidden",
+    "requiredBindings": [
+      "exactFrozenProtocolArtifact",
+      "protocolState",
+      "protocolVersion",
+      "aggregateReportSchemaVersion",
+      "fixtureVersion",
+      "rendererVersion",
+      "profileVersion",
+      "bridgeVersion",
+      "cohortVersion",
+      "publicArtifact",
+      "maximumQualifyingTransactions"
+    ]
+  },
+  "metrics": {
+    "overall": {
+      "assignedCompletion": {
+        "numeratorCounter": "completed",
+        "denominatorCounter": "assigned",
+        "gate": {
+          "operator": "equal",
+          "value": 1
+        }
+      },
+      "neutralConservation": {
+        "numeratorCounter": "conservedNeutralObligations",
+        "denominatorCounter": "neutralObligations",
+        "gate": {
+          "operator": "equal",
+          "value": 1
+        }
+      },
+      "publicationReady": {
+        "numeratorCounter": "publicationReady",
+        "denominatorCounter": "publicationEligible",
+        "gate": {
+          "operator": "at-least",
+          "value": 0.95
+        }
+      },
+      "ambiguitySafety": {
+        "numeratorCounter": "ambiguitySafe",
+        "denominatorCounter": "ambiguityEligible",
+        "gate": {
+          "operator": "equal",
+          "value": 1
+        }
+      },
+      "semanticCoverage": {
+        "numeratorCounter": "renderedSemantically",
+        "denominatorCounter": "semanticEligible",
+        "gate": {
+          "operator": "report-only"
+        }
+      }
+    },
+    "categoryReady": {
+      "numeratorField": "numerator",
+      "denominatorField": "denominator",
+      "rateField": "rate",
+      "gate": {
+        "operator": "at-least",
+        "value": 0.9
+      }
+    },
+    "zeroTolerance": {
+      "safetyCounters": [
+        "privacySanitizerFailureCount",
+        "falseLinkCount",
+        "falseVerifiedTableCount",
+        "inventedVisibleTextCount",
+        "digestMismatchCount",
+        "danglingReferenceCount",
+        "unsafePathCount"
+      ],
+      "conformanceCounters": [
+        "xmlFailureCount",
+        "idFailureCount",
+        "linkFailureCount",
+        "manifestFailureCount",
+        "spineFailureCount",
+        "containerFailureCount",
+        "metadataFailureCount",
+        "accessibilityFailureCount",
+        "boundsFailureCount"
+      ],
+      "reproducibilityCounters": [
+        "xhtmlByteMismatchCount",
+        "epubByteMismatchCount"
+      ],
+      "gate": {
+        "operator": "equal",
+        "value": 0
+      }
+    }
+  }
+}

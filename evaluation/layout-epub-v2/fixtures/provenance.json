@@ -1,0 +1,172 @@
+{
+  "records": [
+    {
+      "provenanceKey": "paragraph-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "paragraph-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "hierarchy-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "hierarchy-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "tables-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "tables-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "figures-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "figures-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "citations-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "citations-safe-ambiguity-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "notes-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "notes-safe-ambiguity-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "multicolumn-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "multicolumn-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "rtl-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "rtl-safe-ambiguity-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "navigation-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "navigation-safe-ambiguity-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "assets-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "assets-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "metadata-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "metadata-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "malformed-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "malformed-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "bounds-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "bounds-negative-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "ambiguity-positive-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    },
+    {
+      "provenanceKey": "ambiguity-safe-origin",
+      "origin": "synthetic",
+      "authoredOn": "2026-08-30",
+      "license": "MIT"
+    }
+  ]
+}
