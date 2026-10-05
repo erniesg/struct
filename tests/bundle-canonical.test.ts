@@ -12,6 +12,30 @@ import { seal, validDocument } from './codec-fixtures'
 const utf8 = (text: string) => new TextEncoder().encode(text)
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
+function validEnvelope(payloadKind: 'embedded' | 'external') {
+  const document = structuredClone(validDocument())
+  for (const asset of document.assets as Record<string, unknown>[])
+    delete asset.bytes
+  const asset = document.assets[0]
+  return {
+    mediaType: 'application/vnd.erniesg.struct+json',
+    bundleVersion: '1.0.0',
+    schemaVersion: document.schemaVersion,
+    documentSha256: sha256HexSync(canonicalBundleDocumentBytes(document)),
+    document,
+    assets: [{
+      id: asset.id,
+      sha256: asset.sha256 as unknown,
+      mediaType: asset.mediaType,
+      byteLength: 3,
+      payload: payloadKind === 'embedded'
+        ? { kind: 'embedded', base64: 'AP+A' }
+        : { kind: 'external', resourceId: `sha256:${asset.sha256}` },
+    }],
+    receipt: document.receipt,
+  }
+}
+
 describe('private Bundle canonicalization pilot', () => {
   it('uses RFC 8785 number and UTF-16 property ordering', () => {
     // Fixed independently from the JCS rules: supplementary U+1F600 sorts
@@ -49,6 +73,40 @@ describe('private Bundle canonicalization pilot', () => {
     expect(() => parseCanonicalJsonBytes(utf8('{bad'), 3)).toThrowError(
       new CanonicalJsonError('LIMIT'),
     )
+  })
+
+  it.each(['subclass', 'own-property'] as const)(
+    'uses intrinsic raw length for the %s cap before parsing', (variant) => {
+      const input = utf8('{"a":1}')
+      let getterCalls = 0
+      let raw: Uint8Array
+      if (variant === 'subclass') {
+        class MaskedBytes extends Uint8Array {
+          get byteLength() {
+            getterCalls += 1
+            return getterCalls === 1 ? 0 : super.byteLength
+          }
+        }
+        raw = new MaskedBytes(input)
+      } else {
+        raw = new Uint8Array(input)
+        Object.defineProperty(raw, 'byteLength', {
+          get() { getterCalls += 1; return 0 },
+        })
+      }
+      expect(() => parseCanonicalJsonBytes(raw, 0)).toThrowError(
+        new CanonicalJsonError('LIMIT'),
+      )
+      expect(getterCalls).toBe(0)
+    },
+  )
+
+  it('reads a bounded snapshot without invoking an overridden iterator', () => {
+    const raw = new Uint8Array(utf8('{"a":1}'))
+    Object.defineProperty(raw, Symbol.iterator, {
+      value: () => { throw new Error('caller iterator invoked') },
+    })
+    expect(parseCanonicalJsonBytes(raw, 7)).toEqual({ a: 1 })
   })
 
   it('accepts canonical wire bytes and rejects whitespace and bad UTF-8', () => {
@@ -144,5 +202,35 @@ describe('private Bundle canonicalization pilot', () => {
     envelope.documentSha256 = sha256HexSync(canonicalBundleDocumentBytes(document))
     envelope.receipt = { ...document.receipt, blockCount: 2 }
     expect(() => canonicalBundleEnvelopeBytes(envelope)).toThrow()
+  })
+
+  it.each(['embedded', 'external'] as const)(
+    'requires an exact string asset digest for %s payloads', (payloadKind) => {
+      for (const wrap of [
+        (digest: string): unknown => [digest],
+        (digest: string): unknown => [[digest]],
+        (_digest: string): unknown => ({ digest: 'a'.repeat(64) }),
+        (_digest: string): unknown => null,
+        (_digest: string): unknown => 7,
+      ]) {
+        const envelope = validEnvelope(payloadKind)
+        envelope.assets[0].sha256 = wrap(envelope.assets[0].sha256 as string)
+        expect(() => canonicalBundleEnvelopeBytes(envelope)).toThrow()
+      }
+    },
+  )
+
+  it('requires an exact string outer document digest', () => {
+    for (const wrap of [
+      (digest: string): unknown => [digest],
+      (digest: string): unknown => [[digest]],
+      (_digest: string): unknown => ({ digest: 'a'.repeat(64) }),
+      (_digest: string): unknown => null,
+      (_digest: string): unknown => 7,
+    ]) {
+      const envelope = validEnvelope('embedded')
+      ;(envelope as Record<string, unknown>).documentSha256 = wrap(envelope.documentSha256)
+      expect(() => canonicalBundleEnvelopeBytes(envelope)).toThrow()
+    }
   })
 })

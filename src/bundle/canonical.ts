@@ -21,6 +21,13 @@ const MAX_DEPTH = 128
 const MAX_NODES = 1_000_000
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype)
+const intrinsicByteLength = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype, 'byteLength',
+)?.get
+const intrinsicTag = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype, Symbol.toStringTag,
+)?.get
 
 function validUnicode(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -109,22 +116,31 @@ export function parseCanonicalJsonBytes(
   raw: Uint8Array,
   maximumBytes: number,
 ): unknown {
-  if (
-    !(raw instanceof Uint8Array) ||
-    !Number.isSafeInteger(maximumBytes) ||
-    maximumBytes < 0 ||
-    raw.byteLength > maximumBytes
-  ) throw new CanonicalJsonError('LIMIT')
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0)
+    throw new CanonicalJsonError('LIMIT')
+  let snapshot: Uint8Array
+  try {
+    if (!ArrayBuffer.isView(raw) || !intrinsicByteLength || !intrinsicTag ||
+      Reflect.apply(intrinsicTag, raw, []) !== 'Uint8Array')
+      throw new CanonicalJsonError('TYPE')
+    const length = Reflect.apply(intrinsicByteLength, raw, []) as number
+    if (length > maximumBytes) throw new CanonicalJsonError('LIMIT')
+    snapshot = new Uint8Array(length)
+    Uint8Array.prototype.set.call(snapshot, raw)
+  } catch (error) {
+    if (error instanceof CanonicalJsonError) throw error
+    throw new CanonicalJsonError('TYPE')
+  }
   let value: unknown
   try {
-    value = JSON.parse(decoder.decode(raw))
+    value = JSON.parse(decoder.decode(snapshot))
   } catch {
     throw new CanonicalJsonError('SYNTAX')
   }
   const canonical = canonicalJsonBytes(value)
   if (
-    canonical.byteLength !== raw.byteLength ||
-    canonical.some((byte, index) => byte !== raw[index])
+    canonical.byteLength !== snapshot.byteLength ||
+    canonical.some((byte, index) => byte !== snapshot[index])
   ) throw new CanonicalJsonError('NONCANONICAL')
   return value
 }
@@ -183,7 +199,8 @@ export function canonicalBundleEnvelopeBytes(value: unknown): Uint8Array {
     envelope.bundleVersion !== '1.0.0' ||
     typeof envelope.schemaVersion !== 'string' ||
     !Array.isArray(envelope.assets) ||
-    !/^[0-9a-f]{64}$/u.test(String(envelope.documentSha256))
+    typeof envelope.documentSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(envelope.documentSha256)
   ) throw new CanonicalJsonError('TYPE')
 
   const documentBytes = canonicalBundleDocumentBytes(envelope.document)
@@ -206,7 +223,8 @@ export function canonicalBundleEnvelopeBytes(value: unknown): Uint8Array {
     const asset = entry as Record<string, unknown>
     if (typeof asset.id !== 'string' || ids.has(asset.id) ||
       typeof asset.mediaType !== 'string' ||
-      !/^[0-9a-f]{64}$/u.test(String(asset.sha256)) ||
+      typeof asset.sha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test(asset.sha256) ||
       !Number.isSafeInteger(asset.byteLength) || Number(asset.byteLength) < 0 ||
       !asset.payload || typeof asset.payload !== 'object' || Array.isArray(asset.payload))
       throw new CanonicalJsonError('TYPE')
