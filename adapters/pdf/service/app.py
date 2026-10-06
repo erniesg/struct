@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
+import zipfile
 import os
 import queue
 import re
@@ -29,7 +31,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -55,7 +57,7 @@ RETENTION_HOURS = float(os.environ.get("PDF2EPUB_RETENTION_HOURS", 72))
 KEEP_INTERMEDIATES = os.environ.get("PDF2EPUB_KEEP_INTERMEDIATES", "").strip() in {"1", "true", "yes"}
 PYTHON = os.environ.get("PDF2EPUB_PYTHON", sys.executable)
 STRUCT_DIR = os.environ.get("PDF2EPUB_STRUCT_DIR", "").strip() or None
-VERSION = "pdf2epub-service-1"
+VERSION = "pdf2epub-service-3"
 
 DATA.mkdir(parents=True, exist_ok=True)
 
@@ -362,7 +364,17 @@ def index(request: Request) -> HTMLResponse:
     page = (HERE / "index.html").read_text()
     if not _authorized(request):
         page = (HERE / "login.html").read_text()
-    return HTMLResponse(page)
+    response = HTMLResponse(page)
+    if _authorized(request):
+        _browser_session(response, request)
+    return response
+
+
+def _browser_session(response: Response, request: Request) -> None:
+    """A successful page login also authenticates its iframe and asset requests."""
+    if TOKEN and not ALLOW_ANON and request.cookies.get("pdf2epub_token") != TOKEN:
+        response.set_cookie("pdf2epub_token", TOKEN, httponly=True, samesite="lax",
+                            secure=request.url.scheme == "https", max_age=30 * 24 * 3600)
 
 
 @app.post("/login")
@@ -490,6 +502,60 @@ def get_file(job_id: str, name: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no such file")
     return FileResponse(path, media_type="application/epub+zip", filename=name)
+
+
+@app.get("/compare/{job_id}", dependencies=[Depends(require_auth)], response_class=HTMLResponse)
+def compare_job(job_id: str, request: Request) -> HTMLResponse:
+    _job_paths(job_id)
+    response = HTMLResponse((HERE / "compare.html").read_text())
+    _browser_session(response, request)
+    return response
+
+
+@app.get("/api/jobs/{job_id}/source.pdf", dependencies=[Depends(require_auth)])
+def source_pdf(job_id: str) -> FileResponse:
+    paths = _job_paths(job_id)
+    state = _read_state(paths.root)
+    name = state.get("storedName", "")
+    if not name or Path(name).name != name or not name.endswith(".pdf"):
+        raise HTTPException(status_code=404, detail="no source PDF")
+    pdf = paths.root / name
+    if not pdf.is_file():
+        raise HTTPException(status_code=404, detail="no source PDF")
+    return FileResponse(pdf, media_type="application/pdf", headers={
+        "Content-Disposition": "inline",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+    })
+
+
+@app.get("/api/jobs/{job_id}/preview/{name}/{member:path}", dependencies=[Depends(require_auth)])
+def preview_file(job_id: str, name: str, member: str) -> Response:
+    """Read the actual EPUB without extracting its archive onto the filesystem."""
+    paths = _job_paths(job_id)
+    state = _read_state(paths.root)
+    allowed = {entry["name"] for entry in state.get("files", [])}
+    if name not in allowed or Path(name).name != name:
+        raise HTTPException(status_code=404, detail="no such file")
+    parts = PurePosixPath(member).parts
+    if not parts or member.startswith("/") or ".." in parts or "\\" in member:
+        raise HTTPException(status_code=404, detail="no such preview resource")
+    media_type = mimetypes.guess_type(member)[0]
+    if media_type not in {"application/xhtml+xml", "text/css", "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}:
+        raise HTTPException(status_code=404, detail="no such preview resource")
+    try:
+        with zipfile.ZipFile(paths.work / state["stem"] / name) as archive:
+            info = archive.getinfo("EPUB/" + member)
+            if info.file_size > 32 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="preview resource too large")
+            content = archive.read(info)
+    except (OSError, KeyError, zipfile.BadZipFile):
+        raise HTTPException(status_code=404, detail="no such preview resource")
+    return Response(content, media_type="text/html" if media_type == "application/xhtml+xml" else media_type, headers={
+        "Content-Security-Policy": "sandbox allow-same-origin; default-src 'none'; script-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+    })
 
 
 @app.delete("/api/jobs/{job_id}", dependencies=[Depends(require_auth)])

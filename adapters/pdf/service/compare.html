@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare PDF and EPUB · pdf2epub</title>
+<style>
+:root{color-scheme:light;--bg:#f4f3ef;--ink:#252824;--muted:#61665e;--line:#d7dbd2;--accent:#315b47}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}header{padding:16px 24px;background:white;border-bottom:1px solid var(--line)}a{color:var(--accent)}h1{font-size:20px;margin:8px 0 0;overflow-wrap:anywhere}.hint{margin:4px 0;color:var(--muted);font-size:13px}.controls{display:flex;gap:20px;flex-wrap:wrap;align-items:end;padding:16px 24px;background:white;border-bottom:1px solid var(--line)}label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600}select,button{font:inherit;padding:7px;border:1px solid var(--line);border-radius:5px;background:white;color:var(--ink)}button{cursor:pointer}input{accent-color:var(--accent)}.columns{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;height:calc(100vh - 222px);min-height:450px}.panel{min-width:0;display:flex;flex-direction:column;background:white;border:1px solid var(--line);border-radius:8px;overflow:hidden}.panel h2{font-size:14px;margin:0;padding:10px 16px;border-bottom:1px solid var(--line)}.panel iframe{border:0;width:100%;height:100%;min-height:350px;background:white}.reader-space{flex:1;min-height:0;overflow:auto;background:#e5e8e2;padding:16px;display:flex;justify-content:center;align-items:flex-start}#reader{width:100%;max-width:720px;height:100%;border:1px solid #c3c9be;box-shadow:0 2px 12px #0001}#status{padding:8px 24px;margin:0;color:var(--muted);font-size:13px}#status.error{color:#a13124}[hidden]{display:none!important}@media(max-width:850px){.columns{grid-template-columns:1fr;height:auto}.panel{height:65vh}.controls{gap:12px}header,.controls{padding:12px 16px}}
+</style>
+</head>
+<body>
+<header><a href="/">← All conversions</a><h1 id="title">Compare PDF and EPUB</h1><p class="hint">Read the source alongside the converted document. Reader settings change this preview only.</p></header>
+<div class="controls">
+<label>Device<select id="device" disabled><option>Loading…</option></select></label>
+<label>Font<select id="font" disabled><option value="">Original EPUB font</option><option value="Georgia, serif">Serif</option><option value="Arial, sans-serif">Sans serif</option></select></label>
+<label>Font size <span id="size-value">Original</span><input id="size" type="range" min="14" max="26" value="18" disabled></label>
+<label>Margins <span id="margin-value">Original</span><input id="margin" type="range" min="0" max="80" value="24" disabled></label>
+<button id="reset" disabled>Reset settings</button><a id="download" hidden>Download EPUB</a>
+</div>
+<p id="status" role="status" aria-live="polite">Loading conversion…</p>
+<main class="columns"><section class="panel"><h2>Source PDF</h2><iframe id="source" title="Original PDF"></iframe></section><section class="panel"><h2>EPUB reading preview</h2><div class="reader-space"><iframe id="reader" title="Converted EPUB" sandbox="allow-same-origin"></iframe></div></section></main>
+<script>
+const $ = id => document.getElementById(id)
+const jobId = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop())
+const base = '/api/jobs/' + encodeURIComponent(jobId)
+let files = [], selected = '', customSize = null, customMargin = null, loaded = false
+function status(message, error=false) { $('status').textContent = message; $('status').classList.toggle('error',error) }
+function settings() {
+  if (!loaded) return
+  try {
+    const doc = $('reader').contentDocument
+    if (!doc || !doc.body) throw new Error('The reading preview is unavailable.')
+    let style = doc.getElementById('reader-settings')
+    if (!style) { style = doc.createElement('style'); style.id = 'reader-settings'; doc.head.appendChild(style) }
+    const rules = []
+    if ($('font').value) rules.push('body, p, li, td, th, blockquote {font-family:' + $('font').value + '!important}')
+    if (customSize !== null) rules.push('html,body{font-size:' + customSize + 'px!important} p,li,td,th,blockquote{font-size:1em!important}')
+    if (customMargin !== null) rules.push('body{padding:' + customMargin + 'px!important;margin:0!important;max-width:none!important}')
+    style.textContent = rules.join('\n')
+  } catch(e) { status('Unable to apply reader settings. Try reloading this page.',true) }
+}
+function selectFile(name) {
+  const file = files.find(f => f.name === name)
+  if (!file || selected === name) return
+  selected = name; loaded = false
+  status('Loading ' + file.label + ' preview…')
+  $('reader').src = base + '/preview/' + encodeURIComponent(name) + '/content.xhtml'
+  // Narrower reading widths approximate each device; typography is from the selected EPUB.
+  const profile = file.profile || name.toLowerCase()
+  $('reader').style.aspectRatio = /mobile/.test(profile) ? '390 / 844' : /Move|papermove|paperpromove/i.test(profile) ? '440 / 760' : '760 / 1013'
+  $('reader').style.height = 'auto'
+  $('reader').style.minHeight = '450px'
+  $('reader').style.maxWidth = /mobile/.test(profile) ? '390px' : /Move|papermove|paperpromove/i.test(profile) ? '440px' : '760px'
+  $('download').href = base + '/file/' + encodeURIComponent(name); $('download').hidden = false
+}
+$('reader').addEventListener('load', () => {
+  if (!selected) return
+  try {
+    const doc = $('reader').contentDocument
+    if (!doc || !doc.body || doc.body.textContent.trim().startsWith('{"detail"')) throw new Error()
+    loaded = true; settings(); status('Preview ready. Device widths are approximate; the EPUB uses the selected device profile.')
+  } catch(e) { status('Could not load the EPUB preview. Reload the page to retry.',true) }
+})
+$('device').addEventListener('change', e => selectFile(e.target.value))
+$('font').addEventListener('change', settings)
+$('size').addEventListener('input', e => { customSize = Number(e.target.value); $('size-value').textContent = customSize + ' px'; settings() })
+$('margin').addEventListener('input', e => { customMargin = Number(e.target.value); $('margin-value').textContent = customMargin + ' px'; settings() })
+$('reset').addEventListener('click', () => { $('font').value=''; customSize=null;customMargin=null;$('size').value=18;$('margin').value=24;$('size-value').textContent='Original';$('margin-value').textContent='Original';settings() })
+async function refresh() {
+  try {
+    const response = await fetch(base)
+    if (!response.ok) throw new Error(response.status === 401 ? 'Sign in through the upload page, then reopen this comparison.' : 'Conversion could not be loaded (' + response.status + ').')
+    const job = await response.json()
+    $('title').textContent = job.originalName || job.stem || 'Compare PDF and EPUB'
+    if (!$('source').getAttribute('src')) $('source').src = base + '/source.pdf'
+    files = job.files || []
+    if (!files.length) {
+      status(job.status === 'failed' ? (job.message || 'Conversion failed.') : 'Conversion is ' + job.status + '. The preview will appear when it finishes.', job.status === 'failed')
+      if (job.status === 'queued' || job.status === 'running') setTimeout(refresh,3000)
+      return
+    }
+    $('device').replaceChildren(...files.map(file => { const option = document.createElement('option');option.value=file.name;option.textContent=file.label || file.name;return option }))
+    for (const id of ['device','font','size','margin','reset']) $(id).disabled=false
+    selectFile(files[0].name)
+  } catch(e) { status(e.message || 'Could not load conversion. Reload to retry.',true) }
+}
+refresh()
+</script>
+</body>
+</html>

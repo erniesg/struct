@@ -13,6 +13,9 @@ GET  /api/jobs/{id}/log   the converter's own output
 GET  /api/jobs/{id}/report the full evaluation report
 GET  /api/jobs/{id}/file/{name}  the EPUB
 DELETE /api/jobs/{id}     drop a finished job and its PDF
+GET  /compare/{id}         side-by-side PDF and EPUB comparison
+GET  /api/jobs/{id}/source.pdf  the original PDF, inline
+GET  /api/jobs/{id}/preview/{name}/content.xhtml  the inline EPUB reading preview
 GET  /health              unauthenticated liveness + the current limits
 GET  /                    the browser UI
 ```
@@ -88,3 +91,11 @@ The first pass over a paper spends almost all its time in Docling: about two
 minutes on Apple silicon, several times that on a CPU-only host. Everything
 after extraction is about 13 s for a normal paper. One job runs at a time, so a
 second upload waits.
+
+Completed jobs offer a Read preview section per profile. It displays the actual
+EPUB XHTML, stylesheet, and images in a sandboxed frame, without running scripts.
+Existing retained EPUBs can be previewed without reconversion.
+
+Compare with PDF opens the original source beside the generated rendition.
+The device selector uses available EPUB profiles; font and margin controls
+change the browser preview only. Downloads retain the generated EPUB styling.
