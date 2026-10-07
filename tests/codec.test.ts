@@ -156,6 +156,24 @@ describe('STRUCT runtime codec', () => {
     )
   })
 
+  it('accepts canonical 4 MiB base64 through preflight and decoding', () => {
+    const bytes = new Uint8Array(4 * 1024 * 1024)
+    bytes[0] = 1
+    bytes[bytes.length - 1] = 2
+    const encoded = Buffer.from(bytes).toString('base64')
+    expect(preflightBytes(encoded, '$.asset.bytes', bytes.length)).toBe(bytes.length)
+    const decoded = parseBytes(encoded, '$.asset.bytes', bytes.length)
+    expect(decoded.length).toBe(bytes.length)
+    expect(decoded[0]).toBe(1)
+    expect(decoded[decoded.length - 1]).toBe(2)
+  })
+
+  it.each(['AQ=', 'A===', 'AQ==\n', 'AQ-_', 'A=AA', 'AQ==AAAA', 'AR==', 'AQJ='])(
+    'rejects noncanonical base64 %s in the document byte codec', (encoded) => {
+      expect(() => parseBytes(encoded, '$.asset.bytes')).toThrow(/canonical base64/i)
+    },
+  )
+
   it('rejects an oversized Uint8Array asset before copying it', () => {
     const bytes = new Uint8Array(MAX_STRUCT_ASSET_BYTES + 1)
 
