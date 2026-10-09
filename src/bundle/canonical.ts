@@ -111,11 +111,11 @@ export function canonicalJsonBytes(value: unknown): Uint8Array {
   return encoder.encode(canonicalText(value))
 }
 
-/** Raw cap precedes UTF-8 decode and JSON parsing; canonical wire bytes only. */
-export function parseCanonicalJsonBytes(
+/** Private bounded copy shared by raw-digest and canonical parsing callers. */
+export function snapshotCanonicalJsonInput(
   raw: Uint8Array,
   maximumBytes: number,
-): unknown {
+): Uint8Array {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0)
     throw new CanonicalJsonError('LIMIT')
   let snapshot: Uint8Array
@@ -131,6 +131,15 @@ export function parseCanonicalJsonBytes(
     if (error instanceof CanonicalJsonError) throw error
     throw new CanonicalJsonError('TYPE')
   }
+  return snapshot
+}
+
+/** Raw cap precedes UTF-8 decode and JSON parsing; canonical wire bytes only. */
+export function parseCanonicalJsonBytes(
+  raw: Uint8Array,
+  maximumBytes: number,
+): unknown {
+  const snapshot = snapshotCanonicalJsonInput(raw, maximumBytes)
   let value: unknown
   try {
     value = JSON.parse(decoder.decode(snapshot))
