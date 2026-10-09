@@ -5,6 +5,7 @@ import {
   canonicalBundleEnvelopeBytes,
   CanonicalJsonError,
   parseCanonicalJsonBytes,
+  snapshotCanonicalJsonInput,
 } from '../src/bundle/canonical'
 import { sha256HexSync } from '../src/sha256'
 import { seal, validDocument } from './codec-fixtures'
@@ -233,4 +234,46 @@ describe('private Bundle canonicalization pilot', () => {
       expect(() => canonicalBundleEnvelopeBytes(envelope)).toThrow()
     }
   })
+})
+
+
+describe('private bounded raw snapshot reuse', () => {
+  it('copies capped byte input without parsing it for digest-before-parse callers', async () => {
+    const canonical = await import('../src/bundle/canonical')
+    const snapshot = (canonical as Record<string, unknown>).snapshotCanonicalJsonInput
+    expect(typeof snapshot).toBe('function')
+    const raw = utf8('{bad')
+    const copied = (snapshot as (raw: Uint8Array, cap: number) => Uint8Array)(raw, 4)
+    raw.fill(0)
+    expect(text(copied)).toBe('{bad')
+    expect(() => (snapshot as (raw: Uint8Array, cap: number) => Uint8Array)(raw, 3))
+      .toThrowError(new CanonicalJsonError('LIMIT'))
+  })
+})
+
+
+it.each([3, 4, 5])('shared raw snapshot enforces a four-byte input at cap %i without parsing', (cap) => {
+  const raw = utf8('{bad')
+  if (cap < 4) expect(() => snapshotCanonicalJsonInput(raw, cap)).toThrowError(new CanonicalJsonError('LIMIT'))
+  else expect(snapshotCanonicalJsonInput(raw, cap)).toEqual(raw)
+})
+
+it.each([NaN, Infinity, -1, 0.5, true, '4', new Number(4)])('shared raw snapshot rejects malformed cap %#', (cap) => {
+  expect(() => snapshotCanonicalJsonInput(utf8('{bad'), cap as number)).toThrowError(new CanonicalJsonError('LIMIT'))
+})
+
+it('shared snapshot ignores caller length and iterator, isolates every byte, and refuses non-byte views', () => {
+  const raw = utf8('{bad')
+  let touched = 0
+  Object.defineProperty(raw, 'byteLength', { get() { touched += 1; return 0 } })
+  Object.defineProperty(raw, Symbol.iterator, { get() { touched += 1; throw new Error('unused') } })
+  const copy = snapshotCanonicalJsonInput(raw, 4)
+  raw.fill(0)
+  expect(text(copy)).toBe('{bad')
+  copy.fill(1)
+  expect(Array.from(raw.values())).toEqual([0, 0, 0, 0])
+  expect(touched).toBe(0)
+  for (const value of [new Uint16Array(1), new DataView(new ArrayBuffer(1)), {}, new Proxy(raw, {})]) {
+    expect(() => snapshotCanonicalJsonInput(value as Uint8Array, 4)).toThrowError(new CanonicalJsonError('TYPE'))
+  }
 })
