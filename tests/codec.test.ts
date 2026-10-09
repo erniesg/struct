@@ -65,9 +65,10 @@ describe('STRUCT runtime codec', () => {
 
     expect(decoded.schemaVersion).toBe('0.1.0')
     expect(decoded.assets[0]?.bytes).toEqual(new Uint8Array([0, 255, 128]))
-    expect(decoded.assets[0]?.bytes).not.toBe(
+    expect(Object.is(
+      decoded.assets[0]?.bytes,
       (validDocument().assets[0] as { bytes: unknown }).bytes,
-    )
+    )).toBe(false)
     expect(decoded.blocks[0]?.attributes).toEqual({
       level: 1,
       bibliographyEntry: false,
@@ -198,7 +199,7 @@ describe('STRUCT runtime codec', () => {
 
     try {
       const snapshot = parseBytes(bytes, '$.asset.bytes')
-      expect(snapshot).not.toBe(bytes)
+      expect(Object.is(snapshot, bytes)).toBe(false)
       expect(snapshot[0]).toBe(17)
       expect(snapshot[snapshot.length - 1]).toBe(29)
     } finally {
