@@ -117,6 +117,7 @@ export type StructMetadata = {
   language?: string
   baseDirection?: 'ltr' | 'rtl' | 'unknown'
   publicationDate?: string
+  publisher?: string
   artifactModifiedAt?: string
   updated?: string
   affiliations?: string[]

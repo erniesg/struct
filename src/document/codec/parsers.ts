@@ -346,6 +346,7 @@ function parseMetadata(value: unknown, path: string): StructMetadata {
       'language',
       'baseDirection',
       'publicationDate',
+      'publisher',
       'artifactModifiedAt',
       'updated',
       'affiliations',
@@ -380,6 +381,9 @@ function parseMetadata(value: unknown, path: string): StructMetadata {
             `${path}.publicationDate`,
           ),
         }
+      : {}),
+    ...(has(parsed, 'publisher')
+      ? { publisher: stringValue(parsed.publisher, `${path}.publisher`) }
       : {}),
     ...(has(parsed, 'artifactModifiedAt')
       ? {
