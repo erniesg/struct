@@ -5,6 +5,7 @@ import { structReceiptDigest } from '../../dist/receipt.js'
 
 const MAX_SOURCE_BYTES = 1024 * 1024
 const MAX_BLOCKS = 10_000
+const MAX_REASON_CHARACTERS = 4096
 const HASH = /^[a-f0-9]{64}$/u
 const PLAN_KEYS = ['schemaVersion', 'sourceSha256', 'actor', 'decisions', 'consultation']
 const DECISION_KEYS = ['blockId', 'action', 'reason']
@@ -15,9 +16,23 @@ function fail(message) {
 }
 
 function plainObject(value, name) {
+  let prototype
+  let keys
+  try {
+    prototype = value && typeof value === 'object' ? Object.getPrototypeOf(value) : undefined
+    keys = value && typeof value === 'object' ? Reflect.ownKeys(value) : []
+  } catch {
+    fail(`${name} must be a plain data object`)
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null))
+      (prototype !== Object.prototype && prototype !== null))
     fail(`${name} must be a plain object`)
+  for (const key of keys) {
+    if (typeof key !== 'string') fail(`${name} must not contain symbol fields`)
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value'))
+      fail(`${name}.${key} must be a data field`)
+  }
   return value
 }
 
@@ -36,7 +51,7 @@ function decodeUtf8(sourceBytes) {
   if (!(sourceBytes instanceof Uint8Array)) fail('source bytes must be a Uint8Array')
   if (sourceBytes.byteLength > MAX_SOURCE_BYTES) fail('source exceeds the 1 MiB bound')
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(sourceBytes)
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(sourceBytes)
   } catch {
     fail('source must be strict UTF-8')
   }
@@ -93,6 +108,7 @@ export function validateCleanupPlan(plan, request) {
   if (!['human', 'codex', 'claude'].includes(parsed.actor)) fail('cleanup plan actor is invalid')
   if (!Array.isArray(parsed.decisions)) fail('cleanup plan decisions must be an array')
   const sourceIds = new Set(requestObject.blocks.map((block) => block?.id))
+  if (parsed.decisions.length > sourceIds.size) fail('cleanup plan has too many decisions')
   const seen = new Set()
   const decisions = parsed.decisions.map((decision, index) => {
     const entry = exactKeys(decision, DECISION_KEYS, DECISION_KEYS, `cleanup plan.decisions[${index}]`)
@@ -100,7 +116,8 @@ export function validateCleanupPlan(plan, request) {
     if (seen.has(entry.blockId)) fail(`cleanup plan has duplicate decision for ${entry.blockId}`)
     seen.add(entry.blockId)
     if (!['keep', 'remove', 'review'].includes(entry.action)) fail('cleanup plan decision action is invalid')
-    if (typeof entry.reason !== 'string' || entry.reason.length === 0) fail('cleanup plan decision reason is required')
+    if (typeof entry.reason !== 'string' || entry.reason.trim().length === 0) fail('cleanup plan decision reason is required')
+    if (entry.reason.length > MAX_REASON_CHARACTERS) fail(`cleanup plan decision reason exceeds the ${MAX_REASON_CHARACTERS} character bound`)
     return { blockId: entry.blockId, action: entry.action, reason: entry.reason }
   })
   let consultation
@@ -110,6 +127,8 @@ export function validateCleanupPlan(plan, request) {
       fail('cleanup plan consultation is invalid')
     consultation = { promptSha256: entry.promptSha256, model: entry.model }
   }
+  if (parsed.actor !== 'human' && !consultation)
+    fail('cleanup plan consultation is required for model actors')
   return {
     schemaVersion: '1.0.0', sourceSha256: parsed.sourceSha256, actor: parsed.actor,
     decisions, ...(consultation ? { consultation } : {}),
@@ -170,12 +189,12 @@ export async function ingestText(sourceBytes, { fileName, metadata, cleanupPlan 
   const documentId = `text-${inspection.sourceSha256.slice(0, 24)}`
   const modelConsultations = plan?.consultation ? {
     schemaVersion: '1.0.0', documentId, sourceSha256: inspection.sourceSha256,
-    consultations: [{ promptSha256: plan.consultation.promptSha256, model: plan.consultation.model }],
-    decisions: [], metrics: { consultationCount: 1 },
+    consultations: [{ actor: plan.actor, promptSha256: plan.consultation.promptSha256, model: plan.consultation.model }],
+    decisions: plan.decisions, metrics: { consultationCount: 1, decisionCount: plan.decisions.length },
   } : undefined
   const document = {
     schemaVersion: '0.2.0', documentId,
-    source: { format: 'unknown', fileName, sha256: inspection.sourceSha256, byteLength: inspection.byteLength, pageCount: 0, localOnly: true },
+    source: { format: 'unknown', fileName, sha256: inspection.sourceSha256, byteLength: inspection.byteLength, pageCount: 0, localOnly: plan?.actor === 'codex' || plan?.actor === 'claude' ? false : true },
     metadata: { ...metadata, artifactModifiedAt: metadata?.artifactModifiedAt ?? '1970-01-01T00:00:00Z' },
     blocks, assets: [], relationships: [], pages: [], diagnostics,
     recovery: reviewDecisions.length === 0
@@ -199,7 +218,11 @@ export async function ingestText(sourceBytes, { fileName, metadata, cleanupPlan 
       byteLength: inspection.byteLength, rawSourceTextCharacterCount: inspection.textCharacterCount,
       structuralWhitespaceCharacterCount: inspection.whitespace.reduce((count, range) => count + range.end - range.start, 0),
       blocks: inspection.blocks, whitespace: inspection.whitespace,
-      decisions: plan?.decisions ?? [], conservation,
+      decisions: plan?.decisions ?? [], ...(plan ? { cleanupPlan: plan } : {}),
+      ...(plan?.actor === 'codex' || plan?.actor === 'claude'
+        ? { modelSourceTransmission: { transmitted: true, localityProven: false } }
+        : {}),
+      conservation,
     },
   }
 }

@@ -26,6 +26,25 @@ application/adapter boundary; Struct never receives them. Aether may consume a
 verified, pinned bundle but owns visual composition and derivatives. Rucksack
 remains generic orchestration and owns none of these domain models.
 
+## Text ingestion
+
+The reference [text adapter and CLI](./adapters/text/README.md) turns UTF-8
+pasted text into a validated Struct document and EPUB:
+
+```sh
+npm ci && npm run build
+npm run text:epub -- article.txt --metadata metadata.json --out out/article
+```
+
+Default ingestion preserves text. `--cleanup plan.json` replays source-bound
+keep/remove/review decisions; `--judge codex` or `--judge claude` explicitly asks
+an authenticated CLI to classify cleanup. Removed text remains in the Struct
+graph, model decisions are receipt-bound, and uncertain cleanup blocks EPUB
+production. Original bytes, source offsets, decisions and output hashes are
+saved alongside the book. See the adapter guide for metadata, VM usage and the
+two private-source article regressions ([ADR-0003](./docs/adr/0003-text-ingestion-adapter.md)).
+The adapter is a repository tool outside the npm package boundary.
+
 ## State and evidence
 
 **Current** at base `6ecb78d1753b847ec7295bf45f43237225663728`: this is a

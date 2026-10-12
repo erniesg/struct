@@ -17,7 +17,9 @@ credentials, extraction, editorial/release state, or source-specific recovery
 wording. Document/schema modules must not depend on renderers. The repository
 hosts the reference PDF extraction adapter under `adapters/pdf/` outside the
 package boundary ([ADR-0002](./docs/adr/0002-pdf-adapter-in-repository.md));
-package sources never import it.
+package sources never import it. The reference text ingestion adapter follows
+the same repository-only boundary under `adapters/text/` ([ADR-0003](./docs/adr/0003-text-ingestion-adapter.md));
+its cleanup policy and optional model CLI orchestration never enter package sources.
 
 Source-neutral recovery utilities emit facts, categories, and machine-readable
 status only. Applications own source-specific and workflow-specific user copy.

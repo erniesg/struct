@@ -34,3 +34,10 @@ Renderer exports are intentionally absent from the root facade. Import them
 from their explicit renderer paths. Public-consumer validation installs the
 packed tarball, imports only through the package export map, typechecks those
 imports, and proves the removed and not-yet-available paths fail closed.
+
+## Publication metadata
+
+`StructMetadata.publisher` is an optional source-neutral string, validated by the
+strict codecs. The EPUB renderer emits it as `dc:publisher` and emits an existing
+`publicationDate` as `dc:date` when supplied. The reference text ingestion CLI
+lives under `adapters/text/`, outside the package export map.

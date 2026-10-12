@@ -37,6 +37,23 @@ describe('text ingestion adapter', () => {
     })
   })
 
+  test('retains a UTF-8 BOM in exact source offsets and raw conservation', async () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x41, 0x0a, 0x42])
+    expect(inspectText(bytes)).toMatchObject({
+      sourceSha256: sha256(bytes), textCharacterCount: 4,
+      blocks: [
+        { id: 'line-1', text: '\uFEFFA', start: 0, end: 2, line: 1 },
+        { id: 'line-2', text: 'B', start: 3, end: 4, line: 2 },
+      ],
+      whitespace: [{ start: 2, end: 3 }],
+    })
+    const { report } = await ingestText(bytes, { fileName: 'bom.txt', metadata })
+    expect(report).toMatchObject({
+      rawSourceTextCharacterCount: 4, structuralWhitespaceCharacterCount: 1,
+      conservation: { sourceTextCharacterCount: 3, structTextCharacterCount: 3 },
+    })
+  })
+
   test('rejects empty, malformed UTF-8, and resource-exhausting input', () => {
     expect(() => inspectText(new Uint8Array())).toThrow(/nonblank/i)
     expect(() => inspectText(new Uint8Array([0xc3, 0x28]))).toThrow(/utf-8/i)
@@ -62,9 +79,25 @@ describe('text ingestion adapter', () => {
       { ...plan, decisions: [{ ...plan.decisions[0], blockId: 'line-9' }] },
       { ...plan, decisions: [{ ...plan.decisions[0], action: 'rewrite' }] },
       { ...plan, decisions: [{ ...plan.decisions[0], reason: '' }] },
+      { ...plan, decisions: [{ ...plan.decisions[0], reason: '   ' }] },
+      { ...plan, decisions: [{ ...plan.decisions[0], reason: 'a'.repeat(4097) }] },
       { ...plan, extra: true },
     ])
       expect(() => validateCleanupPlan(invalid, request)).toThrow()
+  })
+
+  test('rejects model plans without a source-bound consultation and non-data plan fields', () => {
+    const request = inspectText(utf8.encode('line'))
+    expect(() => validateCleanupPlan({
+      schemaVersion: '1.0.0', sourceSha256: request.sourceSha256,
+      actor: 'claude', decisions: [],
+    }, request)).toThrow(/consultation/i)
+    const plan = {
+      schemaVersion: '1.0.0', sourceSha256: request.sourceSha256,
+      actor: 'human', decisions: [],
+    }
+    Object.defineProperty(plan, 'actor', { enumerable: true, get: () => 'human' })
+    expect(() => validateCleanupPlan(plan, request)).toThrow(/data|accessor/i)
   })
 
   test('preserves text and source anchors while representing removals as furniture', async () => {
@@ -113,9 +146,13 @@ describe('text ingestion adapter', () => {
     expect(document.diagnostics).toMatchObject([{ category: 'source', action: 'review-required' }])
     expect(document.receipt.modelConsultations).toMatchObject({
       sourceSha256: sha256(bytes), documentId: document.documentId,
-      consultations: [{ promptSha256: 'a'.repeat(64), model: 'test-model' }],
+      consultations: [{ actor: 'codex', promptSha256: 'a'.repeat(64), model: 'test-model' }],
+      decisions: [{ blockId: 'line-1', action: 'review', reason: 'uncertain furniture' }],
     })
+    expect(document.source.localOnly).toBe(false)
     expect(report.decisions).toEqual([{ blockId: 'line-1', action: 'review', reason: 'uncertain furniture' }])
+    expect(report.cleanupPlan).toMatchObject({ actor: 'codex', decisions: report.decisions })
+    expect(report.modelSourceTransmission).toEqual({ transmitted: true, localityProven: false })
   })
 
   test('seals codec-safe deterministic documents', async () => {
