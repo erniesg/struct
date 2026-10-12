@@ -478,6 +478,8 @@ export async function buildStructEpub(
     <dc:title>${text(document.metadata.title)}</dc:title>
     <dc:language>${text(language)}</dc:language>
     ${document.metadata.authors.map((author) => `<dc:creator>${text(author)}</dc:creator>`).join("\n    ")}
+    ${document.metadata.publicationDate !== undefined ? `<dc:date>${text(document.metadata.publicationDate)}</dc:date>` : ""}
+    ${document.metadata.publisher !== undefined ? `<dc:publisher>${text(document.metadata.publisher)}</dc:publisher>` : ""}
     <meta property="dcterms:modified">${text(modified)}</meta>
     ${retainedProfile ? `<meta property="rendition:flow">${retainedProfile.renditionFlow}</meta>` : ""}
   </metadata>

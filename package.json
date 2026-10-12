@@ -54,10 +54,13 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts src/document/index.ts src/identity.ts src/ordering.ts src/receipt.ts src/recovery.ts src/renderers/xhtml.ts src/renderers/epub.ts --format esm --dts --clean",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:package": "npm run build && node scripts/test-packed-consumer.mjs",
     "test:source-boundary": "node scripts/check-source-boundary.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "text:epub": "node adapters/text/text2epub.mjs",
+    "text:examples": "node adapters/text/check-examples.mjs",
+    "test:text": "npm run build && vitest run tests/text-ingestion.test.mjs tests/text-judge.test.mjs tests/text-cli.test.mjs tests/text-examples.test.mjs tests/text-output.test.mjs"
   },
   "dependencies": {
     "fast-xml-parser": "5.10.1",

@@ -145,3 +145,7 @@ vite.config.ts.timestamp-*
 # adapters/pdf service and benchmark run output
 adapters/pdf/service/data/
 adapters/pdf/bench/results/
+
+# Private pasted-article regression inputs and generated text exports
+adapters/text/examples/private/
+out/
