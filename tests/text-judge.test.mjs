@@ -241,13 +241,32 @@ describe('text judgment transport', () => {
   it('waits for process-group termination on success, timeout, nonzero, and overflow', async () => {
     const markerDir = await mkdtemp(join(tmpdir(), 'text-judge-child-')); paths.push(markerDir)
     const script = (pidFile) => `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs'; const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'}); c.unref(); writeFileSync(${JSON.stringify(pidFile)},String(c.pid));`
-    const dead = async (pidFile) => { const pid = Number(await readFile(pidFile, 'utf8')); await expect(Promise.resolve().then(() => process.kill(pid, 0))).rejects.toThrow() }
+    const dead = async (pidFile) => {
+      const pid = Number(await readFile(pidFile, 'utf8'))
+      expect(Number.isSafeInteger(pid) && pid > 0).toBe(true)
+      await expect.poll(async () => {
+        try { process.kill(pid, 0) } catch (error) {
+          if (error.code === 'ESRCH') return 'terminated'
+          throw error
+        }
+        // A killed orphan may remain signalable until init reaps its zombie.
+        // Inspect only this fixture's PID; running/sleeping children still fail.
+        let state
+        try {
+          state = (await promisify(execFile)('ps', ['-o', 'stat=', '-p', String(pid)])).stdout.trim()
+        } catch (error) {
+          if (error.code === 1 && !error.stdout?.trim()) return 'terminated'
+          throw error
+        }
+        return !state || state.startsWith('Z') ? 'terminated' : `live: ${state}`
+      }, { timeout: 1000, interval: 25 }).toBe('terminated')
+    }
     const pidFile = join(markerDir, 'success.pid')
     const success = await fake(`${script(pidFile)}; console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:${JSON.stringify({ ...plan(), actor: 'claude' })}}))`)
     await judgeText(source, { engine: 'claude', executable: success })
     await dead(pidFile)
     const timeoutFile = join(markerDir, 'timeout.pid'); const timeout = await fake(`${script(timeoutFile)}; setInterval(()=>{}, 1000)`)
-    await expect(judgeText(source, { engine: 'claude', executable: timeout, timeoutMs: 500 })).rejects.toThrow(/timed out/i)
+    await expect(judgeText(source, { engine: 'claude', executable: timeout, timeoutMs: 5000 })).rejects.toThrow(/timed out/i)
     await dead(timeoutFile)
     const nonzeroFile = join(markerDir, 'nonzero.pid'); const nonzero = await fake(`${script(nonzeroFile)}; process.exit(3)`)
     await expect(judgeText(source, { engine: 'claude', executable: nonzero })).rejects.toThrow(/exited/i)
@@ -255,5 +274,5 @@ describe('text judgment transport', () => {
     const overflowFile = join(markerDir, 'overflow.pid'); const overflow = await fake(`${script(overflowFile)}; process.stdout.write('x'.repeat(1_100_000))`)
     await expect(judgeText(source, { engine: 'claude', executable: overflow })).rejects.toThrow(/output/i)
     await dead(overflowFile)
-  })
+  }, 15_000)
 })
