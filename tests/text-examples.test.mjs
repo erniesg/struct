@@ -1,10 +1,10 @@
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
 
-import { checkExamples, loadExampleManifest } from '../adapters/text/check-examples.mjs'
+import { checkExamples, loadExampleManifest, publishExampleEpubs } from '../adapters/text/check-examples.mjs'
 
 const paths = []
 afterEach(async () => Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))))
@@ -41,5 +41,16 @@ describe('text example regressions', () => {
   test('skips the private fixtures with a clear reason when they are unavailable', async () => {
     try { await access(join(root, 'private', 'total-eclipse.txt')); return } catch {}
     await expect(checkExamples()).resolves.toMatchObject({ skipped: expect.stringMatching(/private/i) })
+  })
+
+  test('does not replace a destination created immediately before publication', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'struct-text-examples-')); paths.push(dir)
+    const out = join(dir, 'out')
+    await mkdir(out)
+    const before = await stat(out)
+    await expect(publishExampleEpubs(out, [{ slug: 'fixture', bytes: Buffer.from('epub') }])).rejects.toThrow(/already exists|EEXIST/i)
+    const after = await stat(out)
+    expect(after.dev).toBe(before.dev)
+    expect(after.ino).toBe(before.ino)
   })
 })
