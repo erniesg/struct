@@ -72,8 +72,12 @@ node adapters/text/text2epub.mjs article.txt --metadata metadata.json \
 `review` keeps the text visible in the draft, adds diagnostics and sets recovery
 to `review-required`. The CLI saves source/Struct/report/plan, omits XHTML/EPUB,
 and exits **2**. Change those decisions to `keep` or `remove` and replay into a
-new directory. Success exits **0**; other errors exit **1** without a partial
-output directory. Existing files are never overwritten.
+new directory. Success exits **0**; other errors exit **1**. Validation, judgment and rendering
+failures occur before output creation. If filesystem publication fails after
+the new directory is reserved, its contents are preserved for inspection: a
+concurrent writer may have changed them, so automatic rollback never deletes
+public output. A complete main-CLI export has `ingestion-report.json`, published
+last. Existing files are never overwritten.
 
 Offsets are UTF-16 string indices into the decoded source, not byte offsets.
 The graph's conservation counts cover exact nonblank line text; the report
@@ -115,15 +119,19 @@ Subprocesses run through argv (no shell) in temporary working directories,
 with capped source/prompt/pipes/result files, a 120-second default deadline
 (maximum 600 seconds), and process-group teardown on success and failure.
 Codex runs ephemeral/read-only with user config/rules and shell/code-mode,
-apps/plugins and web search disabled. Claude runs print/restricted/safe mode,
+browser/computer/image/agent/hook, apps/plugins and web search capabilities
+disabled. Its version and complete effective feature inventory are checked
+before source text is sent; unknown enabled capabilities fail closed. Claude runs print/restricted/safe mode,
 without tools, external MCP configuration or session persistence. Only common
 runtime/certificate/proxy and selected-provider authentication environment
 variables are forwarded. Bedrock/Foundry/custom-provider environment setup is
 not supported by this initial transport. Isolation is defense in depth, not a
 substitute for the VM's OS/account boundary; managed provider policy still applies.
 
-CLI flags were checked against local Codex **0.147.0** and Claude Code
-**2.1.289**. Unsupported flags fail rather than silently grant more capabilities.
+The Codex capability inventory is pinned to **0.147.0**; another version fails
+until its capabilities are reviewed. Claude flags were checked against
+Claude Code **2.1.289**. Unsupported flags fail rather than silently grant more
+capabilities.
 See [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
 and [Claude programmatic usage](https://code.claude.com/docs/en/headless).
 No live provider calls are part of the test suite. Judgment transport currently

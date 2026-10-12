@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import { access, link, mkdir, mkdtemp, readFile, rm, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { access, readFile, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { buildStructEpub } from '../../dist/renderers/epub.js'
 import { verifyStructReceipt } from '../../dist/receipt.js'
 import { ingestText, inspectText } from './ingest.mjs'
+import { saveNewDirectory } from './artifacts.mjs'
 
 const examplesRoot = fileURLToPath(new URL('./examples/', import.meta.url))
 const exampleSlugs = ['total-eclipse', 'now-we-are-five']
@@ -88,32 +89,18 @@ export async function checkExamples(entries = undefined, { out } = {}) {
   return results.map(({ manifest, visibleParagraphCount, totalBlockCount }) => ({ slug: manifest.slug, visibleParagraphCount, totalBlockCount }))
 }
 
-/** Publish completed EPUB bytes into a newly reserved directory without replacing another writer's output. */
+/** Publish completed EPUBs exclusively; preserve public destinations on failure. */
 export async function publishExampleEpubs(target, epubs) {
   if (!Array.isArray(epubs) || epubs.length === 0 || epubs.some(({ slug, bytes }) => !/^[a-z0-9-]+$/.test(slug) || !(bytes instanceof Uint8Array))) fail('publication inputs are invalid')
-  await mkdir(dirname(target), { recursive: true })
-  const staging = await mkdtemp(join(dirname(target), '.struct-text-examples-'))
-  const published = []
-  let reserved = false
-  try {
-    await Promise.all(epubs.map(({ slug, bytes }) => writeFile(join(staging, `${slug}.epub`), bytes, { flag: 'wx' })))
-    try { await mkdir(target, { mode: 0o700 }); reserved = true } catch (error) {
-      if (error?.code === 'EEXIST') fail(`output directory already exists: ${target}`)
-      throw error
-    }
-    for (const { slug } of epubs) {
-      const name = `${slug}.epub`
-      await link(join(staging, name), join(target, name))
-      published.push(name)
-    }
-  } catch (error) {
-    if (reserved) {
-      await Promise.all(published.map((name) => unlink(join(target, name)).catch(() => {})))
-      await rmdir(target).catch(() => {})
-    }
+  const files = new Map()
+  for (const { slug, bytes } of epubs) {
+    const name = `${slug}.epub`
+    if (files.has(name)) fail('duplicate example output filename')
+    files.set(name, bytes)
+  }
+  try { await saveNewDirectory(target, files) } catch (error) {
+    if (error.code === 'EEXIST') fail(`output directory already exists: ${target}`)
     throw error
-  } finally {
-    await rm(staging, { recursive: true, force: true })
   }
 }
 

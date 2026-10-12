@@ -60,7 +60,7 @@
     "typecheck": "tsc --noEmit",
     "text:epub": "node adapters/text/text2epub.mjs",
     "text:examples": "node adapters/text/check-examples.mjs",
-    "test:text": "npm run build && vitest run tests/text-ingestion.test.mjs tests/text-judge.test.mjs tests/text-cli.test.mjs tests/text-examples.test.mjs"
+    "test:text": "npm run build && vitest run tests/text-ingestion.test.mjs tests/text-judge.test.mjs tests/text-cli.test.mjs tests/text-examples.test.mjs tests/text-output.test.mjs"
   },
   "dependencies": {
     "fast-xml-parser": "5.10.1",

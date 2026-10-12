@@ -20,7 +20,7 @@ A standalone bounded transport receives the original source bytes and derives a 
 
 `node adapters/text/text2epub.mjs input.txt --out DIR --metadata metadata.json [--cleanup plan.json | --judge codex|claude] [--model NAME] [--timeout-ms N]`.
 
-Plain ingestion runs without a model. Output: copied original `source.txt`, validated `document.struct.json`, `document.xhtml`, `document.epub`, `ingestion-report.json`, and applied `cleanup-plan.json` when supplied/generated. Create a new output directory only after validation/judgment/render success; refuse existing destination and never overwrite the source. Pending review saves source/Struct/report/plan, omits EPUB, and returns distinct exit code 2. Other errors return 1 and no output directory. Reports bind original source and artifact hashes, offsets, whitespace accounting and decisions. Stable artifact modification time defaults to epoch for deterministic replay.
+Plain ingestion runs without a model. Output: copied original `source.txt`, validated `document.struct.json`, `document.xhtml`, `document.epub`, `ingestion-report.json`, and applied `cleanup-plan.json` when supplied/generated. Create a new output directory only after validation/judgment/render success; refuse existing destination and never overwrite the source. Pending review saves source/Struct/report/plan, omits EPUB, and returns distinct exit code 2. Other errors return 1. Validation/judgment/render failures precede output creation. Publication I/O failure after directory reservation preserves the destination for inspection; no destructive rollback is attempted because a competing writer may have replaced its files or directory. A complete main-CLI export publishes ingestion-report.json last. Reports bind original source and artifact hashes, offsets, whitespace accounting and decisions. Stable artifact modification time defaults to epoch for deterministic replay.
 
 ## Publication metadata
 
@@ -29,3 +29,9 @@ Add optional source-neutral `publisher` to Struct metadata and emit existing `pu
 ## Regression and validation
 
 Always-run synthetic tests cover exact Unicode/CRLF text, empty/invalid/oversized input, metadata, source offsets/whitespace, sparse cleanup, stale/unknown/duplicate decisions, unresolved review, receipt integrity and deterministic EPUB output. Transport tests use fake local executables only: valid structured output, malformed/refused/nonzero, partial/duplicate/out-of-source IDs, timeout, oversized data, process cleanup and literal prompt handling. CLI tests cover artifact hashes, safe outputs, replay and review-only output. Keep full copyrighted inputs in ignored private example storage; commit source hashes, metadata, cleanup plans and non-expressive expected counts. A separate example regression command requires the two private inputs and verifies hashes before applying their recorded cleanup. Run the two examples locally for this task. Final independent integrated review, full test suite, build, typecheck, source-boundary and packed-consumer checks are required.
+
+## Review rulings
+
+- Derive judgment input from original bytes internally, rather than accept caller-asserted source hashes with arbitrary text.
+- Preserve a public destination on publication failure, including partial artifacts, rather than delete files that another writer may have replaced. This makes failure inspectable and favors preservation over automatic cleanup.
+- Pin/check the Codex capability inventory before sending source; supported CLI updates require a reviewed inventory update.

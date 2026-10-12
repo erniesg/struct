@@ -68,7 +68,7 @@ describe('text CLI', () => {
  })
  it('runs explicit model judgment through a fake CLI and binds its applied decisions', async () => {
   const f=await fixture(), fake=join(f.dir,'claude')
-  await writeFile(fake,`#!${process.execPath}\nlet input='';for await(const chunk of process.stdin)input+=chunk;const sourceSha256=input.match(/SOURCE DIGEST: ([a-f0-9]{64})/)[1];const line=input.split('\\n').find(l=>l.startsWith('[{"id"'));const blocks=JSON.parse(line);console.log(JSON.stringify({is_error:false,subtype:'success',structured_output:{schemaVersion:'1.0.0',sourceSha256,actor:'claude',decisions:blocks.map(b=>({blockId:b.id,action:b.text==='ADVERTISEMENT'?'remove':'keep',reason:'Fake regression classification'}))}}));`)
+  await writeFile(fake,`#!${process.execPath}\nlet input='';for await(const chunk of process.stdin)input+=chunk;const sourceSha256=input.match(/SOURCE DIGEST: ([a-f0-9]{64})/)[1];const line=input.split('\\n').find(l=>l.startsWith('[{"id"'));const blocks=JSON.parse(line);console.log(JSON.stringify({type:'result',is_error:false,subtype:'success',structured_output:{schemaVersion:'1.0.0',sourceSha256,actor:'claude',decisions:blocks.map(b=>({blockId:b.id,action:b.text==='ADVERTISEMENT'?'remove':'keep',reason:'Fake regression classification'}))}}));`)
   await chmod(fake,0o755)
   await execute(process.execPath,[cli,f.input,'--metadata',f.metadata,'--out',f.out,'--judge','claude'],{timeout:10000,env:{...process.env,PATH:f.dir+':'+process.env.PATH}})
   const d=JSON.parse(await readFile(join(f.out,'document.struct.json'),'utf8'))
@@ -83,6 +83,14 @@ describe('text CLI', () => {
   await writeFile(f.metadata,'{"title":7}')
   await expect(execute(process.execPath,[cli,f.input,'--metadata',f.metadata,'--out',f.out,'--judge','claude'],{timeout:10000,env:{...process.env,PATH:f.dir+':'+process.env.PATH}})).rejects.toMatchObject({code:1})
   await expect(readFile(marker)).rejects.toMatchObject({code:'ENOENT'})
+  await expect(readdir(f.out)).rejects.toMatchObject({code:'ENOENT'})
+ })
+
+ it('rejects FIFO source inputs promptly instead of waiting for a writer', async () => {
+  if(process.platform==='win32')return
+  const f=await fixture(),pipe=join(f.dir,'pipe.txt')
+  await execute('mkfifo',[pipe])
+  await expect(execute(process.execPath,[cli,pipe,'--metadata',f.metadata,'--out',f.out],{timeout:1000})).rejects.toMatchObject({code:1,stderr:expect.stringContaining('regular file')})
   await expect(readdir(f.out)).rejects.toMatchObject({code:'ENOENT'})
  })
 
