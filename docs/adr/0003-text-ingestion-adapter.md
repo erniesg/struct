@@ -31,3 +31,8 @@ The two user-supplied articles are regressions via committed source digests,
 metadata, non-expressive line selections and cleanup plans. Full source text and
 outputs stay in ignored private/local storage. Always-run synthetic tests cover
 source fidelity, cleanup/recovery and fake-provider failure/lifecycle cases.
+
+Output folders use native atomic no-replace publication through a Python 3
+standard-library helper (macOS/Linux). Complete files are staged privately;
+intervening destinations are preserved and public rollback deletion is avoided.
+The ingestion API remains Node-only.

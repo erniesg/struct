@@ -10,6 +10,7 @@ const paths = []
 afterEach(async () => Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))))
 
 const root = fileURLToPath(new URL('../adapters/text/examples/', import.meta.url))
+const privateSourcesPresent = (await Promise.all(['total-eclipse','now-we-are-five'].map(slug => access(join(root,'private',`${slug}.txt`)).then(()=>true,()=>false)))).every(Boolean)
 
 describe('text example regressions', () => {
   test('committed manifests describe source-bound, human cleanup decisions without prose', async () => {
@@ -38,9 +39,12 @@ describe('text example regressions', () => {
     await expect(checkExamples([{ manifestPath, sourcePath: source }], { out })).rejects.toThrow(/already exists/i)
   })
 
-  test('skips the private fixtures with a clear reason when they are unavailable', async () => {
-    try { await access(join(root, 'private', 'total-eclipse.txt')); return } catch {}
-    await expect(checkExamples()).resolves.toMatchObject({ skipped: expect.stringMatching(/private/i) })
+  test.skipIf(!privateSourcesPresent)('replays both private article regressions against their source hashes and exact line selections', async () => {
+    const dir=await mkdtemp(join(tmpdir(),'struct-private-examples-'));paths.push(dir)
+    await expect(checkExamples(undefined,{out:join(dir,'out')})).resolves.toEqual([
+      {slug:'total-eclipse',visibleParagraphCount:61,totalBlockCount:91},
+      {slug:'now-we-are-five',visibleParagraphCount:85,totalBlockCount:114},
+    ])
   })
 
   test('does not replace a destination created immediately before publication', async () => {

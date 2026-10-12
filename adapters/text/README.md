@@ -14,6 +14,8 @@ node adapters/text/text2epub.mjs article.txt --metadata metadata.json --out out/
 npm run text:epub -- article.txt --metadata metadata.json --out out/article
 ```
 
+The CLI requires Node 20+ and Python 3 on macOS or Linux, with filesystem
+support for atomic no-replace rename. The ingestion API itself is Node-only.
 The output directory must be new. Input is a regular UTF-8 file up to 1 MiB
 and 10,000 nonblank physical lines. There is no automatic deletion or rewriting.
 Each physical line becomes a paragraph, so use paragraph-per-line pasted text;
@@ -72,12 +74,15 @@ node adapters/text/text2epub.mjs article.txt --metadata metadata.json \
 `review` keeps the text visible in the draft, adds diagnostics and sets recovery
 to `review-required`. The CLI saves source/Struct/report/plan, omits XHTML/EPUB,
 and exits **2**. Change those decisions to `keep` or `remove` and replay into a
-new directory. Success exits **0**; other errors exit **1**. Validation, judgment and rendering
-failures occur before output creation. If filesystem publication fails after
-the new directory is reserved, its contents are preserved for inspection: a
-concurrent writer may have changed them, so automatic rollback never deletes
-public output. A complete main-CLI export has `ingestion-report.json`, published
-last. Existing files are never overwritten.
+new directory. Success exits **0**; other errors exit **1**. Files are completed in a private
+staging directory and the folder is published with one OS atomic no-replace
+operation (`renamex_np`/`RENAME_EXCL` on macOS, `renameat2`/`RENAME_NOREPLACE`
+on Linux). An intervening destination, including an empty directory or symlink,
+is preserved and causes failure. The Python helper uses only the standard
+library, runs in isolated mode, and refuses unsupported platforms/filesystems;
+there is no unsafe rename fallback. Public destinations are never deleted for
+rollback. See the [Linux rename manual](https://man7.org/linux/man-pages/man2/rename.2.html).
+
 
 Offsets are UTF-16 string indices into the decoded source, not byte offsets.
 The graph's conservation counts cover exact nonblank line text; the report
@@ -87,7 +92,7 @@ no text-specific core schema format or fabricated PDF page geometry is added.
 
 ## Optional Codex or Claude judgment, locally or on a VM
 
-Run the same checkout/CLI on a VM with Node 20+ and an already authenticated
+Run the same checkout/CLI on a Linux VM with Node 20+, Python 3, and an already authenticated
 Codex or Claude Code installation:
 
 ```sh
