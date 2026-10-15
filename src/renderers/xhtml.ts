@@ -18,7 +18,7 @@ import {
 } from "./xhtml-plan";
 import { normalizeStructDocumentForRenderer } from "./ingress";
 import { verifyStructReceipt } from "../receipt";
-import { safeMathMl } from "./xhtml-mathml";
+import { mathMlForXhtml, safeMathMl } from "./xhtml-mathml";
 
 export type StructXhtmlOptions = {
   embedStyles?: boolean;
@@ -270,7 +270,7 @@ function renderBlock(
     return `<li id="${id}" data-struct-id="${id}">${sourceAnchors}${content}</li>`;
   }
   if (block.kind === "equation" && safeMathMl(block.attributes?.mathml)) {
-    return `<figure id="${id}" data-struct-id="${id}" class="equation">${sourceAnchors}${block.attributes!.mathml}<figcaption>${content || text(block.label ?? "")}</figcaption></figure>`;
+    return `<figure id="${id}" data-struct-id="${id}" class="equation">${sourceAnchors}${mathMlForXhtml(block.attributes!.mathml)}<figcaption>${content || text(block.label ?? "")}</figcaption></figure>`;
   }
   if (
     block.kind === "figure" ||

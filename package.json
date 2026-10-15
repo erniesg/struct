@@ -61,7 +61,8 @@
   },
   "dependencies": {
     "fast-xml-parser": "5.10.1",
-    "fflate": "0.8.3"
+    "fflate": "0.8.3",
+    "saxes": "6.0.0"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
