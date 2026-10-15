@@ -132,7 +132,34 @@ describe("MathML equations", () => {
 
   it("accepts a single math element and rejects scripts or multiple roots", () => {
     expect(safeMathMl(mathml)).toBe(true);
+    expect(safeMathMl("<math><mi>x</mi></math>")).toBe(true);
+    expect(
+      safeMathMl(
+        '<math xmlns="http://www.w3.org/1998/Math/Math&#x4d;L"><mi>x</mi></math>',
+      ),
+    ).toBe(true);
+    expect(
+      safeMathMl(
+        '<math xmlns="http://www.w3.org/1998/Math/MathML"><m:mi xmlns:m="http://www.w3.org/1998/Math/MathML">x</m:mi></math>',
+      ),
+    ).toBe(true);
+    expect(
+      safeMathMl(
+        '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><mi>x</mi></m:math>',
+      ),
+    ).toBe(true);
     expect(safeMathMl(`${mathml}${mathml}`)).toBe(false);
+    expect(safeMathMl("<math><mi></math>")).toBe(false);
+    expect(safeMathMl("<math><mi>\u0001</mi></math>")).toBe(false);
+    expect(safeMathMl("<math><mi>\u000b</mi></math>")).toBe(false);
+    expect(safeMathMl('<math><mi data-x="\u000c">x</mi></math>')).toBe(
+      false,
+    );
+    expect(
+      safeMathMl(
+        '<math><foreignObject xmlns="http://www.w3.org/1999/xhtml"><p>not MathML</p></foreignObject></math>',
+      ),
+    ).toBe(false);
     expect(safeMathMl("<math><script>alert(1)</script></math>")).toBe(false);
     expect(safeMathMl('<math onload="x">x</math>')).toBe(false);
     expect(safeMathMl(" <math></math>")).toBe(false);
@@ -155,16 +182,98 @@ describe("MathML equations", () => {
     expect(strFromU8(entries["EPUB/content.xhtml"]!)).toContain("<msup>");
   });
 
-  it("falls back to the asset figure when the attribute is not safe MathML", () => {
+  it("adds the MathML namespace when rendering a valid unqualified fragment", async () => {
+    const bareMathml = "<math><mi>x</mi></math>";
+    const document = documentWith([
+      block("eq-1", "equation", "x", 0, { mathml: bareMathml }),
+    ]);
+    const expectedMathml =
+      '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>';
+    expect(renderPublicationXhtml(document)).toContain(expectedMathml);
+    const exported = await buildStructEpub(document);
+    const entries = unzipSync(exported.bytes);
+    expect(strFromU8(entries["EPUB/content.xhtml"]!)).toContain(expectedMathml);
+    expect(strFromU8(entries["EPUB/package.opf"]!)).toContain(
+      'href="content.xhtml" media-type="application/xhtml+xml" properties="mathml"',
+    );
+
+    const prefixedMathml =
+      '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><mi>x</mi></m:math>';
+    const prefixedDocument = documentWith([
+      block("eq-1", "equation", "x", 0, { mathml: prefixedMathml }),
+    ]);
+    const expectedPrefixedMathml =
+      '<m:math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:m="http://www.w3.org/1998/Math/MathML"><mi>x</mi></m:math>';
+    expect(renderPublicationXhtml(prefixedDocument)).toContain(
+      expectedPrefixedMathml,
+    );
+    const prefixedExport = await buildStructEpub(prefixedDocument);
+    expect(
+      strFromU8(unzipSync(prefixedExport.bytes)["EPUB/content.xhtml"]!),
+    ).toContain(expectedPrefixedMathml);
+    expect(
+      strFromU8(unzipSync(prefixedExport.bytes)["EPUB/package.opf"]!),
+    ).toContain(
+      'href="content.xhtml" media-type="application/xhtml+xml" properties="mathml"',
+    );
+  });
+
+  it("preserves valid numeric entities, escaped ampersands, and CDATA text", async () => {
+    const entityMathml =
+      '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>&#x1D6FC;</mi><mi>α</mi><mtext>&amp;missing;</mtext><mtext><![CDATA[&missing;]]></mtext></math>';
+    expect(safeMathMl(entityMathml)).toBe(true);
+    const document = documentWith([
+      block("eq-1", "equation", "alpha", 0, { mathml: entityMathml }),
+    ]);
+    expect(renderPublicationXhtml(document)).toContain(entityMathml);
+    const exported = await buildStructEpub(document);
+    expect(strFromU8(unzipSync(exported.bytes)["EPUB/content.xhtml"]!)).toContain(
+      entityMathml,
+    );
+  });
+
+  it.each([
+    "<math><script>1</script></math>",
+    "<math><mi></math>",
+    '<math><foreignObject xmlns="http://www.w3.org/1999/xhtml"><p>not MathML</p></foreignObject></math>',
+    '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi href="jav&#x61;script:alert(1)">x</mi></math>',
+    '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi xlink:href="jav&#x61;script:alert(1)" xmlns:xlink="http://www.w3.org/1999/xlink">x</mi></math>',
+    '<math xmlns="http://www.w3.org/1998/Math/MathML"><mglyph src="java&#x73;cript:alert(1)" /></math>',
+    '<math altimg="https://example.test/math.svg"><mi>x</mi></math>',
+    '<math cdgroup="https://example.test/group"><mi>x</mi></math>',
+    '<math macros="https://example.test/macros"><mi>x</mi></math>',
+    '<math><annotation definitionURL="https://example.test/symbol">x</annotation></math>',
+    '<math xml:base="https://example.test/"><mi>x</mi></math>',
+    '<math style="background-image:url(https://example.test/math.svg)"><mi>x</mi></math>',
+    '<math xmlns="http://www.w3.org/1999/xhtml"><mi>x</mi></math>',
+    '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi xmlns="http://www.w3.org/1999/xhtml">x</mi></math>',
+    "<math><:mi>x</:mi></math>",
+    '<math xmlns:a="http://www.w3.org/1998/Math/MathML"><a:b:mi>x</a:b:mi></math>',
+    '<math xmlns:xml="http://www.w3.org/1998/Math/MathML"><xml:mi>x</xml:mi></math>',
+    '<math><mi xmlns:a="urn:foreign" a:bar="x">x</mi></math>',
+    "<math><mi>]]></mi></math>",
+    "<math><!-- a--b --><mi>x</mi></math>",
+    "<?unsafe x?><math><mi>x</mi></math>",
+    "<!DOCTYPE math><math><mi>x</mi></math>",
+    "<!--x><script>alert(1)</script></math>junk--><math><mi>x</mi></math>",
+    "<math><mi>&missing;</mi></math>",
+    "<math><mi>&#0;</mi></math>",
+    "<math><mi>&#xD800;</mi></math>",
+  ])("falls back when the MathML attribute is unsafe: %s", async (mathml) => {
     const document = documentWith([
       block("eq-1", "equation", "x", 0, {
-        mathml: "<math><script>1</script></math>",
+        mathml,
       }),
     ]);
     const xhtml = renderPublicationXhtml(document);
     expect(xhtml).not.toContain("<script>");
+    expect(xhtml).not.toContain(mathml);
     expect(xhtml).toContain(
       '<figure id="eq-1" data-struct-id="eq-1"><figcaption>x</figcaption></figure>',
+    );
+    const exported = await buildStructEpub(document);
+    expect(strFromU8(unzipSync(exported.bytes)["EPUB/content.xhtml"]!)).not.toContain(
+      mathml,
     );
   });
 });

@@ -17,6 +17,7 @@ import { sha256HexSync } from "../sha256";
 import { verifyStructReceipt } from "../receipt";
 import { isPackagedAssetId } from "./xhtml-plan";
 import { renderPublicationXhtml } from "./xhtml";
+import { safeMathMl } from "./xhtml-mathml";
 import type { StructDocument } from "../document/types";
 import {
   isRendererIngressCodecError,
@@ -468,7 +469,9 @@ export async function buildStructEpub(
     )
     .join("\n    ");
   const content = renderPublicationXhtml(document);
-  const contentProperties = content.includes("<math")
+  const contentProperties = document.blocks.some(
+    (block) => block.kind === "equation" && safeMathMl(block.attributes?.mathml),
+  )
     ? ' properties="mathml"'
     : "";
   const packageDocument = `<?xml version="1.0" encoding="UTF-8"?>
