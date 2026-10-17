@@ -73,6 +73,27 @@ class SourceListOrderTests(unittest.TestCase):
             item.prov[0].bbox.r = 250
         self.assertEqual([b["text"] for b in walk(doc,layout).blocks], [items[i].text for i in (0,2,1)])
 
+    def test_overlapping_column_boxes_retain_extractor_order(self):
+        doc, _, items, layout = fixture()
+        for index, item in enumerate(items):
+            left = 200 if index == 1 else 0
+            item.prov[0].bbox.l = left
+            item.prov[0].bbox.r = left + 400
+            layout[0]["lines"][index]["xmin"] = left + 10
+            layout[0]["lines"][index]["xmax"] = left + 190
+        self.assertEqual([b["text"] for b in walk(doc,layout).blocks], [items[i].text for i in (0,2,1)])
+
+    def test_malformed_source_lines_retain_extractor_order(self):
+        for field in ("xmin", "xmax", "ymin", "ymax", "text"):
+            for value in (None, "invalid", float("nan")):
+                with self.subTest(field=field, value=value):
+                    doc, _, items, layout = fixture()
+                    layout[0]["lines"][1][field] = value
+                    self.assertEqual([b["text"] for b in walk(doc,layout).blocks], [items[i].text for i in (0,2,1)])
+            doc, _, items, layout = fixture()
+            del layout[0]["lines"][1][field]
+            self.assertEqual([b["text"] for b in walk(doc,layout).blocks], [items[i].text for i in (0,2,1)])
+
     def test_missing_provenance_retains_extractor_order(self):
         doc, _, items, layout = fixture()
         items[1].prov.clear()

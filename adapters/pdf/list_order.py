@@ -43,13 +43,25 @@ def source_ordered_list_children(doc, group, page_layout: list[dict]):
     # Both sources must use the same page frame (allow coordinate rounding).
     if not math.isclose(layout.get("width", 0), page.size.width, abs_tol=1) or not math.isclose(layout.get("height", 0), page.size.height, abs_tol=1):
         return original
+    lines = layout.get("lines", [])
+    if not isinstance(lines, list):
+        return original
+    for line in lines:
+        if not isinstance(line, dict) or not isinstance(line.get("text"), str):
+            return original
+        values = [line.get(field) for field in ("xmin", "xmax", "ymin", "ymax")]
+        if any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in values):
+            return original
+        if values[0] >= values[1] or values[2] >= values[3]:
+            return original
     anchors = []
+    anchor_lefts = []
     for item, box in zip(items, boxes):
         key = _text_key(item.text)
         if not key:
             return original
         matches = []
-        for line in layout.get("lines", []):
+        for line in lines:
             x = (line["xmin"] + line["xmax"]) / 2
             y = (line["ymin"] + line["ymax"]) / 2
             if not box.l <= x <= box.r or not box.t <= y <= box.b:
@@ -60,11 +72,16 @@ def source_ordered_list_children(doc, group, page_layout: list[dict]):
             if marker and text.startswith(marker):
                 candidates.append(_text_key(text[len(marker):]))
             if any(candidate and key.startswith(candidate) for candidate in candidates):
-                matches.append((line["ymin"], line["ymax"]))
+                matches.append((line["ymin"], line["ymax"], line["xmin"]))
         # Repeated/partial/missing matches cannot decide a sibling's position.
         if len(matches) != 1:
             return original
         anchors.append(matches[0])
+        anchor_lefts.append(matches[0][2])
+    # First text lines must also share a left edge: broad model boxes can
+    # overlap across columns even when their actual text occupies separate ones.
+    if max(anchor_lefts) - min(anchor_lefts) > 6:
+        return original
     geometry_order = sorted(range(len(items)), key=lambda index: boxes[index].t)
     text_order = sorted(range(len(items)), key=lambda index: anchors[index][0])
     if geometry_order != text_order:
