@@ -85,7 +85,7 @@ class SourceListOrderTests(unittest.TestCase):
 
     def test_malformed_source_lines_retain_extractor_order(self):
         for field in ("xmin", "xmax", "ymin", "ymax", "text"):
-            for value in (None, "invalid", float("nan")):
+            for value in (None, "invalid", float("nan"), 10**1000):
                 with self.subTest(field=field, value=value):
                     doc, _, items, layout = fixture()
                     layout[0]["lines"][1][field] = value
@@ -132,7 +132,7 @@ class SourceListOrderTests(unittest.TestCase):
     def test_malformed_page_frames_retain_extractor_order(self):
         for page in (None, 42, "invalid", [], {}, {"width": None, "height": 800},
                      {"width": 600, "height": "800"}, {"width": float("nan"), "height": 800},
-                     {"width": 600, "height": float("inf")}):
+                     {"width": 600, "height": float("inf")}, {"width": 10**1000, "height": 800}):
             with self.subTest(page=page):
                 doc, _, items, _ = fixture()
                 self.assertEqual([b["text"] for b in walk(doc,[page]).blocks], [items[i].text for i in (0,2,1)])

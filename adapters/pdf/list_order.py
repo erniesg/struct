@@ -12,6 +12,15 @@ import unicodedata
 from docling_core.types.doc import ListItem
 
 
+def _finite_number(value) -> bool:
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _text_key(text: str) -> str:
     return "".join(char for char in unicodedata.normalize("NFKC", text).casefold() if char.isalnum())
 
@@ -43,7 +52,7 @@ def source_ordered_list_children(doc, group, page_layout: list[dict]):
     if not isinstance(layout, dict):
         return original
     frame = [layout.get(field) for field in ("width", "height")]
-    if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 for value in frame):
+    if any(not _finite_number(value) or value <= 0 for value in frame):
         return original
     # Both sources must use the same page frame (allow coordinate rounding).
     if not math.isclose(layout.get("width", 0), page.size.width, abs_tol=1) or not math.isclose(layout.get("height", 0), page.size.height, abs_tol=1):
@@ -55,7 +64,7 @@ def source_ordered_list_children(doc, group, page_layout: list[dict]):
         if not isinstance(line, dict) or not isinstance(line.get("text"), str):
             return original
         values = [line.get(field) for field in ("xmin", "xmax", "ymin", "ymax")]
-        if any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in values):
+        if any(not _finite_number(value) for value in values):
             return original
         if values[0] >= values[1] or values[2] >= values[3]:
             return original
