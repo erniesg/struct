@@ -46,6 +46,7 @@ from pdf_links import SourceLink, group_wrapped_links, normalize_uri  # noqa: F4
 from pdf_text import SourceText, normalize_marker  # noqa: F401  (re-exported)
 from source_raster import SourceRasterError  # noqa: F401  (re-exported)
 from layout_normalization import normalize_provenance
+from list_order import source_ordered_list_children
 from figure_recovery import normalize_sideways_captions
 from overlap_repair import repair_overlapping_items
 from small_caps import restore_small_capitals
@@ -149,6 +150,7 @@ class AdapterReport:
     internal_link_coverage: dict = field(default_factory=dict)
     source_provenance: list[dict] = field(default_factory=list)
     lists: int = 0
+    lists_reordered_by_source: int = 0
     furniture_blocks: int = 0
     repeated_text_demoted: int = 0
     furniture_blocks_merged: int = 0
@@ -401,7 +403,10 @@ class StructAdapter(
 
     # ------------------------------------------------------------- walk
     def _walk(self, node, list_context: dict | None = None) -> None:
-        for ref in node.children:
+        children = source_ordered_list_children(self.doc, node, self.page_layout) if isinstance(node, ListGroup) else node.children
+        if children != node.children:
+            self.report.lists_reordered_by_source += 1
+        for ref in children:
             child = ref.resolve(self.doc)
             self.report.source_items += 0 if isinstance(child, GroupItem) else 1
             if isinstance(child, ListGroup):
