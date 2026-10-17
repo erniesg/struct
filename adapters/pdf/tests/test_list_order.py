@@ -129,6 +129,14 @@ class SourceListOrderTests(unittest.TestCase):
         layout[0]["height"] = 600
         self.assertEqual([b["text"] for b in walk(doc,layout).blocks], [items[i].text for i in (0,2,1)])
 
+    def test_malformed_page_frames_retain_extractor_order(self):
+        for page in (None, 42, "invalid", [], {}, {"width": None, "height": 800},
+                     {"width": 600, "height": "800"}, {"width": float("nan"), "height": 800},
+                     {"width": 600, "height": float("inf")}):
+            with self.subTest(page=page):
+                doc, _, items, _ = fixture()
+                self.assertEqual([b["text"] for b in walk(doc,[page]).blocks], [items[i].text for i in (0,2,1)])
+
     def test_repairs_are_reported_without_source_reference_loss(self):
         doc, _, items, layout = fixture()
         adapter = walk(doc,layout)

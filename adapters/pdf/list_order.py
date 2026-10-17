@@ -40,6 +40,11 @@ def source_ordered_list_children(doc, group, page_layout: list[dict]):
     if corridor < .5 * min(box.r - box.l for box in boxes):
         return original
     layout = page_layout[page_no - 1]
+    if not isinstance(layout, dict):
+        return original
+    frame = [layout.get(field) for field in ("width", "height")]
+    if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 for value in frame):
+        return original
     # Both sources must use the same page frame (allow coordinate rounding).
     if not math.isclose(layout.get("width", 0), page.size.width, abs_tol=1) or not math.isclose(layout.get("height", 0), page.size.height, abs_tol=1):
         return original
