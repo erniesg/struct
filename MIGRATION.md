@@ -30,8 +30,12 @@ operation, not a migration. It remains available through **2026-11-30** and is
 removed after that date. No transform or migration receipt is invented.
 
 The old package paths `./core`, `./schema`, and `./ids` are removed in favor of
-the explicit paths in [API.md](./API.md). `./bundle` remains unavailable until
-S-03.
+the explicit paths in [API.md](./API.md). `./bundle` is a current embedded-only
+Stage 1 export (`decodeStructBundle`, `encodeStructBundle`,
+`VerifiedStructBundle`); its external-payload path fails closed with
+`UNRESOLVED`. Full S-03 bundle creation, value verification, resolver/executor
+conformance, and the public versioned limits profile remain gated, as do the
+staged migration steps below.
 
 ## Staged migration contract
 
@@ -75,6 +79,10 @@ First-release evidence is an exact package version and tarball digest, declared
 export map and compatibility matrix, source-boundary/type/build/test evidence,
 a clean packed-consumer install proof, and recorded renderer/profile evidence
 where relevant. Those gates establish an **implemented, unreleased** artifact;
-they do not publish it. A **released** package additionally needs separately
+they do not publish it. Because README.md, CONTRACT.md, and MIGRATION.md ship in
+the package file list, a documentation correction changes the packed contents:
+any application repin needs a freshly packed artifact with its own digest and
+installed-consumer proof at an exact head. No application repin is part of this
+documentation change. A **released** package additionally needs separately
 authorized registry publication, install proof, immutable artifact digest, and
 a release record.

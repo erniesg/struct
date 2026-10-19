@@ -15,14 +15,25 @@ remains generic orchestration and owns none of these domain models.
 
 ## State and evidence
 
-**Current** at base `6ecb78d1753b847ec7295bf45f43237225663728`: this is a
-private `0.0.0` package with source-neutral document/codecs/IDs/recovery/XHTML/
-EPUB code. It has no runtime `StructBundle`, bundle decoder or verifier,
-exact-pinned external consumer, registry release, or publish workflow.
+**Current runtime baseline** `e9ea4b8be0b92e6f35262da572a855216286716c`:
+this is a private `0.0.0` package with source-neutral document/codecs/IDs/
+recovery/XHTML/EPUB code and an **embedded-only Stage 1** public `./bundle`
+facade. That facade exports `decodeStructBundle`, `encodeStructBundle`, and the
+`VerifiedStructBundle` handle for canonical embedded-asset envelopes. External
+payloads fail closed with `UNRESOLVED`. Bundle creation, strict in-memory value
+verification, resolver/executor capability, full conformance, and public
+limit-profile acceptance remain incomplete. There is no exact-pinned external
+consumer of this Bundle surface, registry release, or publish workflow.
 
 **Documented target** is the ADR-0001 contract in [CONTRACT.md](./CONTRACT.md):
 a source-neutral package with a fail-closed verified `StructBundle` boundary.
-The Bundle facade is planned for S-03 and is not a current export.
+The remaining Bundle capabilities, including `createStructBundle`,
+`verifyStructBundle`, external resolution, conformance, and the public versioned
+limits profile, are planned for the remainder of S-03 and S-04 and are not
+current.
+
+**Stage status:** Stage 1 is implemented and unreleased; it does not complete
+S-03, S-04, or E-02, and it does not activate a release, route, or writer.
 
 **Implemented, unreleased** means exact code and local evidence exist, but not
 a package or application release. **Released** requires an exact registry
@@ -57,5 +68,8 @@ subpaths and the bounded deprecated-alias window.
 
 [CONTRACT.md](./CONTRACT.md) is the normative package contract; it links to
 ADR-0001 for the complete planned Bundle protocol. [MIGRATION.md](./MIGRATION.md)
-records source provenance and the staged consumer migration. This bootstrap
-package remains private and has no publishing workflow.
+records source provenance and the staged consumer migration. These contract
+documents ship in the package file list, so this documentation correction
+requires a fresh packed artifact, digest, and installed-consumer proof before
+any application repin; no application repin is part of this change. The
+bootstrap package remains private and has no publishing workflow.
