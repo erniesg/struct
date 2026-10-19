@@ -9,7 +9,7 @@ export type ByteFreeStructDocumentJson = Omit<StructDocumentJson, 'assets'> & {
   >
 }
 
-/** Private S-03 building block. These helpers do not verify a StructBundle. */
+/** Canonicalization helpers. They encode and parse bytes; they do not verify a bundle. */
 export class CanonicalJsonError extends Error {
   constructor(readonly code: 'TYPE' | 'LIMIT' | 'SYNTAX' | 'NONCANONICAL') {
     super(`invalid canonical JSON: ${code.toLowerCase()}`)

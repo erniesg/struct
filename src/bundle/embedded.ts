@@ -28,12 +28,8 @@ type Failure = Readonly<{
     | Readonly<{ stage: 'handle'; code: 'FORGED' }>
 }>
 
-/**
- * Verified bundle handle. Proves integrity and conservation only, never
- * producer authenticity. The handle is opaque: it is created only by this
- * module and its storage cannot be reached through the returned value.
- */
-export type VerifiedStructBundle = Readonly<{
+/** Private acceptance handle: integrity/conservation only, not authenticity. */
+export type VerifiedEmbeddedBundle = Readonly<{
   bundleVersion: '1.0.0'
   schemaVersion: string
   documentSha256: string
@@ -42,20 +38,14 @@ export type VerifiedStructBundle = Readonly<{
   assetIds(): readonly string[]
   assetBytes(id: string): Uint8Array | undefined
 }>
-/** Structured failure for every public bundle operation. */
-export type StructBundleFailure = Failure
-export type StructBundleAcceptanceResult =
-  | Readonly<{ ok: true; bundle: VerifiedStructBundle }>
+export type EmbeddedAcceptanceResult =
+  | Readonly<{ ok: true; bundle: VerifiedEmbeddedBundle }>
   | Failure
-export type StructBundleEncodingResult =
+export type EmbeddedEncodingResult =
   | Readonly<{ ok: true; bytes: Uint8Array }>
   | Failure
 
-/** Retained private aliases used by the pre-publication review tests. */
-export type EmbeddedAcceptanceResult = StructBundleAcceptanceResult
-export type EmbeddedEncodingResult = StructBundleEncodingResult
-
-const retained = new WeakMap<VerifiedStructBundle, Uint8Array>()
+const retained = new WeakMap<VerifiedEmbeddedBundle, Uint8Array>()
 const decoder = new TextDecoder()
 
 function failure(error: Failure['error']): Failure {
@@ -85,13 +75,8 @@ function freezeJson<T>(value: T): T {
   return value
 }
 
-/**
- * Untrusted wire ingress. Applies the raw cap and optional expected
- * `bundleSha256` before parsing, proves canonical input, and returns either a
- * verified handle or a structured failure. External asset payloads fail closed
- * with `UNRESOLVED` because this version exposes no resolver executor.
- */
-export function decodeStructBundle(
+/** Embedded wire ingress only; no external resolver or value-verifier capability. */
+export function decodeEmbeddedBundleBytes(
   raw: Uint8Array,
   options?: Readonly<{ expectedBundleSha256?: string }>,
 ): EmbeddedAcceptanceResult {
@@ -136,7 +121,7 @@ export function decodeStructBundle(
 
   try {
     const assets = verifyEmbeddedAssets(envelope.document.assets, envelope.assets, ASSET_LIMITS)
-    const bundle: VerifiedStructBundle = Object.freeze({
+    const bundle: VerifiedEmbeddedBundle = Object.freeze({
       bundleVersion: envelope.bundleVersion,
       schemaVersion: envelope.schemaVersion,
       documentSha256: envelope.documentSha256,
@@ -154,15 +139,11 @@ export function decodeStructBundle(
 }
 
 /** WeakMap membership, not a caller-controlled shape or prototype, admits encode. */
-export function encodeStructBundle(handle: unknown): StructBundleEncodingResult {
+export function encodeVerifiedEmbeddedBundle(handle: unknown): EmbeddedEncodingResult {
   if (handle === null || typeof handle !== 'object')
     return failure({ stage: 'handle', code: 'FORGED' })
-  const bytes = retained.get(handle as VerifiedStructBundle)
+  const bytes = retained.get(handle as VerifiedEmbeddedBundle)
   return bytes === undefined
     ? failure({ stage: 'handle', code: 'FORGED' })
     : Object.freeze({ ok: true, bytes: bytes.slice() })
 }
-
-/** Retained private aliases used by the pre-publication review tests. */
-export const decodeEmbeddedBundleBytes = decodeStructBundle
-export const encodeVerifiedEmbeddedBundle = encodeStructBundle
