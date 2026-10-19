@@ -10,9 +10,11 @@
 ## 1. What this slice delivers
 
 Three new package modules, two new test files, one new fixture module, and
-this note. Nothing existing was edited: `src/bundle/index.ts`, `facade.ts`,
-`limits.ts`, `embedded.ts`, `canonical.ts`, and `assets.ts` are untouched, and
-no manifest, lockfile, API manifest, consumer, or pack script changed.
+this note. `src/bundle/limits.ts` gains exactly one bound, the
+`maxResolverTimeoutMs` resolver cap, and nothing else in it changed.
+`src/bundle/index.ts`, `facade.ts`, `embedded.ts`, `canonical.ts`, and
+`assets.ts` are untouched, and no manifest, lockfile, API manifest, consumer,
+or pack script changed.
 
 | File | Role |
 | --- | --- |
@@ -56,24 +58,40 @@ The guards are total and side-effect free:
 
 - `readStructResolverFields` accepts own data properties only. Accessors,
   symbols, foreign prototypes, unknown members, and missing required members
-  are rejected.
+  are rejected. It returns a **frozen snapshot**, so the caller's object is
+  never retained or aliased and no accessor or proxy getter is ever invoked.
+  A foreign prototype trap, a revoked proxy, or a throwing descriptor trap
+  becomes a static `SHAPE` protocol error; the foreign message and the
+  foreign error object are never carried into the package error.
 - Execution identifiers are opaque: 1 to 256 code units of printable ASCII,
   no whitespace, and no `/` or `\`.
 - Logical hrefs stay relative bundle paths. An absolute path, a `:` scheme,
   `//`, a backslash, a `%` escape, a query, a fragment, and `.` or `..`
   segments are rejected.
+- Transport receipt identifiers use the **same strict ASCII grammar** the
+  policy projection applies to profile, endpoint map, endpoint, root
+  capability, and store identifiers:
+  `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`. A URL, a path, a percent escape, a
+  matrix parameter, a query, and a fragment are all outside it. A drift test
+  compares the protocol acceptance of an identifier corpus against the
+  acceptance of the same corpus by the strict policy projection, so the two
+  grammars cannot diverge.
 - `planStructResolverBudget` requires `totalTimeoutMs >= 1` and
-  `1 <= cleanupReserveMs < totalTimeoutMs`, and returns the derived work
-  window.
+  `1 <= cleanupReserveMs < totalTimeoutMs`, rejects a total above the frozen
+  profile cap, and returns the derived work window. The budget is mandatory:
+  there is no implicit default.
 - `validateStructResolverRequest` re-projects and re-hashes the policy with
   the existing strict policy helper and refuses a request whose
   `expectedPolicySha256` disagrees with it. The returned snapshot carries the
   canonical frozen policy, never the caller's object.
 - `validateStructResolverResult` rejects a thenable, a wrong version, a
   malformed resource id, a chunk stream that is not async iterable, and a
-  transport receipt with an extra member or a non-secret identifier. Policy
-  equality for the receipt is not duplicated here: the existing strict
-  receipt projection helper owns that rule.
+  transport receipt with an extra member or a non-secret identifier. It
+  returns a **fresh deep-frozen receipt copy** with a frozen
+  `redirectEndpointIds` array, so a later mutation of the caller's receipt
+  cannot change the validated snapshot. Policy equality for the receipt is
+  not duplicated here: the existing strict receipt projection helper owns
+  that rule.
 
 ## 3. The reference supervisor
 
@@ -120,17 +138,30 @@ cleanup, and termination.
 `resolveStructResolverAssets` accepts already validated targets and returns a
 structured result. It never throws for an expected failure.
 
+The **total budget starts before the preflight**. The driver reads the
+monotonic clock before the option object is trusted, so a later bytes decoder
+can pass the remaining budget after a raw parse and the global deadline is
+preserved. Every execution receives only what is left of that global budget,
+and the global deadline is never extended.
+
 Preflight happens before any allocation: the option set is a strict own-data
-object, the policy is re-hashed and compared, the budget is planned, and the
-targets are checked for a unique identifier, a lowercase digest, a media
-type, a non-negative length, and a valid logical href. The policy digest is
-therefore bound before `allocate()` is ever called, and an aborted caller
-signal stops the resolution before any allocation.
+object, the policy is re-hashed and compared, the budget is planned and
+checked against the frozen profile cap, and the targets are checked for a
+unique identifier, a lowercase digest, a media type, a non-negative length,
+and a valid logical href. The policy digest is therefore bound before
+`allocate()` is ever called, and an aborted caller signal stops the
+resolution before any allocation.
+
+Every execution owns a **package-created `AbortController`**. The request
+always carries that controller's real `AbortSignal`, even when the caller
+supplied no signal. A caller abort and the work deadline both abort it, and
+the teardown aborts it first. The clock seam is a private helper seam; it is
+never a public decode option.
 
 Per execution the driver holds one monotonic deadline. The work window is
-`totalTimeoutMs - cleanupReserveMs` and the outer deadline is
-`totalTimeoutMs`. The cleanup step is additionally bounded by the reserved
-cleanup budget, and the join is bounded by the outer deadline.
+`totalTimeoutMs - cleanupReserveMs` and the outer deadline is the global
+deadline. The cleanup step is additionally bounded by the reserved cleanup
+budget, and the join is bounded by the outer deadline.
 
 The teardown order is fixed and a failure in one step never skips a later
 step:
@@ -174,34 +205,54 @@ a receipt, or written into a failure.
 
 ## 5. Limits integration
 
-`src/bundle/limits.ts` is a reserved integration seam and was not edited, so
-the driver reads the byte caps from the shipped versioned profile instead of
-defining a second profile.
+`src/bundle/limits.ts` holds the **single frozen profile**. This lane owns
+exactly one added bound there, `maxResolverTimeoutMs: 120000`; no other cap
+changed. The separate 8-execution, 32 MiB, and 128 MiB profile table from the
+old design plan is not maintained, because two profiles would disagree about
+the same limits.
 
 - The effective resolver fan-out is
   `min(STRUCT_BUNDLE_LIMITS_PROFILE.maxConcurrency, policy.maxConcurrent)`.
-  The shipped Stage-1 profile caps `maxConcurrency` at 1, so external
-  resolution is serial until the integration lane publishes a
-  resolver-capable profile version. This is a deliberate conservative cap.
+  The frozen profile caps `maxConcurrency` at 1, so external resolution is
+  serial even when a policy asks for more, and the supervisor refuses the
+  allocation that would exceed the cap before any host is bound.
+- The resolver total budget is mandatory and explicit. There is no implicit
+  default, and a total above `maxResolverTimeoutMs` is refused before any
+  allocation.
 - Per-asset resolved bytes are bounded by
   `min(expected.byteLength, profile.maxAssetBytes)` and the aggregate by
   `min(profile.maxTotalBytes, profile.maxDecodedBytes)`.
 - A single chunk may not exceed `profile.maxAssetBytes`.
-- Raising the external fan-out, adding a resolver-specific timeout, or
-  adding a resolver limits profile requires a profile version bump and is a
-  reserved integration change.
+- Raising the external fan-out or the resolver timeout is a profile version
+  bump in the reserved seam.
 
 The shared package SHA-256 helper is one-shot, and the shared primitive file
 is outside this lane's ownership, so the driver verifies the digest over the
 copied, capped bytes at completion instead of introducing a second digest
 implementation. The cumulative cap is what bounds the retention.
 
+## 5a. Independent protocol review findings
+
+An independent review of the milestone-1 protocol commit
+`be1fbe161ba2bb2b640c816e8000fb4ec9825edd` raised three actionable guard
+defects. This lane owns all three and fixed them without changing any
+published signature.
+
+| Finding | Defect | Fix |
+| --- | --- | --- |
+| F1 | The validated transport receipt and its `redirectEndpointIds` array were aliased and mutable. | The protocol returns a fresh deep-frozen receipt copy with a frozen redirect array. The caller's receipt and array are never retained. |
+| F2 | Transport receipt identifiers accepted locator and secret shapes. | The receipt identifiers use the exact strict ASCII grammar of the existing policy projections, and a drift test compares the two acceptances over one corpus. |
+| F3 | Guards leaked raw `Error` and `TypeError` from proxy traps. | Every foreign property access is wrapped. A trap becomes a static `StructResolverProtocolError` code with no foreign message and no `cause`. |
+
+F3 also covers the driver: the driver reuses the protocol field reader, and
+the chunk stream accessor is wrapped the same way.
+
 ## 6. Evidence
 
 ```text
 ./node_modules/.bin/tsc --noEmit                                   # clean
 ./node_modules/.bin/vitest run tests/bundle-resolver-lifecycle.test.ts \
-  tests/bundle-resolver-execution.test.ts --maxWorkers=1           # 81 passed
+  tests/bundle-resolver-execution.test.ts --maxWorkers=1           # 108 passed
 ./node_modules/.bin/vitest run tests/bundle-assets.test.ts \
   tests/bundle-canonical.test.ts tests/bundle-canonical-vectors.test.ts \
   tests/bundle-embedded.test.ts tests/bundle-embedded-value.test.ts \
@@ -211,7 +262,7 @@ implementation. The cumulative cap is what bounds the retention.
 node scripts/check-source-boundary.mjs                             # clean
 ```
 
-The lifecycle file carries 48 tests and the execution file 33.
+The lifecycle file carries 69 tests and the execution file 39.
 
 ### Adversarial pilots
 
@@ -250,9 +301,11 @@ the failure hygiene checks.
   `@erniesg/struct/bundle` yet, `decodeStructBundle` is still synchronous,
   and the raw expected-digest gate and the asynchronous facade are the
   reserved integration work.
-- **The policy concurrency and the profile concurrency differ.** The
-  supervisor admits up to the policy `maxConcurrent`; the driver resolves at
-  most `min(profile.maxConcurrency, policy.maxConcurrent)` targets at a time.
+- **The frozen profile caps the fan-out at one.** The policy may declare a
+  larger `maxConcurrent`, but the effective fan-out is
+  `min(profile.maxConcurrency, policy.maxConcurrent)`, so the profile is
+  always the binding bound. The supervisor refuses the allocation that would
+  exceed the cap before any host is bound.
 - **The reference supervisor is a reference, not a certification.** It proves
   that a conforming executor is implementable and it supplies the identity,
   admission, one-shot, revocation, and tombstone rules. Whether a consumer's

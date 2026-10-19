@@ -27,6 +27,8 @@ import type {
   StructResolverTerminalReceipt,
 } from '../src/bundle/resolver-protocol'
 import { createStructResolverSupervisorV1 } from '../src/bundle/resolver-supervisor'
+import { validateResolverPolicyV1 } from '../src/bundle/resolver-policy'
+import { STRUCT_BUNDLE_LIMITS_PROFILE } from '../src/bundle/limits'
 import {
   createFakeHost,
   createFakeSupervisor,
@@ -475,6 +477,179 @@ describe('fail-stop receipt validation', () => {
         method: 'timer',
       } }), 'exec-1',
     )).toThrow(StructResolverProtocolError)
+  })
+})
+
+describe('review finding F1: the validated transport receipt is aliased and mutable', () => {
+  it('returns a fresh deep-frozen receipt copy', () => {
+    const receipt = { ...transportReceipt(), redirectEndpointIds: ['b'] }
+    const validated = validateStructResolverResult(result({
+      transportReceipt: receipt,
+    }))
+    const snapshot = validated.transportReceipt as unknown as {
+      endpointId: string
+      redirectEndpointIds: readonly string[]
+    }
+    ;(receipt as { endpointId: string }).endpointId = 'mutated'
+    ;(receipt.redirectEndpointIds as string[]).push('c')
+    expect(snapshot.endpointId).toBe('a')
+    expect(snapshot.redirectEndpointIds).toEqual(['b'])
+    expect(Object.isFrozen(snapshot)).toBe(true)
+    expect(Object.isFrozen(snapshot.redirectEndpointIds)).toBe(true)
+  })
+})
+
+describe('review finding F2: transport receipt identifiers accept locator shapes', () => {
+  it.each([
+    'https://evil/x',
+    'a%2fb',
+    'a/b',
+    '../x',
+    'a?query=1',
+    'a#fragment',
+    'a;b',
+    'a\\b',
+    '',
+    'a'.repeat(129),
+    '.leading',
+    '-leading',
+  ])('rejects the locator-shaped identifier %s', (endpointId) => {
+    expect(() => validateStructResolverResult(result({
+      transportReceipt: { ...transportReceipt(), endpointId },
+    }))).toThrow(StructResolverProtocolError)
+  })
+})
+
+describe('review finding F3: the guards leak raw trap errors', () => {
+  it.each([
+    ['ownKeys', { ownKeys() { throw new TypeError('ownKeys trap') } }],
+    ['getOwnPropertyDescriptor', {
+      getOwnPropertyDescriptor() { throw new Error('descriptor trap') },
+    }],
+    ['getPrototypeOf', { getPrototypeOf() { throw new TypeError('prototype trap') } }],
+  ])('converts the %s trap into a static protocol error', (_name, handler) => {
+    const trap = new Proxy({}, handler as ProxyHandler<object>)
+    let caught: unknown
+    try {
+      readStructResolverFields(trap, ['a'])
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(StructResolverProtocolError)
+    expect((caught as StructResolverProtocolError).code).toBe('SHAPE')
+    expect((caught as Error).message).toBe('resolver protocol error: shape')
+    expect((caught as Error).cause).toBeUndefined()
+  })
+
+  it('does not invoke a value getter trap while reading fields', () => {
+    let read = 0
+    const trap = new Proxy({ a: 1 }, {
+      get(target, property, receiver) {
+        if (property === 'a') read += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const fields = readStructResolverFields(trap, ['a'])
+    expect(fields.a).toBe(1)
+    expect(read).toBe(0)
+  })
+})
+
+describe('resolver budget and concurrency profile', () => {
+  it('publishes one frozen resolver bound in the single profile', () => {
+    expect(STRUCT_BUNDLE_LIMITS_PROFILE.maxConcurrency).toBe(1)
+    expect(STRUCT_BUNDLE_LIMITS_PROFILE.maxResolverTimeoutMs).toBe(120_000)
+    expect(Object.isFrozen(STRUCT_BUNDLE_LIMITS_PROFILE)).toBe(true)
+    expect(STRUCT_BUNDLE_LIMITS_PROFILE.profileVersion).toBe('1.0.0')
+  })
+
+  it('refuses a total budget above the frozen profile cap', () => {
+    const policy = fixturePolicy()
+    expect(() => validateStructResolverRequest(fixtureRequest({
+      policy,
+      expectedPolicySha256: fixturePolicyDigest(policy),
+      budget: { totalTimeoutMs: 120_000, cleanupReserveMs: 200 },
+    }))).not.toThrow()
+    expect(() => validateStructResolverRequest(fixtureRequest({
+      policy,
+      expectedPolicySha256: fixturePolicyDigest(policy),
+      budget: { totalTimeoutMs: 120_001, cleanupReserveMs: 200 },
+    }))).toThrow(StructResolverProtocolError)
+  })
+
+  it('never admits more executions than the frozen profile concurrency', () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const policy = fixturePolicy(8)
+    const request = fixtureRequest({
+      policy,
+      expectedPolicySha256: fixturePolicyDigest(policy),
+    })
+    supervisor.executor.allocate(request)
+    // The policy asks for eight, the frozen profile allows one.
+    expect(() => supervisor.executor.allocate(request)).toThrow(
+      StructResolverProtocolError,
+    )
+    expect(supervisor.hosts).toHaveLength(1)
+  })
+
+  it('applies the same identifier grammar as the strict policy projection', () => {
+    const accepted = ['map-1', 'a', 'store_1', 'root.cap:1', 'A'.repeat(128)]
+    const refused = [
+      'https://evil/x',
+      'a%2fb',
+      'a/b',
+      '../x',
+      'a?query=1',
+      'a#fragment',
+      'a;b',
+      'a\\b',
+      '',
+      'A'.repeat(129),
+      '.leading',
+      '-leading',
+      'ünicode',
+    ]
+    for (const value of accepted) {
+      const policy = {
+        ...fixturePolicy(),
+        profileId: value,
+      }
+      let acceptedByPolicy = true
+      try {
+        validateResolverPolicyV1(policy)
+      } catch {
+        acceptedByPolicy = false
+      }
+      const acceptedByProtocol = acceptedByPolicy &&
+        (() => {
+          try {
+            validateStructResolverResult(result({
+              transportReceipt: { ...transportReceipt(), endpointId: value },
+            }))
+            return true
+          } catch {
+            return false
+          }
+        })()
+      expect(acceptedByProtocol).toBe(acceptedByPolicy)
+    }
+    for (const value of refused) {
+      let acceptedByPolicy = true
+      try {
+        validateResolverPolicyV1({ ...fixturePolicy(), profileId: value })
+      } catch {
+        acceptedByPolicy = false
+      }
+      let acceptedByProtocol = true
+      try {
+        validateStructResolverResult(result({
+          transportReceipt: { ...transportReceipt(), endpointId: value },
+        }))
+      } catch {
+        acceptedByProtocol = false
+      }
+      expect(acceptedByProtocol).toBe(acceptedByPolicy)
+    }
   })
 })
 

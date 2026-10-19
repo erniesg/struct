@@ -66,7 +66,7 @@ export type FakeHostBehaviour = Readonly<{
   nonByteChunk?: boolean
   revoke?: 'accept' | 'throw' | 'quarantine-false' | 'foreign-id' | 'swapped-id' | 'promise'
   cleanup?: 'resolve' | 'throw' | 'hang'
-  terminate?: 'resolve' | 'throw' | 'hang' | 'foreign-id' | 'wrong-state'
+  terminate?: 'resolve' | 'throw' | 'hang' | 'foreign-id' | 'swapped-id' | 'wrong-state'
   /** Terminal state reported by a resolving join. Defaults to 'completed'. */
   terminalState?: 'terminated' | 'completed'
   /** Overrides the endpoint identifier echoed in the transport receipt. */
@@ -199,6 +199,8 @@ export function createFakeHost(
       if (behaviour.terminate === 'hang') await new Promise(() => {})
       if (behaviour.terminate === 'foreign-id')
         return { executionId: 'foreign-execution', state: 'terminated' }
+      if (behaviour.terminate === 'swapped-id')
+        return { executionId: context.swapTargetId ?? 'foreign-execution', state: 'terminated' }
       if (behaviour.terminate === 'wrong-state')
         return { executionId, state: 'terminated' as 'completed' }
       return { executionId, state: behaviour.terminalState ?? 'completed' }

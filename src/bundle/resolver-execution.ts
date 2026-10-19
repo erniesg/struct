@@ -20,6 +20,7 @@ import {
   StructResolverProtocolError,
   isStructResolverLogicalHref,
   planStructResolverBudget,
+  readStructResolverFields,
   validateStructResolverFailStopReceipt,
   validateStructResolverResult,
   validateStructResolverRevocationReceipt,
@@ -154,24 +155,7 @@ function ownDataFields(
   allowed: readonly string[],
   required: readonly string[] = allowed,
 ): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value))
-    throw new TypeError('shape')
-  const prototype = Object.getPrototypeOf(value)
-  if (prototype !== Object.prototype && prototype !== null)
-    throw new TypeError('shape')
-  const keys = Reflect.ownKeys(value)
-  for (const key of keys) {
-    if (typeof key !== 'string') throw new TypeError('shape')
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value'))
-      throw new TypeError('shape')
-  }
-  const allowedSet = new Set(allowed)
-  for (const key of keys as string[])
-    if (!allowedSet.has(key)) throw new TypeError('shape')
-  for (const key of required)
-    if (!Object.hasOwn(value, key)) throw new TypeError('shape')
-  return value as Record<string, unknown>
+  return readStructResolverFields(value, allowed, required) as Record<string, unknown>
 }
 
 /**
@@ -301,7 +285,28 @@ type ParsedOptions = Readonly<{
   now: () => number
 }>
 
-function parseOptions(value: unknown): ParsedOptions {
+/**
+ * Reads the monotonic clock seam before the options are validated.
+ *
+ * The total budget starts before the preflight, so the clock has to be
+ * available before the option object is trusted. A foreign option object
+ * falls back to the package monotonic clock.
+ */
+function readClock(value: unknown): () => number {
+  try {
+    if (value !== null && typeof value === 'object') {
+      const descriptor = Object.getOwnPropertyDescriptor(value, 'now')
+      if (descriptor && Object.hasOwn(descriptor, 'value') &&
+        typeof descriptor.value === 'function')
+        return descriptor.value as () => number
+    }
+  } catch {
+    // A foreign option object falls back to the package monotonic clock.
+  }
+  return defaultNow
+}
+
+function parseOptions(value: unknown, fallbackNow: () => number): ParsedOptions {
   const fields = ownDataFields(
     value,
     ['executor', 'hostSupervisor', 'policy', 'expectedPolicySha256', 'budget', 'signal', 'now'],
@@ -340,7 +345,7 @@ function parseOptions(value: unknown): ParsedOptions {
     totalTimeoutMs: plan.totalTimeoutMs,
     cleanupReserveMs: plan.cleanupReserveMs,
     signal: Object.hasOwn(fields, 'signal') ? fields.signal as AbortSignal : undefined,
-    now: typeof fields.now === 'function' ? fields.now as () => number : defaultNow,
+    now: typeof fields.now === 'function' ? fields.now as () => number : fallbackNow,
   })
 }
 
@@ -531,13 +536,21 @@ async function resolveOne(
   options: ParsedOptions,
   remainingAggregate: number,
   seenExecutionIds: Set<string>,
+  deadline: number,
 ): Promise<
   | Readonly<{ ok: true; bytes: Uint8Array }>
   | Readonly<{ ok: false; code: StructResolverResolutionFailureCode; executionId?: string }>
 > {
-  const started = options.now()
-  const outerDeadline = started + options.totalTimeoutMs
-  const workDeadline = started + (options.totalTimeoutMs - options.cleanupReserveMs)
+  const nowMs = options.now()
+  // The total budget started before the preflight, so this execution only
+  // owns what is left of it. The global deadline is never extended.
+  const remaining = Math.floor(deadline - nowMs)
+  if (remaining < 2)
+    return Object.freeze({ ok: false, code: 'TIMEOUT' })
+  const totalTimeoutMs = remaining
+  const cleanupReserveMs = Math.min(options.cleanupReserveMs, totalTimeoutMs - 1)
+  const outerDeadline = deadline
+  const workDeadline = nowMs + (totalTimeoutMs - cleanupReserveMs)
   const controller = new AbortController()
   const callerSignal = options.signal
   const onAbort = () => controller.abort()
@@ -559,8 +572,8 @@ async function resolveOne(
     policy: options.policy,
     expectedPolicySha256: options.expectedPolicySha256,
     budget: Object.freeze({
-      totalTimeoutMs: options.totalTimeoutMs,
-      cleanupReserveMs: options.cleanupReserveMs,
+      totalTimeoutMs,
+      cleanupReserveMs,
     }),
     signal: controller.signal,
   })
@@ -745,7 +758,30 @@ async function resolveOne(
     }))
   }
 
-  const iterator = result.chunks[Symbol.asyncIterator]()
+  let iterator: AsyncIterator<Uint8Array>
+  try {
+    iterator = result.chunks[Symbol.asyncIterator]() as AsyncIterator<Uint8Array>
+  } catch {
+    const outcome = await teardown(execution, options, outerDeadline, false)
+    if (!outcome.ok && outcome.failStopReason) {
+      const proven = await failStop(
+        options.hostSupervisor,
+        execution.executionId,
+        outcome.failStopReason,
+      )
+      if (!proven)
+        return finish(Object.freeze({
+          ok: false,
+          code: 'FAIL_STOP',
+          executionId: execution.executionId,
+        }))
+    }
+    return finish(Object.freeze({
+      ok: false,
+      code: outcome.code ?? 'STREAM',
+      executionId: execution.executionId,
+    }))
+  }
   execution.iterator = iterator
   const maxAssetBytes = Math.min(
     target.byteLength,
@@ -851,9 +887,14 @@ export async function resolveStructResolverAssets(
   targets: readonly StructResolverAssetTarget[],
   options: StructResolverExecutionOptions,
 ): Promise<StructResolverResolutionResult> {
+  // The total budget starts before the preflight, so a later bytes decoder
+  // can pass the remaining budget after a raw parse and the global deadline
+  // is preserved.
+  const now = readClock(options)
+  const started = now()
   let parsed: ParsedOptions
   try {
-    parsed = parseOptions(options)
+    parsed = parseOptions(options, now)
   } catch (error) {
     if (error instanceof OptionError) return failure(error.code)
     if (error instanceof StructResolverProtocolError) {
@@ -863,6 +904,7 @@ export async function resolveStructResolverAssets(
     }
     return failure('OPTIONS')
   }
+  const deadline = started + parsed.totalTimeoutMs
   let wanted: StructResolverAssetTarget[]
   try {
     wanted = parseTargets(targets)
@@ -897,7 +939,13 @@ export async function resolveStructResolverAssets(
       next += 1
       if (index >= wanted.length) return
       const target = wanted[index]!
-      const outcome = await resolveOne(target, parsed, aggregateCap - aggregate, seenExecutionIds)
+      const outcome = await resolveOne(
+        target,
+        parsed,
+        aggregateCap - aggregate,
+        seenExecutionIds,
+        deadline,
+      )
       if (!outcome.ok) {
         stopped = failure(outcome.code, outcome.executionId)
         return

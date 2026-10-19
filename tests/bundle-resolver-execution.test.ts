@@ -619,6 +619,127 @@ describe('execution iterator handling', () => {
   })
 })
 
+describe('execution budget profile', () => {
+  it('refuses a total budget above the frozen profile cap before any allocation', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const result = await resolveStructResolverAssets([target()], options({
+      executor: supervisor.executor,
+      budget: { totalTimeoutMs: 120_001, cleanupReserveMs: 200 },
+    }))
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('BUDGET')
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('starts the total budget before the preflight and passes the remainder', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const policy = httpsPolicy()
+    let calls = 0
+    const clock = () => {
+      calls += 1
+      return calls === 1 ? 0 : 100
+    }
+    const result = await resolveStructResolverAssets([target()], options({
+      executor: supervisor.executor,
+      policy,
+      expectedPolicySha256: policyDigest(policy),
+      budget: { totalTimeoutMs: 200, cleanupReserveMs: 50 },
+      now: clock,
+    }))
+    expect(result.ok).toBe(true)
+    const request = supervisor.requests[0]!
+    // The global total of 200 ms started before the preflight, the preflight
+    // consumed 100 ms, so the execution only owns the remaining 100 ms.
+    expect(request.budget.totalTimeoutMs).toBe(100)
+    expect(request.budget.cleanupReserveMs).toBe(50)
+  })
+
+  it('never exceeds the frozen profile concurrency', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const policy = httpsPolicy(8)
+    const result = await resolveStructResolverAssets(
+      [target({ id: 'asset-1' }), target({ id: 'asset-2' })],
+      options({
+        executor: supervisor.executor,
+        policy,
+        expectedPolicySha256: policyDigest(policy),
+      }),
+    )
+    expect(result.ok).toBe(true)
+    // The policy asks for eight, the frozen profile allows one, so the two
+    // executions run strictly one after the other.
+    expect(supervisor.hosts.map((host) => host.order)).toEqual([
+      ['start', 'revoke', 'cleanup', 'terminate'],
+      ['start', 'revoke', 'cleanup', 'terminate'],
+    ])
+  })
+
+  it('always sends a real abort signal even without a caller signal', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const policy = httpsPolicy()
+    await resolveStructResolverAssets([target()], options({
+      executor: supervisor.executor,
+      policy,
+      expectedPolicySha256: policyDigest(policy),
+    }))
+    const signal = supervisor.requests[0]!.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal.aborted).toBe(true)
+  })
+})
+
+describe('execution stale receipt handling', () => {
+  it('refuses a terminal receipt that carries a retired execution identifier', async () => {
+    const behaviours: FakeHostBehaviour[] = [
+      { revoke: 'accept' },
+      { revoke: 'accept', terminate: 'swapped-id' },
+    ]
+    let index = 0
+    const supervisor = createFakeSupervisor(() => behaviours[Math.min(index++, 1)]!)
+    const host = createFakeHostSupervisor()
+    const policy = httpsPolicy()
+    const result = await resolveStructResolverAssets(
+      [target({ id: 'asset-1' }), target({ id: 'asset-2' })],
+      options({
+        executor: supervisor.executor,
+        hostSupervisor: host,
+        policy,
+        expectedPolicySha256: policyDigest(policy),
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('TERMINAL')
+    expect(host.calls).toHaveLength(1)
+    expect(host.calls[0]!.reason).toBe('TERMINAL_RECEIPT')
+  })
+
+  it('refuses a revocation receipt that carries a retired execution identifier', async () => {
+    const behaviours: FakeHostBehaviour[] = [
+      { revoke: 'accept' },
+      { revoke: 'swapped-id' },
+    ]
+    let index = 0
+    const supervisor = createFakeSupervisor(() => behaviours[Math.min(index++, 1)]!)
+    const host = createFakeHostSupervisor()
+    const policy = httpsPolicy()
+    const result = await resolveStructResolverAssets(
+      [target({ id: 'asset-1' }), target({ id: 'asset-2' })],
+      options({
+        executor: supervisor.executor,
+        hostSupervisor: host,
+        policy,
+        expectedPolicySha256: policyDigest(policy),
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('REVOCATION')
+    expect(host.calls[0]!.reason).toBe('REVOCATION_RECEIPT')
+  })
+})
+
 describe('execution failure hygiene', () => {
   it('carries only a code and an opaque identifier', async () => {
     const supervisor = createFakeSupervisor(() => ({ revoke: 'throw' }))

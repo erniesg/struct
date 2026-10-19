@@ -12,8 +12,9 @@
  * accepts a transport locator. Every guard is total, side-effect free, and
  * returns a frozen snapshot that cannot alias caller memory.
  */
-import { ResolverPolicyError, validateResolverPolicyV1 } from './resolver-policy'
+import { validateResolverPolicyV1 } from './resolver-policy'
 import type { StructAssetResolutionPolicyV1 } from './resolver-policy'
+import { STRUCT_BUNDLE_LIMITS_PROFILE } from './limits'
 
 export type { StructAssetResolutionPolicyV1 } from './resolver-policy'
 
@@ -222,35 +223,78 @@ export class StructResolverProtocolError extends Error {
 const DIGEST = /^[0-9a-f]{64}$/u
 
 /**
+ * The shared policy identifier grammar.
+ *
+ * It is exactly the grammar the strict policy projection applies to profile,
+ * endpoint map, endpoint, root capability, and store identifiers:
+ * case-sensitive ASCII, no Unicode, no percent decoding, no case folding,
+ * and no other normalization. A URL, a path, a percent escape, a matrix
+ * parameter, a query, and a fragment are all outside it.
+ */
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+
+/**
+ * Validates one opaque identifier against the shared grammar.
+ *
+ * The value is an identifier, never a locator: it carries no URL, path,
+ * storage key, credential, or alias.
+ */
+function identifier(
+  value: unknown,
+  code: StructResolverProtocolErrorCode = 'REQUEST',
+): string {
+  if (typeof value !== 'string' || !IDENTIFIER.test(value))
+    throw new StructResolverProtocolError(code)
+  return value
+}
+
+/**
  * Reads own data properties only.
  *
  * Accessors, symbols, foreign prototypes, unknown keys, and missing required
- * keys are rejected. The returned record is the caller's own object; it is
- * never cloned, so callers must copy anything they retain.
+ * keys are rejected. The result is a frozen snapshot of the own data
+ * properties: the caller's object is never retained or aliased, and no
+ * accessor or proxy getter is ever invoked.
+ *
+ * A foreign prototype trap, a revoked proxy, or a throwing descriptor trap
+ * is reported as a static `SHAPE` protocol error. The foreign message and
+ * the foreign error are never carried into the package error.
  */
 export function readStructResolverFields(
   value: unknown,
   allowed: readonly string[],
   required: readonly string[] = allowed,
 ): Readonly<Record<string, unknown>> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value))
-    throw new StructResolverProtocolError('SHAPE')
-  const prototype = Object.getPrototypeOf(value)
-  if (prototype !== Object.prototype && prototype !== null)
-    throw new StructResolverProtocolError('SHAPE')
-  const keys = Reflect.ownKeys(value)
-  for (const key of keys) {
-    if (typeof key !== 'string') throw new StructResolverProtocolError('SHAPE')
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value'))
+  let keys: (string | symbol)[]
+  try {
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
       throw new StructResolverProtocolError('SHAPE')
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null)
+      throw new StructResolverProtocolError('SHAPE')
+    keys = Reflect.ownKeys(value)
+  } catch (error) {
+    if (error instanceof StructResolverProtocolError) throw error
+    throw new StructResolverProtocolError('SHAPE')
   }
   const allowedSet = new Set(allowed)
-  for (const key of keys as string[])
+  const snapshot: Record<string, unknown> = {}
+  for (const key of keys) {
+    if (typeof key !== 'string') throw new StructResolverProtocolError('SHAPE')
     if (!allowedSet.has(key)) throw new StructResolverProtocolError('SHAPE')
+    let descriptor: PropertyDescriptor | undefined
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key)
+    } catch {
+      throw new StructResolverProtocolError('SHAPE')
+    }
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value'))
+      throw new StructResolverProtocolError('SHAPE')
+    snapshot[key] = descriptor.value
+  }
   for (const key of required)
-    if (!Object.hasOwn(value, key)) throw new StructResolverProtocolError('SHAPE')
-  return value as Record<string, unknown>
+    if (!Object.hasOwn(snapshot, key)) throw new StructResolverProtocolError('SHAPE')
+  return Object.freeze(snapshot)
 }
 
 /**
@@ -335,12 +379,16 @@ function safeCount(value: unknown): number {
 }
 
 /**
- * Strict budget plan.
+ * Validates a budget pair and returns the derived work/cleanup split.
  *
  * The total budget bounds one execution. The cleanup reserve is withheld
  * from the work phase so that teardown always has time inside the total
  * budget. A reserve that is zero, negative, or not smaller than the total is
  * rejected before any allocation.
+ *
+ * The budget is mandatory and explicit: there is no implicit default. The
+ * total is also bounded by the single frozen limits profile, so a caller
+ * cannot enlarge the resolver budget past the published cap.
  */
 export type StructResolverBudgetPlan = Readonly<{
   totalTimeoutMs: number
@@ -360,6 +408,8 @@ export function planStructResolverBudget(
     throw new StructResolverProtocolError('BUDGET')
   if (typeof cleanupReserveMs !== 'number' || !Number.isSafeInteger(cleanupReserveMs) ||
     cleanupReserveMs < 1 || cleanupReserveMs >= totalTimeoutMs)
+    throw new StructResolverProtocolError('BUDGET')
+  if (totalTimeoutMs > STRUCT_BUNDLE_LIMITS_PROFILE.maxResolverTimeoutMs)
     throw new StructResolverProtocolError('BUDGET')
   return Object.freeze({
     totalTimeoutMs,
@@ -399,10 +449,10 @@ export function validateStructResolverRequest(
     const validated = validateResolverPolicyV1(fields.policy)
     policyDigest = validated.policySha256
     policy = validated.policySnapshot()
-  } catch (error) {
-    if (error instanceof ResolverPolicyError)
-      throw new StructResolverProtocolError('POLICY')
-    throw error
+  } catch {
+    // A foreign policy object, a proxy trap, or a malformed projection is a
+    // static policy failure. The foreign message and cause are not carried.
+    throw new StructResolverProtocolError('POLICY')
   }
   if (fields.expectedPolicySha256 !== policyDigest)
     throw new StructResolverProtocolError('POLICY')
@@ -434,44 +484,68 @@ export function validateStructResolverRequest(
 /**
  * Strict shape of one transport receipt.
  *
- * Only non-secret identifiers are allowed. A URL, path, storage key, header,
+ * Only non-secret identifiers are allowed, and they follow the same ASCII
+ * grammar as the policy identifiers. A URL, path, storage key, header,
  * credential, matrix parameter, or percent-encoded alias is rejected here
  * because it must never reach a receipt, an error, or a log.
+ *
+ * The returned receipt is a fresh deep-frozen copy. The caller's object and
+ * the caller's redirect array are never retained or aliased.
  */
 function validateTransportReceiptShape(
   value: unknown,
 ): StructAssetResolutionResult['transportReceipt'] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value))
-    throw new StructResolverProtocolError('RESULT')
-  const kind = (value as { kind?: unknown }).kind
+  const kind = readTransportKind(value)
   if (kind === 'https') {
     const fields = readStructResolverFields(value, [
       'kind', 'policySha256', 'endpointMapId', 'endpointId', 'redirectEndpointIds',
     ])
-    digest(fields.policySha256, 'RESULT')
-    boundedText(fields.endpointMapId, 256, 'RESULT')
-    boundedText(fields.endpointId, 256, 'RESULT')
-    if (!Array.isArray(fields.redirectEndpointIds))
+    const redirectEndpointIds = fields.redirectEndpointIds
+    if (!Array.isArray(redirectEndpointIds))
       throw new StructResolverProtocolError('RESULT')
-    for (const entry of fields.redirectEndpointIds)
-      boundedText(entry, 256, 'RESULT')
-    return value as StructAssetResolutionResult['transportReceipt']
+    const ids = redirectEndpointIds.map((entry) => identifier(entry, 'RESULT'))
+    return Object.freeze({
+      kind: 'https',
+      policySha256: digest(fields.policySha256, 'RESULT'),
+      endpointMapId: identifier(fields.endpointMapId, 'RESULT'),
+      endpointId: identifier(fields.endpointId, 'RESULT'),
+      redirectEndpointIds: Object.freeze(ids),
+    })
   }
   if (kind === 'filesystem') {
     const fields = readStructResolverFields(value, [
       'kind', 'policySha256', 'rootCapabilityId',
     ])
-    digest(fields.policySha256, 'RESULT')
-    boundedText(fields.rootCapabilityId, 256, 'RESULT')
-    return value as StructAssetResolutionResult['transportReceipt']
+    return Object.freeze({
+      kind: 'filesystem',
+      policySha256: digest(fields.policySha256, 'RESULT'),
+      rootCapabilityId: identifier(fields.rootCapabilityId, 'RESULT'),
+    })
   }
   if (kind === 'content-addressed') {
     const fields = readStructResolverFields(value, ['kind', 'policySha256', 'storeId'])
-    digest(fields.policySha256, 'RESULT')
-    boundedText(fields.storeId, 256, 'RESULT')
-    return value as StructAssetResolutionResult['transportReceipt']
+    return Object.freeze({
+      kind: 'content-addressed',
+      policySha256: digest(fields.policySha256, 'RESULT'),
+      storeId: identifier(fields.storeId, 'RESULT'),
+    })
   }
   throw new StructResolverProtocolError('RESULT')
+}
+
+/** Reads the transport kind without invoking a foreign getter or trap. */
+function readTransportKind(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new StructResolverProtocolError('RESULT')
+  let descriptor: PropertyDescriptor | undefined
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, 'kind')
+  } catch {
+    throw new StructResolverProtocolError('RESULT')
+  }
+  if (!descriptor || !Object.hasOwn(descriptor, 'value'))
+    throw new StructResolverProtocolError('RESULT')
+  return descriptor.value
 }
 
 /**
@@ -496,8 +570,15 @@ export function validateStructResolverResult(
     !/^sha256:[0-9a-f]{64}$/u.test(fields.resourceId))
     throw new StructResolverProtocolError('RESULT')
   const chunks = fields.chunks
-  if (chunks === null || typeof chunks !== 'object' ||
-    typeof (chunks as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] !== 'function')
+  if (chunks === null || typeof chunks !== 'object')
+    throw new StructResolverProtocolError('RESULT')
+  let chunkIterator: unknown
+  try {
+    chunkIterator = (chunks as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator]
+  } catch {
+    throw new StructResolverProtocolError('RESULT')
+  }
+  if (typeof chunkIterator !== 'function')
     throw new StructResolverProtocolError('RESULT')
   const transportReceipt = validateTransportReceiptShape(fields.transportReceipt)
   const hasLength = Object.hasOwn(fields, 'declaredByteLength')

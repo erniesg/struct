@@ -23,6 +23,14 @@ export type StructBundleLimitsProfile = Readonly<{
   maxDepth: number
   maxStringLength: number
   maxNodes: number
+  /**
+   * Upper bound for one resolver execution budget.
+   *
+   * The resolver total budget is mandatory and explicit. This bound is the
+   * only resolver-specific cap in the single frozen profile; it never
+   * enlarges the embedded caps above.
+   */
+  maxResolverTimeoutMs: number
 }>
 
 export const STRUCT_BUNDLE_LIMITS_PROFILE: StructBundleLimitsProfile =
@@ -39,6 +47,7 @@ export const STRUCT_BUNDLE_LIMITS_PROFILE: StructBundleLimitsProfile =
     maxDepth: 128,
     maxStringLength: 5_592_408,
     maxNodes: 1_000_000,
+    maxResolverTimeoutMs: 120_000,
   })
 
 export class BundleValueLimitError extends Error {

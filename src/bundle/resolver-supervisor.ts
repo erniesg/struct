@@ -21,6 +21,7 @@ import {
   validateStructResolverRevocationReceipt,
   validateStructResolverTerminalReceipt,
 } from './resolver-protocol'
+import { STRUCT_BUNDLE_LIMITS_PROFILE } from './limits'
 import type {
   StructAssetResolutionRequest,
   StructAssetResolutionResult,
@@ -216,7 +217,10 @@ export function createStructResolverSupervisorV1(
     if (validated.signal.aborted)
       throw new StructResolverProtocolError('REQUEST')
 
-    const limit = validated.policy.maxConcurrent
+    const limit = Math.min(
+      STRUCT_BUNDLE_LIMITS_PROFILE.maxConcurrency,
+      validated.policy.maxConcurrent,
+    )
     if (active.size + retiredCapacity >= limit)
       throw new StructResolverProtocolError('POLICY')
 
