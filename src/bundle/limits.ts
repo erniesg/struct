@@ -140,12 +140,15 @@ export function assertStructBundleValueLimits(
 
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     try {
+      let fields = 0
       for (const key of Reflect.ownKeys(value)) {
         if (typeof key !== 'string') invalid('TYPE')
         const descriptor = Object.getOwnPropertyDescriptor(value, key)
         if (!descriptor || !Object.hasOwn(descriptor, 'value')) invalid('TYPE')
-        if (canonicalJsonBytes(descriptor.value).byteLength > profile.maxFieldBytes)
-          invalid('LIMIT')
+        const size = canonicalJsonBytes(descriptor.value).byteLength
+        if (size > profile.maxFieldBytes) invalid('LIMIT')
+        fields += size
+        if (fields > profile.maxRawBytes) invalid('LIMIT')
       }
     } catch (error) {
       if (error instanceof BundleValueLimitError) throw error
