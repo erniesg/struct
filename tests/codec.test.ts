@@ -180,9 +180,18 @@ describe('STRUCT runtime codec', () => {
 
     try {
       const snapshot = parseBytes(bytes, '$.asset.bytes')
-      expect(snapshot).not.toBe(bytes)
+      // Compare references directly: `expect(snapshot).not.toBe(bytes)` makes
+      // Vitest 4.1.10 deep-compare the 1 MiB typed arrays while building the
+      // failure explanation even though the assertion passes, which is slow.
+      expect(Object.is(snapshot, bytes)).toBe(false)
+      expect(snapshot.length).toBe(bytes.length)
       expect(snapshot[0]).toBe(17)
       expect(snapshot[snapshot.length - 1]).toBe(29)
+      // The copy must own its storage: mutation on either side stays isolated.
+      bytes[0] = 99
+      expect(snapshot[0]).toBe(17)
+      snapshot[snapshot.length - 1] = 42
+      expect(bytes[bytes.length - 1]).toBe(29)
     } finally {
       Reflect.ownKeys = ownKeys
       Object.getOwnPropertyDescriptor = descriptor
