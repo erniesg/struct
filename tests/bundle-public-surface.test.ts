@@ -74,8 +74,12 @@ describe('public ./bundle surface', () => {
     // The coordinator owns the package/export-manifest integration lane. This
     // test pins the recorded manifest without editing it from this worktree.
     expect(manifest.runtimeExports['./bundle']).toEqual([
+      'STRUCT_BUNDLE_LIMITS_PROFILE',
+      'STRUCT_BUNDLE_LIMITS_PROFILE_VERSION',
+      'createStructBundle',
       'decodeStructBundle',
       'encodeStructBundle',
+      'verifyStructBundle',
     ])
   })
 

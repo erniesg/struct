@@ -22,14 +22,24 @@ Private `src/**` modules are not consumer APIs.
 
 `@erniesg/struct/bundle` exposes the first portable interchange boundary:
 
+- `createStructBundle(input, options?)` builds an embedded bundle from a
+  runtime or JSON document. Asset bytes must be present on the document and
+  match their declared SHA-256; the serialized document projection never
+  contains them.
 - `decodeStructBundle(rawJsonBytes, options?)` accepts untrusted wire bytes
   only. It applies the raw-input cap, checks an optional expected
   `bundleSha256` before parsing, proves canonical input, validates the
   byte-free document projection and receipt equality, and verifies every
   embedded asset's base64, length, and digest. It returns a structured result.
+- `verifyStructBundle(value, options?)` performs strict in-memory value
+  verification for embedded-asset envelopes only. It exposes no
+  expected-raw-digest, resolver, or executor option.
 - `encodeStructBundle(handle)` re-encodes only a genuine package-created
   handle. Structurally copied or forged values fail with `stage: 'handle'`,
   `code: 'FORGED'`.
+- `STRUCT_BUNDLE_LIMITS_PROFILE` and
+  `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION` expose the frozen embedded limit
+  profile.
 
 A verified handle proves integrity and conservation of the exact bytes it was
 created from. It is not a signature and proves nothing about producer
