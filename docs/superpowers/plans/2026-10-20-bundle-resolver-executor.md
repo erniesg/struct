@@ -1,9 +1,10 @@
 # Bundle resolver executor: implementation and conformance plan
 
 **Date:** 2026-10-20
+**Revision:** v2 — resolves independent review `resolver-plan-v2` findings F1–F6 against the binding coordinator decisions in `CONTRACT-DECISIONS.json`.
 **Repository:** `erniesg/struct`
 **Governing contract:** ADR-0001 `docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md` (Ernie.SG), issue-plan S-03/S-04, and `CONTRACT.md` "Planned Bundle semantics".
-**Status:** implementation plan only. This document changes no runtime behavior and claims no cutover.
+**Status:** implementation plan only. This document changes no runtime behavior, proposes no ADR amendment, and claims no cutover.
 
 ## 1. Scope and non-negotiable boundaries
 
@@ -13,36 +14,56 @@ This plan closes the resolver-executor slice of S-03:
 - lifetime-unique execution identity, one-shot start, revocation/quarantine, cleanup, termination/join;
 - bounded streaming external-asset resolution through a consumer-supplied executor;
 - package-owned conformance harness and a real sacrificial-host test for parent-proven fail-stop;
-- versioned Bundle limits that bound raw input and resolved bytes before unbounded allocation.
+- the frozen versioned Bundle limits profile that bounds raw input and resolved bytes before unbounded allocation.
 
 It does **not**:
 
 - implement HTTPS, filesystem, content-addressed-store, DNS, redirect, or descriptor-root resolution;
-- publish a package, regenerate application goldens, activate a writer or public route, or claim S-04/full cutover;
+- publish a package, regenerate application goldens, activate a writer or public route, repin an application artifact, or claim S-04/full cutover;
 - add producer authentication to Struct (that is Ernie.SG/E-02/E-05 and Aether/A-02 work);
-- treat a `Promise.race`, `AbortSignal.timeout`, worker `terminate()`, or executor self-report as out-of-realm termination.
+- treat a `Promise.race`, `AbortSignal.timeout`, worker `terminate()`, or executor self-report as out-of-realm termination;
+- amend ADR-0001 to fit any implementation convenience.
 
-The pinned ADR interfaces in §3 are frozen. Any implementation pressure to remove a field, weaken a literal (`capabilitiesRevoked: true`, `quarantined: true`), or move a supervisor duty into adapter code requires an ADR amendment, not a plan deviation. Additive ports are marked as such.
+The pinned ADR interfaces in §4.1 are frozen. Any implementation pressure to remove a field, weaken a literal (`capabilitiesRevoked: true`, `quarantined: true`), or move a supervisor duty into adapter code requires an ADR amendment, not a plan deviation. Additive ports are marked as such and stay outside the pinned declarations.
 
-## 2. Current-state audit (exact head `998be09`)
+## 2. Binding coordinator decisions
+
+`CONTRACT-DECISIONS.json` is mandatory implementation guidance derived from the already-approved ADR-0001 facade and S-03 acceptance. This plan conforms to it; it does not reinterpret it.
+
+| Decision | Binding rule | Applied in |
+| --- | --- | --- |
+| Facade | `createStructBundle` returns a `VerifiedStructBundle` and throws a documented structured error; `decodeStructBundle` is always `Promise<VerifiedStructBundle>` and rejects with a structured error; `verifyStructBundle` returns a handle and throws; `encodeStructBundle` returns `Uint8Array` and throws a structured error for a forged handle | §4.4, §10 (T6) |
+| Resolver option | `decodeOptions.resolverExecutor` implements the pinned `StructResolverExecutorV1`. Policy, budget, signal, and host-supervisor inputs are separate documented option fields; a nested `resolver.executor` object is not public authority | §4.3 |
+| Limits | One frozen profile: `maxAssetBytes` 4194304, `maxTotalBytes` 4194304, `maxDecodedBytes` 4194304, `maxBase64Chars` 5592408, `maxRawBytes` 8388608. External resolution cannot silently enlarge current limits. Boundary tests required | §8 |
+| Signal | `request.signal` is always a real `AbortSignal`. The decoder may accept an optional caller signal; the package creates a package-owned `AbortController` per execution and combines caller abort with the total/cleanup deadline. The request signal is never omitted | §4.3, §6, §7 |
+| Budget | The package monotonic total starts before preflight and allocation; the cleanup reserve is taken before allocation; allocation, start, stream, revoke, cleanup, and terminate all fit one bounded lifecycle; an unavailable join is an irreversible fail-stop | §6 |
+| Pinned interfaces | Copy the exact ADR request/result/executor/handle/control declarations; an additive parent fail-stop port may be separate; no concrete I/O transport implementation | §4.1, §4.2 |
+| Compatibility | The installed application core tarball exposes no `./bundle`, so no released Bundle consumer is broken. Private result-object helpers may be preserved internally; public names must match the stable ADR. Stage 1 tests/docs need a deliberate migration, and no application artifact repin is authorized here | §3, §4.4 |
+| Ownership lanes | Plan: `resolver-plan-fix`. Public facade: `embedded-facade-fix`. Protocol lifecycle: `resolver-runtime`. Host conformance: `resolver-host-resume`. Manifest/pack consumer: reserved for later integration | §10 |
+
+## 3. Current-state audit (exact head `998be09`)
 
 | Area | Present today | Gap against the full contract |
 | --- | --- | --- |
-| Public facade | `decodeStructBundle`/`encodeStructBundle` at `@erniesg/struct/bundle`; embedded assets only; `UNRESOLVED` for external | No async external path, no create/verify facade, no executor options |
+| Public facade | `decodeStructBundle`/`encodeStructBundle` at `@erniesg/struct/bundle`; embedded assets only; `UNRESOLVED` for external | No external path, no `createStructBundle`/`verifyStructBundle`, no resolver options |
+| Public error style | Stage 1 returns `{ ok: false, error }` result objects | ADR facade returns a handle and throws/rejects a documented structured error; Stage 1 must be migrated deliberately in the facade lane |
 | Policy | `src/bundle/resolver-policy.ts`: strict projection, identifier grammar, domain-separated digest, pinned vectors | `maxConcurrent: 0` is accepted; orchestration must reject it when work exists |
 | Receipts | `src/bundle/resolver-receipt.ts`: data-only transport receipt validation | No result, revocation, terminal, execution-ID, or fail-stop receipts |
 | Streaming | None | No bounded chunk accumulator, incremental digest, cancellation, or iterator return |
 | State machine | None | No allocation, one-shot start, revoke/quarantine, cleanup, terminate/join ordering |
 | Identity | None | No lifetime registry, retired tombstone, duplicate/retired-ID conformance |
-| Limits | Private constants in `embedded.ts`/`assets.ts` | No versioned public profile or N-1/N/N+1 vectors |
+| Limits | Private constants in `embedded.ts` (`maxRawBytes` 8 MiB, `maxAssetBytes` 4 MiB, `maxTotalBytes` 4 MiB, `maxBase64Chars` 5592408) and `assets.ts`/`canonical.ts` | No frozen public profile module, no N-1/N/N+1 vectors |
 | Conformance | None | No harness, no sacrificial host, no parent death proof |
 | Facade shape | `decodeStructBundle` is synchronous | ADR facade is `Promise<VerifiedStructBundle>`; external resolution is necessarily async |
+| Compatibility | The installed application core tarball has no `./bundle` export | No released consumer is broken; no application artifact repin is authorized in this plan |
 
 The existing embedded implementation, policy projection, receipt projection, canonicalization, and asset verification are sound inputs to this work and must be preserved rather than rewritten.
 
-## 3. Frozen protocol interfaces
+## 4. Protocol, options, and public shape
 
-These declarations are copied from ADR-0001 and must remain semantically identical. Implementation may add internal helpers; it may not rename, narrow, or drop members.
+### 4.1 Frozen protocol interfaces
+
+These declarations are copied verbatim from ADR-0001 and must remain semantically identical. Implementation may add internal helpers; it may not rename, narrow, or drop members.
 
 ```ts
 type StructAssetResolutionRequest = {
@@ -56,14 +77,57 @@ type StructAssetResolutionRequest = {
   signal: AbortSignal
 }
 
+type StructAssetResolutionPolicyV1 = {
+  protocolVersion: '1.0.0'
+  profileId: string
+  profileVersion: string
+  maxConcurrent: number
+  transport:
+    | {
+        kind: 'https'
+        endpointMapId: string
+        allowedEndpointIds: readonly string[]
+        redirects: 'deny' | 'same-origin'
+        maxRedirects: number
+        denyPrivateNetworks: true
+        serializedLocators: false
+      }
+    | {
+        kind: 'filesystem'
+        rootCapabilityId: string
+        allowAbsolute: false
+        allowTraversal: false
+        allowSymlinks: false
+      }
+    | {
+        kind: 'content-addressed'
+        storeId: string
+        algorithm: 'sha256'
+      }
+}
+
 type StructAssetResolutionResult = {
   protocolVersion: '1.0.0'
   resourceId: `sha256:${string}`
   chunks: AsyncIterable<Uint8Array>
   transportReceipt:
-    | Readonly<{ kind: 'https'; policySha256: string; endpointMapId: string; endpointId: string; redirectEndpointIds: readonly string[] }>
-    | Readonly<{ kind: 'filesystem'; policySha256: string; rootCapabilityId: string }>
-    | Readonly<{ kind: 'content-addressed'; policySha256: string; storeId: string }>
+    | Readonly<{
+        kind: 'https'
+        policySha256: string
+        endpointMapId: string
+        endpointId: string
+        redirectEndpointIds: readonly string[]
+      }>
+    | Readonly<{
+        kind: 'filesystem'
+        policySha256: string
+        rootCapabilityId: string
+      }>
+    | Readonly<{
+        kind: 'content-addressed'
+        policySha256: string
+        storeId: string
+      }>
   declaredByteLength?: number
 }
 
@@ -79,23 +143,29 @@ type StructResolverTerminalReceipt = Readonly<{
 }>
 
 interface StructResolverExecutionControl {
+  // Collision-resistant, supervisor-generated, and never reused during this supervisor lifetime.
   readonly executionId: string
+  // Synchronously invalidates brokered credential, filesystem, and egress authority.
   revokeAndQuarantine(): StructResolverRevocationReceipt
+  // Idempotent supervisor cleanup is available before start and remains callable if start throws, rejects, or never settles.
   cleanup(): Promise<void>
+  // Controlled by the isolated worker/process supervisor, not adapter code.
   terminateAndJoin(): Promise<StructResolverTerminalReceipt>
 }
 
 type StructResolverExecutionHandle = {
   control: StructResolverExecutionControl
+  // One-shot: called only after Struct holds `control`; this is the sole authority-granting step.
   start(): Promise<StructAssetResolutionResult>
 }
 
 interface StructResolverExecutorV1 {
+  // Allocation is side-effect-free with respect to adapter/transport authority.
   allocate(request: StructAssetResolutionRequest): StructResolverExecutionHandle
 }
 ```
 
-### 3.1 Additive host-supervision port
+### 4.2 Additive host-supervision port (separate from the pinned types)
 
 The pinned interfaces make the executor supervisor responsible for revocation and termination, but they give Struct no parent-realm way to force fail-stop when `terminateAndJoin()` never settles or returns an invalid receipt. ADR requires "the separately supervised verification host to fail-stop" and "proves the host and descendants dead from the parent." Add one separate, versioned port; do not add members to the pinned executor/handle/control.
 
@@ -132,36 +202,66 @@ interface StructResolverHostSupervisorV1 {
 }
 ```
 
-The receipt is **client-attested consistency evidence**, not cryptographic proof and not authentication. Struct validates its shape and execution ID. Only the parent process supervisor and the conformance harness can prove the host and descendants are dead. If fail-stop is unavailable, unresolvable, or returns an invalid receipt, Struct returns `RESOLVER_FAIL_STOP_UNPROVEN`; it never reports normal completion or capacity reuse.
+The receipt is **client-attested consistency evidence**, not cryptographic proof and not authentication. Struct validates its shape and execution ID. Only the parent process supervisor and the conformance harness can prove the host and descendants are dead. If fail-stop is unavailable, unresolvable, or returns an invalid receipt, Struct reports `RESOLVER_FAIL_STOP_UNPROVEN`; it never reports normal completion or capacity reuse.
 
-### 3.2 Decode options
+### 4.3 Decode options (flat, ADR-aligned field names)
+
+ADR-0001 pins `decodeOptions.resolverExecutor`. The remaining resolver inputs are separate, explicitly documented option fields. There is no nested `resolver` grouping and no `resolver.executor` nesting in the public authority.
 
 ```ts
 type StructBundleDecodeOptions = Readonly<{
+  // Bytes ingress only.
   expectedBundleSha256?: string
-  resolver?: Readonly<{
-    executor: StructResolverExecutorV1
-    hostSupervisor: StructResolverHostSupervisorV1
-    policy: StructAssetResolutionPolicyV1
-    budget: Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>
-    signal?: AbortSignal
-  }>
+  // Versioned consumer port (ADR-pinned field name).
+  resolverExecutor?: StructResolverExecutorV1
+  // Strict policy projection; Struct computes expectedPolicySha256 from it.
+  resolverPolicy?: StructAssetResolutionPolicyV1
+  // Monotonic total budget and the cleanup reserve taken before allocation.
+  resolverBudget?: Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>
+  // Optional caller cancellation; the package still owns the request signal.
+  resolverSignal?: AbortSignal
+  // Required parent-realm fail-stop capability for any executor.
+  resolverHostSupervisor?: StructResolverHostSupervisorV1
 }>
 ```
 
 Rules:
 
 - Strict, own-data-property snapshot; unknown keys, accessors, prototypes, proxies, and duplicate keys fail closed before any allocation.
-- `resolver` must be complete when present. `hostSupervisor` is mandatory: an executor that cannot fail-stop is non-conforming for external assets.
-- Resolver options are validated before raw parsing so a malformed option set cannot allocate. They are ignored for envelopes with no external payload, but a partial/unknown option set is still an options error.
-- `signal` is checked once for `AbortSignal` identity and retained only as an abort listener; the listener is removed in `finally`.
-- The package computes `expectedPolicySha256` before any `allocate()` call and places the same immutable policy snapshot in every request.
+- All-or-nothing resolver configuration: if any `resolver*` field is present, `resolverExecutor`, `resolverPolicy`, `resolverBudget`, and `resolverHostSupervisor` must all be present and valid. `resolverSignal` is optional because the package supplies the default (§4.3.1). A partial set is an options error.
+- `resolverHostSupervisor` is mandatory: an executor that cannot fail-stop is non-conforming for external assets.
+- Resolver options are validated before raw parsing so a malformed option set cannot allocate. They are inert for envelopes with no external payload, but a partial or unknown option set is still an options error.
+- The package computes `expectedPolicySha256` from the strict policy projection before any `allocate()` call and places the same immutable policy snapshot in every request.
 
-## 4. Supervisor trust and realm boundaries
+#### 4.3.1 Cancellation signal
+
+- `resolverSignal` is an optional caller signal. It is validated once for `AbortSignal` identity and retained only as an abort listener; the listener is removed in `finally`.
+- The package creates a **package-owned `AbortController` for every execution** and passes that controller's `signal` as `request.signal`. The request signal is never omitted and is never the caller's object.
+- The package-owned signal aborts when the caller signal aborts or when the execution's work deadline elapses, whichever happens first. The caller signal is never forwarded by reference.
+- If the caller signal is already aborted when the execution is prepared, the package still creates its controller, aborts it immediately, and the execution fails through the normal abort/teardown path rather than skipping cleanup.
+- Negative tests: missing/invalid `resolverSignal` type, a pre-aborted caller signal, an `AbortSignal` from a foreign realm, and an `AbortSignal`-like impostor object are all rejected or handled without leaking a caller-owned signal into the request.
+
+### 4.4 Public facade shape (stable, ADR-aligned)
+
+```ts
+createStructBundle(input, options): VerifiedStructBundle
+decodeStructBundle(rawJsonBytes, decodeOptions): Promise<VerifiedStructBundle>
+verifyStructBundle(value, embeddedValueOptions): VerifiedStructBundle
+encodeStructBundle(bundle: VerifiedStructBundle): Uint8Array
+```
+
+Rules:
+
+- Every public acceptance API returns a genuine handle or throws/rejects a documented structured error. No public API returns a nominally accepted unverified bundle, and no public API returns a result object on the success or failure path.
+- The structured error is a documented error type with a stable machine-readable `code`, a `stage`, and non-secret context only. It never carries URLs, paths, tokens, or raw adapter output.
+- Private result-object helpers (the current `decodeEmbeddedBundleBytes` shape) may be preserved inside `src/bundle/**` as internal implementation and for internal tests, but the public names and public behavior must match the ADR.
+- Stage 1 migration is deliberate: current Stage 1 tests and docs expect result objects, so the facade lane migrates them together. The installed application core tarball exposes no `./bundle`, so no released consumer is broken, and no application artifact repin is authorized by this plan.
+
+## 5. Supervisor trust and realm boundaries
 
 | Realm | Owner | Holds | Must never |
 | --- | --- | --- | --- |
-| Package/caller | Struct | raw bytes, canonical bytes, parsed document, monotonic deadline, orchestration state, private verified storage | spawn adapter code synchronously; grant broker/fs/net authority; treat executor or fail-stop receipts as proof of death/authenticity |
+| Package/caller | Struct | raw bytes, canonical bytes, parsed document, monotonic deadline, package-owned abort controller, orchestration state, private verified storage | spawn adapter code synchronously; grant broker/fs/net authority; treat executor or fail-stop receipts as proof of death/authenticity |
 | Executor supervisor | Ernie.SG/Aether | lifetime registry of active IDs and retired tombstones, one-shot start right, broker grants, descendant admission, revocation, cleanup, terminate/join | run adapter code in the caller realm; reuse an ID or capacity; return a revocation receipt before atomic closure; let a late start publish a result |
 | Isolated host/adapter | Ernie.SG/Aether | actual transport adapter, endpoint map, descriptor root, DNS/private-address policy, credentials as brokered capabilities | receive canonical bundle bytes it does not need; put URLs, paths, storage keys, matrix/percent aliases, headers, or credentials in receipts/errors/logs; outlive an accepted terminal receipt |
 | Verification parent | Test/app process supervisor | child PID/process group/cgroup, kill/escalate policy, `waitpid`/reap, descendant census, aggregate admission counter | trust a child's self-report; call a timer "termination"; reuse capacity after fail-stop |
@@ -183,7 +283,7 @@ Rules:
 - Confidentiality from a malicious executor that observes its own request.
 - Producer authenticity, approval, audience, or freshness. Those are application records.
 
-## 5. State machine and teardown ordering
+## 6. State machine, budget origin, and teardown ordering
 
 Executor state (supervisor-owned):
 
@@ -196,22 +296,23 @@ allocated -> starting -> running -> revoking -> cleaning -> terminated
                          fail-stop / parent-proven dead
 ```
 
-Package orchestration per execution:
+Package orchestration per decode:
 
-1. **Preflight (no allocation)**: raw cap, snapshot, expected `bundleSha256`, canonical parse, exact envelope/document/receipt shape, version checks, asset-set equality, policy projection/digest, budget, limits. Any failure returns before `allocate()`.
+0. **Deadline origin.** The package starts its monotonic total clock at decode entry, before preflight, before parsing, and before any `allocate()` call. The cleanup reserve is subtracted from the total and reserved before the first allocation. One decode-level deadline governs the whole decode; each execution receives a sub-deadline derived from it.
+1. **Preflight (no allocation)**: raw cap, snapshot, expected `bundleSha256`, canonical parse, exact envelope/document/receipt shape, version checks, asset-set equality, policy projection/digest, budget, limits, and the package-owned abort controller. Any failure returns before `allocate()`.
 2. **Allocate**: call `allocate(request)` once. Catch synchronous throws. Require a control with a non-empty bounded opaque `executionId`, callable `revokeAndQuarantine`, `cleanup`, `terminateAndJoin`, and a callable `start`. Allocation must be side-effect-free; Struct cannot verify that, so conformance does.
-3. **Start**: call `start()` exactly once, after retaining control. Race against the monotonic work deadline and cancellation. A synchronous throw, rejection, timeout, or never-settling promise enters teardown with no result iterator.
+3. **Start**: call `start()` exactly once, after retaining control. Race against the execution work deadline and the package-owned signal. A synchronous throw, rejection, timeout, or never-settling promise enters teardown with no result iterator.
 4. **Result validation**: check protocol version, resource ID, transport receipt kind/policy/IDs, and optional declared length **before** consuming chunks. A bad receipt enters teardown.
 5. **Stream**: consume chunks one at a time. Reject non-`Uint8Array`, detached, oversized, or over-budget chunks; copy each chunk; update an incremental SHA-256; enforce per-asset and aggregate caps. At completion require exact `byteLength` and digest equality.
-6. **Success teardown**: synchronously `revokeAndQuarantine()`; race `chunks.return()` when a result iterator exists; race `cleanup()`; await `terminateAndJoin()`; require `state: 'completed'` and exact ID. Only then store asset bytes and return the verified bundle.
-7. **Failure teardown**: abort the stream/start; synchronously attempt `revokeAndQuarantine()`; if a result iterator exists, race `return()`; call `cleanup()`; call `terminateAndJoin()`; require `state: 'terminated'` and exact ID. Revocation/iterator/cleanup failure does not stop teardown.
-8. **Fail-stop escalation**: on revocation throw/invalid receipt, terminal throw/invalid/missing, cleanup/join timeout, or post-grant ID ambiguity, call `hostSupervisor.failStop(executionId, reason)`. Continue teardown attempts first when the ADR requires it. Never return a verified bundle from a failed execution.
+6. **Success teardown**: synchronously `revokeAndQuarantine()`; race `chunks.return()` when a result iterator exists; race `cleanup()`; await `terminateAndJoin()`; require `state: 'completed'` and exact ID. Only then store asset bytes and resolve the verified bundle.
+7. **Failure teardown**: abort the package-owned signal and the stream/start; synchronously attempt `revokeAndQuarantine()`; if a result iterator exists, race `return()`; call `cleanup()`; call `terminateAndJoin()`; require `state: 'terminated'` and exact ID. Revocation/iterator/cleanup failure does not stop teardown.
+8. **Fail-stop escalation**: on revocation throw/invalid receipt, terminal throw/invalid/missing, cleanup/join timeout, or post-grant ID ambiguity, call `resolverHostSupervisor.failStop(executionId, reason)`. Continue teardown attempts first when the ADR requires it. Never resolve a verified bundle from a failed execution.
 
-**Budget rule (stricter than the prose but never weaker):** one monotonic deadline per execution, `deadline = start + totalTimeoutMs`; work must finish by `deadline - cleanupReserveMs`; revocation, iterator return, cleanup, terminate/join, and receipt validation must finish by `deadline`. Fail-stop proof has its own parent-owned hard bound; if it cannot be proven inside that bound, return `RESOLVER_FAIL_STOP_UNPROVEN`.
+**Budget rule.** The monotonic total starts before preflight and allocation; the cleanup reserve is taken before the first `allocate()`. For one decode: `totalDeadline = decodeStart + totalTimeoutMs`, `workDeadline = totalDeadline - cleanupReserveMs`. Preflight, allocation, start, and stream must complete by `workDeadline`; revocation, iterator return, cleanup, terminate/join, and receipt validation must complete by `totalDeadline`. When the decode serves several external assets, the work budget is shared: the sum of the scheduled per-asset work windows must fit inside `workDeadline`, and no new allocation may start after `workDeadline`. Fail-stop proof has its own parent-owned hard bound; if it cannot be proven inside that bound, the result is `RESOLVER_FAIL_STOP_UNPROVEN` and the lifecycle is irreversibly failed.
 
 **No-simulation rule:** a raced promise that resolves after a timer is a package-level timeout, not termination. Tests may assert `RESOLVER_JOIN_TIMEOUT` from the package race, but out-of-realm termination is asserted only by a separate parent process after a real signal/reap/cgroup census.
 
-## 6. Validation rules
+## 7. Validation rules
 
 ### Request
 
@@ -221,7 +322,7 @@ Package orchestration per execution:
 - Policy projection and `expectedPolicySha256` are computed by Struct; the caller cannot supply a digest that disagrees.
 - `budget` is safe-integer, `totalTimeoutMs >= 1`, `0 < cleanupReserveMs < totalTimeoutMs`.
 - `maxConcurrent > 0` whenever external work exists; `0` is a valid policy value but an unusable profile for resolution and fails before allocation.
-- Signal is not already aborted at allocation; if aborted after allocation, teardown runs.
+- `signal` is always the package-owned controller's signal (§4.3.1); it is never omitted, never the caller's object, and aborts on caller abort or work deadline.
 
 ### Result and receipts
 
@@ -238,36 +339,42 @@ Package orchestration per execution:
 ### Stream
 
 - Chunks are `Uint8Array` views with intrinsic `byteLength`/tag checks; copy immediately, never retain caller memory.
-- Cumulative bytes cannot exceed `min(expected.byteLength, maxAssetBytes, remaining aggregate)`.
+- Cumulative bytes cannot exceed `min(expected.byteLength, maxAssetBytes, maxDecodedBytes, remaining aggregate)`.
 - A chunk after the declared length, a short stream, a digest mismatch, or iterator error fails the asset and the whole bundle.
 - Iterator `return()` is called only when a result iterator exists; its rejection is recorded but does not skip cleanup/terminate.
 
-## 7. Versioned limits profile (initial V1 proposal)
+## 8. Frozen limits profile (V1)
 
-Put these in `src/bundle/limits.ts` as a frozen `STRUCT_BUNDLE_LIMITS_V1`. They are never looser than the current private bounds; loosening requires a new profile version and a new fixed-vector set.
+One frozen profile lives in `src/bundle/limits.ts` as `STRUCT_BUNDLE_LIMITS_V1`. The values are exactly the current private/embedded bounds, so adopting the profile changes no embedded behavior. External resolution is bounded by the same numbers and **cannot silently enlarge current limits**; any later widening requires a new profile version plus a new fixed-vector set.
 
-| Cap | V1 |
-| --- | --- |
-| `maxRawEnvelopeBytes` | 8 MiB |
-| `maxAssets` | 256 |
-| `maxAssetBytes` | 32 MiB |
-| `maxEmbeddedDecodedBytes` | 4 MiB |
-| `maxTotalDecodedAssetBytes` | 128 MiB |
-| `maxBase64Chars` | 8 MiB |
-| `maxFieldBytes` | 1 MiB |
-| `maxStringBytes` | 1 MiB |
-| `maxNesting` | 128 |
-| `maxNodes` | 1,000,000 |
-| `maxConcurrent` | 8 |
-| `maxReceiptBytes` | 16 KiB |
-| `maxErrorBytes` | 4 KiB |
-| `defaultTotalTimeoutMs` | 30,000 |
-| `defaultCleanupReserveMs` | 5,000 |
-| `maxTimeoutMs` | 120,000 |
+| Cap | V1 | Source of the current bound |
+| --- | --- | --- |
+| `maxRawBytes` | 8388608 (8 MiB) | `embedded.ts` `MAX_RAW_BYTES` |
+| `maxAssetBytes` | 4194304 (4 MiB) | `embedded.ts` `ASSET_LIMITS.maxAssetBytes` |
+| `maxTotalBytes` | 4194304 (4 MiB) | `embedded.ts` `ASSET_LIMITS.maxTotalBytes` |
+| `maxDecodedBytes` | 4194304 (4 MiB) | per-asset decoded cap, equal to the current per-asset cap |
+| `maxBase64Chars` | 5592408 | `embedded.ts` `ASSET_LIMITS.maxBase64Chars` |
+| `maxAssets` | 256 | `embedded.ts` `ASSET_LIMITS.maxAssets` |
+| `maxNesting` | 128 | `canonical.ts` `MAX_DEPTH` |
+| `maxNodes` | 1000000 | `canonical.ts` `MAX_NODES` |
+| `maxFieldBytes` | 1048576 (1 MiB) | new cap; see the corpus rule below |
+| `maxStringBytes` | 1048576 (1 MiB) | new cap; see the corpus rule below |
+| `maxConcurrentExecutions` | 8 | package aggregate ceiling; effective value is `min(8, policy.maxConcurrent)` |
+| `maxReceiptBytes` | 16384 (16 KiB) | new cap for transport/execution receipts |
+| `maxErrorBytes` | 4096 (4 KiB) | new cap for structured error payloads |
+| `defaultTotalTimeoutMs` | 30000 | package default when `resolverBudget` is absent from a caller-supplied budget source |
+| `defaultCleanupReserveMs` | 5000 | package default cleanup reserve |
+| `maxTimeoutMs` | 120000 | upper bound for an accepted `resolverBudget.totalTimeoutMs` |
 
-`maxEmbeddedDecodedBytes` and `maxTotalDecodedAssetBytes` are distinct: the raw cap bounds embedded base64, while external payloads are bounded during streaming. Every cap gets N-1/N/N+1 vectors; zero and `MAX_SAFE_INTEGER` boundaries are covered.
+Profile rules:
 
-## 8. Package protocol/conformance host vs concrete app executor
+- The embedded fast path keeps its current constants and semantics. The profile module is the single source of those values, so the embedded numbers are unchanged by construction; no external cap is applied to the embedded path beyond the values it already enforces.
+- External resolution is bounded by the same profile: per-asset decoded bytes cannot exceed `maxDecodedBytes`, the aggregate across assets cannot exceed `maxTotalBytes`, and the raw cap still bounds the envelope that carries embedded base64. External streaming cannot exceed the embedded per-asset or aggregate caps.
+- `maxFieldBytes` and `maxStringBytes` are caps ADR clause 12 requires but the current code does not enforce. They are validated against the existing canonical corpus first. If any currently accepted fixture exceeds a proposed value, the cap is raised to the smallest value above the observed maximum and recorded with that evidence; a cap is never silently tightened below input the package already accepts.
+- Every cap gets N-1/N/N+1 vectors, plus zero and `MAX_SAFE_INTEGER` boundaries. The raw cap and the per-asset/aggregate caps are enforced before unbounded allocation.
+- There is exactly one set of numbers. If another lane introduces a shared `src/limits.ts`, the bundle profile must be expressed from that module, or the two modules must carry identical frozen values; the profile is never forked or re-derived per call site.
+
+## 9. Package protocol/conformance host vs concrete app executor
 
 | Component | Owner | This plan |
 | --- | --- | --- |
@@ -282,30 +389,32 @@ Put these in `src/bundle/limits.ts` as a frozen `STRUCT_BUNDLE_LIMITS_V1`. They 
 
 The conformance harness is host-agnostic: it drives the candidate executor through the same orchestration path and requires probes for broker grants, descendant admission, capacity retirement, and a real host handle. Test transports are in-memory policy probes, not network/filesystem resolvers. The harness must not claim to certify DNS, redirects, symlinks, or credentials unless the candidate supplies a real test double and probe.
 
-## 9. Task and file boundaries
+## 10. Task and file boundaries
 
-Each task is test-first: add the failing test/fixture, implement the smallest change, run the focused command, then the full suite. No task edits application goldens or publication state.
+Each task is test-first: add the failing test/fixture, implement the smallest change, run the focused command, then the type check. No task edits application goldens, repins an application artifact, or touches publication state. Task ownership follows the coordinator lanes in §2; a lane must not edit another lane's seam.
 
 ### T1 — Protocol types and guards
 
-**Files:** `src/bundle/resolver-protocol.ts` (new), `tests/bundle-resolver-protocol.test.ts` (new).
+**Lane:** `resolver-runtime`. **Files:** `src/bundle/resolver-protocol.ts` (new), `tests/bundle-resolver-protocol.test.ts` (new).
 
-- Copy the frozen interfaces and add the additive host-supervisor port.
+- Copy the frozen §4.1 declarations exactly and add the separate §4.2 host-supervisor port.
 - Add strict guards for request, result, revocation, terminal, fail-stop, and execution ID.
 - No behavior change to the facade.
 - Tests: exact-key/accessor/proxy/lone-surrogate/unsafe-integer/ID-length matrices; no secret retention.
 
-### T2 — Versioned limits profile
+### T2 — Frozen limits profile
 
-**Files:** `src/bundle/limits.ts` (new), `tests/bundle-resolver-limits.test.ts` (new), `src/bundle/embedded.ts` (use profile constants without changing embedded semantics).
+**Lane:** `resolver-runtime`. **Files:** `src/bundle/limits.ts` (new), `tests/bundle-resolver-limits.test.ts` (new), `src/bundle/embedded.ts` (adopt the profile constants with identical values).
 
-- Freeze the V1 table, expose only the version string and immutable values.
-- Add N-1/N/N+1 vectors for raw, assets, per-asset, embedded, total, base64, string, nesting, concurrency, receipts, errors, budgets.
-- Prove raw cap precedes allocation and parsing.
+- Freeze the §8 table; expose only the version string and immutable values.
+- The embedded fast path keeps its current constants and behavior; the profile module carries the same numbers, so nothing about embedded acceptance changes.
+- Add N-1/N/N+1 vectors for raw bytes, assets, per-asset bytes, decoded bytes, total bytes, base64 chars, field/string bytes, nesting, nodes, concurrency, receipts, errors, and budgets.
+- Validate the new field/string caps against the existing canonical corpus and record the outcome before freezing them.
+- Prove the raw cap precedes allocation and parsing.
 
 ### T3 — Receipt and result validation
 
-**Files:** `src/bundle/resolver-receipt.ts` (extend), `src/bundle/resolver-protocol.ts` (new validators), `tests/bundle-resolver-receipt.test.ts` (extend).
+**Lane:** `resolver-runtime`. **Files:** `src/bundle/resolver-receipt.ts` (extend), `src/bundle/resolver-protocol.ts` (new validators), `tests/bundle-resolver-receipt.test.ts` (extend).
 
 - Reuse `validateResolverReceiptProjection`; add canonical result validation and execution-bound revocation/terminal/fail-stop validation.
 - Reject thenables, extra keys, swapped IDs, stale IDs, `quarantined: false`, missing/incorrect literals, and over-budget receipts.
@@ -313,68 +422,70 @@ Each task is test-first: add the failing test/fixture, implement the smallest ch
 
 ### T4 — Bounded streaming accumulator
 
-**Files:** `src/bundle/resolver-stream.ts` (new), `tests/bundle-resolver-stream.test.ts` (new).
+**Lane:** `resolver-runtime`. **Files:** `src/bundle/resolver-stream.ts` (new), `tests/bundle-resolver-stream.test.ts` (new).
 
 - Incremental SHA-256 matching the existing browser-safe implementation; copy-on-chunk; exact length/digest checks.
-- Reject non-byte chunks, detached buffers, over-cap chunks, short/long streams, and iterator errors.
+- Enforce `maxDecodedBytes` per asset and `maxTotalBytes` in aggregate; reject non-byte chunks, detached buffers, over-cap chunks, short/long streams, and iterator errors.
 - Test chunk-boundary, zero-length, and 1-byte cases; assert peak retained bytes are bounded.
 
 ### T5 — Execution orchestrator
 
-**Files:** `src/bundle/resolver-execution.ts` (new), `tests/bundle-resolver-execution.test.ts` (new).
+**Lane:** `resolver-runtime`. **Files:** `src/bundle/resolver-execution.ts` (new), `tests/bundle-resolver-execution.test.ts` (new).
 
-- Implement the §5 state machine against fake in-process executors with controllable promises.
-- Enforce one start, deadline/work-deadline split, abort → revoke → conditional iterator return → cleanup → terminate order.
+- Implement the §6 state machine against fake in-process executors with controllable promises.
+- Enforce one start, the decode-level deadline with its pre-preflight origin and pre-allocation cleanup reserve, the package-owned abort controller, and the abort → revoke → conditional iterator return → cleanup → terminate order.
 - On success, require accepted revocation and `completed` terminal receipt before returning bytes.
 - On failure, require teardown attempts before fail-stop; never call `start` after revocation/cleanup/termination.
-- Tests: sync throw, reject, never-settling start, duplicate start rejection, start-after-* rejection, late completion, iterator return present/absent, cleanup throw/timeout, join timeout, receipt mismatch/swap, fail-stop unproven. No child process yet.
+- Tests: sync throw, reject, never-settling start, duplicate start rejection, start-after-* rejection, late completion, iterator return present/absent, cleanup throw/timeout, join timeout, receipt mismatch/swap, fail-stop unproven, caller abort, pre-aborted caller signal, and budget exhaustion before allocation. No child process yet.
 
-### T6 — Wire integration and async facade
+### T6 — Wire integration and public facade alignment
 
-**Files:** `src/bundle/index.ts`, `src/bundle/embedded.ts`, `src/bundle/canonical.ts` (only if projection hooks needed), `tests/bundle-public-surface.test.ts`, `tests/bundle-embedded.test.ts`, `tests/public-consumer/runtime.mjs`, `tests/public-consumer/types.ts`.
+**Lane:** `embedded-facade-fix` (public facade) with `resolver-runtime` (resolver call site). **Files:** `src/bundle/index.ts`, `src/bundle/embedded.ts`, `src/bundle/canonical.ts` (only if projection hooks are needed), `tests/bundle-public-surface.test.ts`, `tests/bundle-embedded.test.ts`, `tests/public-consumer/runtime.mjs`, `tests/public-consumer/types.ts`.
 
-- Make `decodeStructBundle` async (`Promise<StructBundleAcceptanceResult>`), matching the ADR facade. Keep the embedded fast path.
+- Public facade matches §4.4: `decodeStructBundle` always returns `Promise<VerifiedStructBundle>` and rejects with a documented structured error; `createStructBundle`/`verifyStructBundle` return a handle and throw; `encodeStructBundle` returns `Uint8Array` and throws a structured error for a forged handle.
+- Decode options use the flat §4.3 field names: `resolverExecutor`, `resolverPolicy`, `resolverBudget`, `resolverSignal`, `resolverHostSupervisor`. No nested `resolver` object and no `resolver.executor` nesting.
 - Embedded-only envelopes never call resolver code. External envelopes require the complete resolver option set.
-- Expected `bundleSha256` mismatch returns before parse/allocation; tests assert zero `allocate`/`start`.
-- Update all existing tests/docs to `await`; keep encode/verify sync.
-- Add public negative tests for missing/invalid executor, host supervisor, policy, budget, signal, and external asset metadata.
+- Expected `bundleSha256` mismatch is rejected before parse and before allocation; tests assert zero `allocate` and zero `start`.
+- Migrate the Stage 1 result-object tests and docs deliberately; keep private result-object helpers internal.
+- Add public negative tests for a missing/invalid executor, host supervisor, policy, budget, signal, and external asset metadata.
 
 ### T7 — Conformance harness
 
-**Files:** `src/bundle/conformance/index.ts` (new), `src/bundle/conformance/probes.ts` (new), `tests/bundle-resolver-conformance.test.ts` (new), `tests/fixtures/resolver/*` (new).
+**Lane:** `resolver-host-resume`. **Files:** `src/bundle/conformance/index.ts` (new), `src/bundle/conformance/probes.ts` (new), `tests/bundle-resolver-conformance.test.ts` (new), `tests/fixtures/resolver/*` (new).
 
-- Export from a separate Node-only subpath `./bundle/conformance`; update `package.json` build/exports and `API_MANIFEST.json`.
+- Export from a separate Node-only subpath `./bundle/conformance`; the export map and `API_MANIFEST.json` update is reserved for the integration lane (§2).
 - Harness cases: side-effect-free allocation; concurrent duplicate IDs; retired-ID reuse; duplicate/late start; start after revoke/cleanup/terminate; sync throw/reject/never-settling start; late completion; clean success; quarantine-false; revocation failure; mismatched/swapped receipts; zero post-revocation broker calls/grants/descendants; pre-start cleanup; iterator cleanup; never-settling cleanup; receipt equality; policy vectors; secret non-retention.
 - A deliberately non-conforming fixture per invariant must fail the report; a conforming fixture must pass.
 - The harness reports non-secret case names and outcomes only.
 
 ### T8 — Sacrificial host and aggregate admission
 
-**Files:** `tests/fixtures/resolver/sacrificial-host.mjs` (new), `tests/bundle-resolver-failstop.test.ts` (new), `scripts/run-resolver-failstop.mjs` (optional helper).
+**Lane:** `resolver-host-resume`. **Files:** `tests/fixtures/resolver/sacrificial-host.mjs` (new), `tests/bundle-resolver-failstop.test.ts` (new), `scripts/run-resolver-failstop.mjs` (optional helper).
 
 - Spawn a real child with `detached: true` (process group) or an app-provided cgroup/pid-namespace launcher. The child can spawn a grandchild that ignores `SIGTERM` and never settles cleanup/join.
 - Parent sends `SIGTERM`, waits a bounded grace period, sends `SIGKILL` to the process group, reaps, and proves no descendant remains by process-group/cgroup census. A timer-only path is a test failure, not a pass.
 - Assert: host dead, descendants dead, capacity retired/tombstone, ID never reused, no new allocation admitted under the old capacity, aggregate admission at N-1/N/N+1.
-- Fail-stop receipt is validated only after parent proof; a child that merely self-reports death fails.
+- The fail-stop receipt is validated only after parent proof; a child that merely self-reports death fails.
 
 ### T9 — Docs, manifest, clean consumer
 
-**Files:** `CONTRACT.md`, `API.md`, `API_MANIFEST.json`, `README.md`, `MIGRATION.md`, `package.json`, `tests/public-api-manifest.test.ts`, `tests/public-consumer/*`, `scripts/test-packed-consumer.mjs` (only if the new subpath needs packing coverage).
+**Lane:** reserved for later integration. **Files:** `CONTRACT.md`, `API.md`, `API_MANIFEST.json`, `README.md`, `MIGRATION.md`, `package.json`, `tests/public-api-manifest.test.ts`, `tests/public-consumer/*`, `scripts/test-packed-consumer.mjs` (only if the new subpath needs packing coverage).
 
-- Document the async facade, external resolver options, limits profile, conformance subpath, and the package-vs-app ownership split.
+- Document the ADR-shaped public facade, the flat resolver option fields, the frozen limits profile, the conformance subpath, and the package-vs-app ownership split.
 - Document that integrity/conservation is not authenticity.
 - Add the new export and runtime export names to the manifest; keep private paths unavailable.
 - Packed consumer: import every documented subpath, compile declarations, run an embedded and an external happy path with a fake executor, and assert private paths fail.
+- No application artifact repin, publication, writer activation, or golden regeneration.
 
 ### T10 — Adversarial matrix and S-04 handoff
 
-**Files:** tests only, plus a short evidence note in the PR/plan.
+**Lane:** `resolver-runtime` with the integration lane for consumer evidence. **Files:** tests only, plus a short evidence note.
 
 - Fuzz hostile objects, cycles, lone surrogates, unsafe integers, duplicate keys, huge nesting, raw pressure, chunk pressure, deceptive lengths, and limit boundaries.
 - Run the full S-03 matrix through public exports and the packed consumer.
-- Record exact head, tarball digest, test counts, and known limitations. Do **not** publish or regenerate app goldens.
+- Record exact head, tarball digest, test counts, and known limitations. Do **not** publish, repin, or regenerate app goldens.
 
-## 10. Concrete test matrix (acceptance mapping)
+## 11. Concrete test matrix (acceptance mapping)
 
 | Contract clause | Test |
 | --- | --- |
@@ -391,12 +502,16 @@ Each task is test-first: add the failing test/fixture, implement the smallest ch
 | Policy digest | T3 fixed Python-generated vectors for all transport kinds and boundary IDs |
 | Expected `bundleSha256` | T6 mismatch before parse; zero allocate/start |
 | Streaming bounds | T4 chunk boundaries, over-cap, short/long, deceptive `declaredByteLength` |
-| Budget/cancellation | T5 monotonic work/cleanup split; T7 startup timeout, abort, cleanup reserve |
+| Budget/cancellation | T5 decode-level deadline with pre-preflight origin, pre-allocation cleanup reserve, caller abort, pre-aborted caller signal, work-deadline abort |
 | Iterator return | T5 result exists vs no result; return rejection still tears down |
 | Zero post-revocation authority | T7/T8 probe counters |
 | Secret non-retention | T3/T7 receipt/error/report scans for URL, path, token, matrix/percent alias |
 | Aggregate admission | T8 N-1/N/N+1, repeated fail-stop capacity refusal |
 | Canonical/wire invariants | Existing bundle tests remain green; no app goldens |
+| Public facade shape (ADR) | T6 `decodeStructBundle` resolves a handle and rejects with a structured error; `encodeStructBundle` returns `Uint8Array` and throws for a forged handle; no public result object |
+| Option field names (ADR) | T6 `resolverExecutor` plus flat `resolverPolicy`/`resolverBudget`/`resolverSignal`/`resolverHostSupervisor`; a nested `resolver` object and unknown keys are options errors |
+| Frozen limits (no silent enlargement) | T2 profile values equal the current private bounds; external per-asset and aggregate caps are the same numbers; embedded acceptance is unchanged |
+| Package-owned signal | T5/T6 the request signal is the package controller's signal, aborts on caller abort or deadline, and is never the caller's object |
 
 ### Required negative fixtures
 
@@ -405,11 +520,12 @@ Each task is test-first: add the failing test/fixture, implement the smallest ch
 - `quarantined: false`; missing `capabilitiesRevoked`; revocation returns a promise; terminal returns wrong state/ID.
 - Start called twice; start after revocation; start after cleanup; start after termination.
 - Startup never settles; cleanup never settles; join never settles; late start resolves after timeout.
+- Caller signal pre-aborted; caller signal of a foreign realm; `AbortSignal`-like impostor; deadline abort during streaming.
 - Chunk stream is longer/shorter than `declaredByteLength`; digest mismatch; non-`Uint8Array`; detached buffer.
 - Endpoint alias, redirect loop, private target, traversal/symlink (candidate test double; package harness asserts protocol/receipt behavior only).
 - Aggregate pressure: one more than `maxConcurrent`, one more than host admission, repeated fail-stop.
 
-## 11. High-risk pilot scenarios (run 3–5 before broad work)
+## 12. High-risk pilot scenarios (run 3–5 before broad work)
 
 1. **Daemonized descendant escapes the direct child.** A sacrificial host spawns a grandchild with a new session/process group or double-forks. Kill only the direct child and prove whether the grandchild survives. This determines whether process-group kill is sufficient or cgroup v2/pid-namespace supervision is mandatory. A passing direct-child test alone is not evidence.
 2. **Revocation races an in-flight broker grant and late start.** Force `start()` to resolve after the package timeout, while the adapter attempts a broker call. Assert the revocation receipt is returned only after grants/descendant admission are atomically closed, zero calls occur after receipt, and the late result is quarantined without capacity reuse.
@@ -417,35 +533,47 @@ Each task is test-first: add the failing test/fixture, implement the smallest ch
 4. **Aggregate pressure exhausts cleanup reserve.** Run `maxConcurrent` external assets with a short `totalTimeoutMs` and non-trivial `cleanupReserveMs`; assert no new start after the work deadline, every started execution tears down, peak memory stays bounded, and the extra asset is denied without reusing capacity.
 5. **Receipt/secret swap across executions.** Swap revocation/terminal receipts between two concurrent executions and embed URL/path/token/matrix/percent aliases in a hostile transport receipt. Assert fail-closed ID checks, fail-stop when teardown evidence is invalid, and no secret appears in errors, reports, receipts, or logs.
 
-## 12. Genuine external capability blockers
+## 13. Genuine external capability blockers
 
 1. **OS-level descendant proof.** Node process groups cover ordinary children but not `setsid`/double-fork escapes. Proving "host and descendants dead" requires an app-owned cgroup v2 or PID-namespace launcher with `waitpid`/reap. If the deployment environment cannot delegate cgroups, the strongest available proof is process-group + `/proc` census, which must be documented as a limitation, not called guaranteed termination.
 2. **Concrete transports.** HTTPS endpoint maps, DNS/private-address checks, redirects, descriptor-root filesystem access, symlink/traversal defenses, and content-addressed stores are consumer-owned. The package cannot certify real network/filesystem policy and must not implement it.
 3. **Producer authenticity and trust epoch.** External asset resolution in production must remain inactive until Ernie.SG/Aether supply authenticated producer records, current/rollback-safe trust status, audience/replay checks, and `bundleSha256` binding before `start()`. Struct integrity alone is insufficient.
 4. **Browser/runtime isolation.** A browser or worker-only host cannot guarantee out-of-realm process kill. External resolution is a server-side capability; a worker `terminate()` is not parent-proven termination.
-5. **Publication and clean-consumer proof.** S-04 tarball/consumer evidence and any registry release remain separate approvals. No publish, writer activation, or app golden regeneration is authorized here.
+5. **Publication and clean-consumer proof.** S-04 tarball/consumer evidence and any registry release remain separate approvals. No publish, writer activation, app golden regeneration, or application artifact repin is authorized here.
 
-## 13. Validation commands
+## 14. Validation commands
 
-Run every command from the assigned absolute worktree:
+Run every command from the assigned absolute worktree. Use the installed local binaries, keep the worker count at one for deterministic timing, and avoid repeating a broad baseline suite once it is green:
 
 ```bash
 cd /home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/resolver-plan
-pnpm exec vitest run tests/bundle-resolver-*.test.ts
-pnpm exec vitest run
-pnpm exec tsc --noEmit
-pnpm run test:package
-pnpm run test:source-boundary
+./node_modules/.bin/vitest run --maxWorkers=1 tests/bundle-resolver-*.test.ts
+./node_modules/.bin/tsc --noEmit
 ```
 
-The sacrificial-host test must be included in `vitest run` (not skipped) and must fail if the parent cannot prove death. Its timing bounds must be generous enough for CI but still bounded.
+Use the installed local binaries, keep the worker count at one for deterministic timing, and do not repeat a broad baseline suite once it is green. The sacrificial-host test must be included in the focused run (not skipped) and must fail if the parent cannot prove death. Its timing bounds must be generous enough for CI but still bounded. The integration lane runs the packed-consumer and source-boundary scripts when the manifest and packed consumer change; those are reserved seams, not part of this plan's changes.
 
-## 14. Exit criteria for this plan
+## 15. Exit criteria for this plan
 
-- The frozen interfaces are implemented without semantic drift; the additive host port is the only public extension.
+- The frozen interfaces are implemented without semantic drift; the additive host port is the only public extension, and no ADR amendment is proposed.
+- The public facade matches ADR-0001: handles and documented structured errors, never a nominally accepted unverified bundle.
+- The decode options use the ADR-pinned `resolverExecutor` field plus flat documented policy/budget/signal/host-supervisor fields.
+- The request signal is always a package-owned `AbortSignal`, and the monotonic total budget starts before preflight and allocation with the cleanup reserve taken before allocation.
+- The frozen limits profile equals the current private bounds; external resolution cannot enlarge them.
 - An external bundle resolves only after a valid transport receipt, exact byte/digest match, accepted revocation, and execution-ID-bound terminal receipt.
 - Duplicate/retired IDs, duplicate start, start-after-teardown, late start, revocation failure, swapped receipts, and never-settling cleanup/join fail closed.
 - A real sacrificial host proves parent-side termination and descendant death; a timer-only test does not satisfy the clause.
 - Limits and policy have fixed cross-runtime vectors and N-1/N/N+1 coverage.
-- No app goldens, publication, writer, or cutover claims are included.
-- S-03 remains open until the companion create/verify/full-limit-profile matrix lands; S-04 remains blocked on that complete surface.
+- No app goldens, publication, writer, artifact repin, or cutover claims are included.
+- S-03 remains open until the companion create/verify/limit-profile matrix lands; S-04 remains blocked on that complete surface.
+
+## 16. Review finding reconciliation (v2)
+
+| Finding | Resolution in this plan |
+| --- | --- |
+| F1 decode option name drift | §4.3 uses the ADR-pinned `resolverExecutor` with flat documented `resolverPolicy`, `resolverBudget`, `resolverSignal`, `resolverHostSupervisor`; the nested `resolver` grouping is removed, and T6 plus the public-consumer type expectations are updated accordingly |
+| F2 limits looser than current bounds | §8 freezes the exact current values (`maxAssetBytes`/`maxTotalBytes`/`maxDecodedBytes` 4194304, `maxBase64Chars` 5592408, `maxRawBytes` 8388608) and states that external resolution cannot enlarge them; N-1/N/N+1 vectors are required in T2 |
+| F3 embedded semantics conflict | T2 keeps the embedded path's current constants and behavior; the shared profile carries identical values, and no external cap is applied to the embedded fast path |
+| F4 optional vs mandatory signal | §4.3.1 makes `resolverSignal` an optional caller signal while the package owns a per-execution `AbortController`; `request.signal` is always that real signal, never omitted, and negative tests are added |
+| F5 deadline origin ambiguity | §6 starts the monotonic total at decode entry, before preflight and before allocation, reserves the cleanup budget before the first `allocate()`, and requires every phase to fit the bounded lifecycle |
+| F6 facade return type | §4.4 adopts the ADR facade: `decodeStructBundle` is always `Promise<VerifiedStructBundle>` and rejects with a documented structured error; `createStructBundle`/`verifyStructBundle` return a handle and throw; `encodeStructBundle` returns `Uint8Array` and throws for a forged handle; Stage 1 result-object helpers stay private and the tests/docs migrate deliberately |
