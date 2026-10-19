@@ -1,47 +1,63 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const modules = {
-  '.': await import('@erniesg/struct'),
-  './document': await import('@erniesg/struct/document'),
-  './identity': await import('@erniesg/struct/identity'),
-  './ordering': await import('@erniesg/struct/ordering'),
-  './receipt': await import('@erniesg/struct/receipt'),
-  './recovery': await import('@erniesg/struct/recovery'),
-  './renderers/xhtml': await import('@erniesg/struct/renderers/xhtml'),
-  './renderers/epub': await import('@erniesg/struct/renderers/epub'),
-}
-
+const packageRoot = new URL('./node_modules/@erniesg/struct/', import.meta.url)
 const manifest = JSON.parse(
-  await readFile(
-    new URL(
-      './node_modules/@erniesg/struct/API_MANIFEST.json',
-      import.meta.url,
-    ),
-    'utf8',
-  ),
+  await readFile(new URL('API_MANIFEST.json', packageRoot), 'utf8'),
+)
+const installedPackage = JSON.parse(
+  await readFile(new URL('package.json', packageRoot), 'utf8'),
 )
 
-assert.deepEqual(manifest.exportPaths, Object.keys(modules))
-for (const [path, module] of Object.entries(modules)) {
-  assert.deepEqual(Object.keys(module).sort(), manifest.runtimeExports[path])
+assert.equal(installedPackage.name, manifest.packageName)
+assert.deepEqual(
+  Object.keys(installedPackage.exports).sort(),
+  [...manifest.exportPaths].sort(),
+  'package.json exports and API_MANIFEST exportPaths must be changed deliberately together',
+)
+assert.deepEqual(
+  Object.keys(manifest.runtimeExports).sort(),
+  [...manifest.exportPaths].sort(),
+)
+assert.equal(new Set(manifest.exportPaths).size, manifest.exportPaths.length)
+
+const modules = new Map()
+for (const path of manifest.exportPaths) {
+  const specifier =
+    path === '.'
+      ? manifest.packageName
+      : `${manifest.packageName}/${path.slice(2)}`
+  modules.set(path, await import(specifier))
+}
+for (const [path, module] of modules) {
+  assert.deepEqual(
+    Object.keys(module).sort(),
+    [...manifest.runtimeExports[path]].sort(),
+  )
 }
 
-for (const subpath of ['core', 'schema', 'ids', 'bundle']) {
+const availablePaths = new Set(manifest.exportPaths)
+for (const path of manifest.unavailablePaths) {
+  assert.equal(
+    availablePaths.has(path),
+    false,
+    `${path} cannot be both exported and unavailable`,
+  )
+  assert.match(path, /^\.\//u)
   await assert.rejects(
-    import(`@erniesg/struct/${subpath}`),
+    import(`${manifest.packageName}/${path.slice(2)}`),
     (error) => error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED',
   )
 }
 
 assert.equal(
-  modules['.'].decodeCompatibleStructDocument,
-  modules['./document'].decodeCompatibleStructDocument,
+  modules.get('.').decodeCompatibleStructDocument,
+  modules.get('./document').decodeCompatibleStructDocument,
 )
 assert.equal(
   manifest.deprecated.migrateStructDocument.removalDate,
   '2026-11-30',
 )
-assert.equal('legacyStructDigest' in modules['./identity'], false)
-assert.equal('legacyStructDigestMatches' in modules['./identity'], false)
-assert.equal('legacyStructDigests' in modules['./identity'], false)
+assert.equal('legacyStructDigest' in modules.get('./identity'), false)
+assert.equal('legacyStructDigestMatches' in modules.get('./identity'), false)
+assert.equal('legacyStructDigests' in modules.get('./identity'), false)
