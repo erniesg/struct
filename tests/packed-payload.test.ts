@@ -128,6 +128,13 @@ describe('packed payload proof', () => {
     'dist/__tests__/probe.js',
     'dist/fixtures/probe.js',
     'dist/src/index.js',
+    'dist/test.js',
+    'dist/fixture.js',
+    'dist/src.js',
+    'dist/source.d.ts',
+    'dist/tests.js.map',
+    'dist/nested/spec.js',
+    'dist/__mocks__.js',
   ])('rejects compiled test/spec/fixture/source debris under dist: %s', (path) => {
     expect(() => validate([...packedFiles, path])).toThrow(
       /unexpected packed path/u,

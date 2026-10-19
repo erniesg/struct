@@ -28,7 +28,8 @@ proof line.
 - `package.json#files` may declare only the approved docs and the `dist`
   directory; any other declaration fails closed rather than being trusted.
 - `dist/**` may contain `.js`, `.d.ts`, and their `.map` variants, but
-  recognizable test/spec/fixture/source debris is rejected, including
+  recognizable test/spec/fixture/source debris is rejected, including standalone
+  test/source basenames and
   `dist/*.test.*`, `dist/*.spec.*`, `dist/*.fixture.*`, and directories such
   as `__tests__`, `tests`, `fixtures`, `src`, or `source`.
 - Missing docs/targets, unapproved declarations, unexpected top-level paths,

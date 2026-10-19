@@ -9,8 +9,8 @@ const requiredDocuments = [
 ]
 
 const distFilePattern = /^dist\/.+\.(?:js|d\.ts)(?:\.map)?$/u
-const distDebrisDirectoryPattern =
-  /^dist\/(?:.*\/)?(?:test|tests|__tests__|spec|specs|fixtures|__fixtures__|mocks|__mocks__|src|source)(?:\/|$)/u
+const distDebrisPathPattern =
+  /^dist\/(?:.*\/)?(?:test|tests|__tests__|spec|specs|fixtures?|__fixtures__|mocks|__mocks__|src|source)(?:\/|\.(?:js|d\.ts)(?:\.map)?$|$)/u
 const distDebrisFilePattern = /\.(?:test|spec|fixture)\.(?:js|d\.ts)(?:\.map)?$/u
 const unsafeControlPattern = /[\u0000-\u001f]/u
 const drivePathPattern = /^[A-Za-z]:/u
@@ -18,7 +18,7 @@ const drivePathPattern = /^[A-Za-z]:/u
 function allowedDistPath(path) {
   return (
     distFilePattern.test(path) &&
-    !distDebrisDirectoryPattern.test(path) &&
+    !distDebrisPathPattern.test(path) &&
     !distDebrisFilePattern.test(path)
   )
 }
