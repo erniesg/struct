@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   STRUCT_RESOLVER_PROTOCOL_VERSION,
   StructResolverProtocolError,
@@ -24,6 +26,14 @@ import type {
   StructResolverRevocationReceipt,
   StructResolverTerminalReceipt,
 } from '../src/bundle/resolver-protocol'
+import { createStructResolverSupervisorV1 } from '../src/bundle/resolver-supervisor'
+import {
+  createFakeHost,
+  createFakeSupervisor,
+  fixtureRequest,
+  httpsPolicy as fixturePolicy,
+  policyDigest as fixturePolicyDigest,
+} from './fixtures/resolver/fake-host'
 
 // The ADR pins these declarations literally. The type-level assertions below
 // fail the compile step if a member is renamed, narrowed, or dropped.
@@ -465,5 +475,240 @@ describe('fail-stop receipt validation', () => {
         method: 'timer',
       } }), 'exec-1',
     )).toThrow(StructResolverProtocolError)
+  })
+})
+
+describe('supervisor allocation preconditions', () => {
+  it('refuses an invalid request before any host is bound', () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    expect(() => supervisor.executor.allocate({
+      protocolVersion: '2.0.0',
+    } as never)).toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts).toHaveLength(0)
+    expect(supervisor.activeCapacity()).toBe(0)
+  })
+
+  it('refuses an unusable concurrency profile before any host is bound', () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const policy = fixturePolicy(0)
+    expect(() => supervisor.executor.allocate(fixtureRequest({
+      policy,
+      expectedPolicySha256: fixturePolicyDigest(policy),
+    }))).toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('refuses an already aborted signal before any host is bound', () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const controller = new AbortController()
+    controller.abort()
+    expect(() => supervisor.executor.allocate(fixtureRequest({
+      signal: controller.signal,
+    }))).toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('refuses a host that does not echo the reserved identifier', () => {
+    const supervisor = createStructResolverSupervisorV1({
+      bind: (_request, executionId) => ({
+        ...createFakeHost(executionId),
+        executionId: 'other-execution',
+      }),
+    })
+    expect(() => supervisor.executor.allocate(fixtureRequest())).toThrow(
+      StructResolverProtocolError,
+    )
+  })
+})
+
+describe('supervisor one-shot start right', () => {
+  it('fails a duplicate start before any second spawn', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    const first = handle.start()
+    await expect(handle.start()).rejects.toThrow(StructResolverProtocolError)
+    await first
+    expect(supervisor.hosts[0]!.calls.start).toBe(1)
+  })
+
+  it('closes the start right permanently after revocation', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    handle.control.revokeAndQuarantine()
+    await expect(handle.start()).rejects.toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts[0]!.calls.start).toBe(0)
+  })
+
+  it('closes the start right permanently after cleanup', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    await handle.control.cleanup()
+    await expect(handle.start()).rejects.toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts[0]!.calls.start).toBe(0)
+  })
+
+  it('closes the start right permanently after termination', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    await handle.control.terminateAndJoin()
+    await expect(handle.start()).rejects.toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts[0]!.calls.start).toBe(0)
+  })
+
+  it('quarantines a late completion of a revoked start', async () => {
+    const supervisor = createFakeSupervisor(() => ({
+      start: 'resolve',
+      startDelayMs: 60,
+    }))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    const pending = handle.start()
+    handle.control.revokeAndQuarantine()
+    await expect(pending).rejects.toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts[0]!.calls.brokerGrantsAfterRevocation).toBe(0)
+  })
+
+  it('keeps a throwing or rejecting start revocable and cleanable', async () => {
+    for (const start of ['throw', 'reject'] as const) {
+      const supervisor = createFakeSupervisor(() => ({ start }))
+      const handle = supervisor.executor.allocate(fixtureRequest())
+      await expect(handle.start()).rejects.toThrow()
+      const receipt = handle.control.revokeAndQuarantine()
+      expect(receipt.capabilitiesRevoked).toBe(true)
+      expect(receipt.quarantined).toBe(true)
+      await expect(handle.control.cleanup()).resolves.toBeUndefined()
+      await expect(handle.control.terminateAndJoin()).resolves.toMatchObject({
+        executionId: receipt.executionId,
+      })
+    }
+  })
+})
+
+describe('supervisor revocation and terminal evidence', () => {
+  it('retires the capacity and tombstones the identifier on a rejected receipt', () => {
+    const supervisor = createFakeSupervisor(() => ({ revoke: 'quarantine-false' }))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    expect(() => handle.control.revokeAndQuarantine()).toThrow(
+      StructResolverProtocolError,
+    )
+    expect(supervisor.retiredCapacityCount()).toBe(1)
+    expect(supervisor.activeCapacity()).toBe(0)
+    expect(supervisor.retiredExecutionIds()).toContain(handle.control.executionId)
+  })
+
+  it('retires the capacity and tombstones the identifier on a foreign receipt', () => {
+    const supervisor = createFakeSupervisor(() => ({ revoke: 'foreign-id' }))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    expect(() => handle.control.revokeAndQuarantine()).toThrow(
+      StructResolverProtocolError,
+    )
+    expect(supervisor.retiredCapacityCount()).toBe(1)
+  })
+
+  it('never reuses a retired capacity', () => {
+    const supervisor = createFakeSupervisor(() => ({ revoke: 'quarantine-false' }))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    expect(() => handle.control.revokeAndQuarantine()).toThrow(
+      StructResolverProtocolError,
+    )
+    const policy = fixturePolicy(1)
+    expect(() => supervisor.executor.allocate(fixtureRequest({
+      policy,
+      expectedPolicySha256: fixturePolicyDigest(policy),
+    }))).toThrow(StructResolverProtocolError)
+    expect(supervisor.hosts).toHaveLength(1)
+  })
+
+  it('tombstones the identifier before the capacity returns to the pool', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    await handle.control.terminateAndJoin()
+    expect(supervisor.isRetired(handle.control.executionId)).toBe(true)
+    expect(supervisor.activeCapacity()).toBe(0)
+    expect(supervisor.retiredCapacityCount()).toBe(0)
+  })
+
+  it('retires the capacity on a foreign terminal receipt', async () => {
+    const supervisor = createFakeSupervisor(() => ({ terminate: 'foreign-id' }))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    await expect(handle.control.terminateAndJoin()).rejects.toThrow(
+      StructResolverProtocolError,
+    )
+    expect(supervisor.retiredCapacityCount()).toBe(1)
+    expect(supervisor.isRetired(handle.control.executionId)).toBe(true)
+  })
+
+  it('retires the capacity when the join throws', async () => {
+    const supervisor = createFakeSupervisor(() => ({ terminate: 'throw' }))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    await expect(handle.control.terminateAndJoin()).rejects.toThrow()
+    expect(supervisor.retiredCapacityCount()).toBe(1)
+  })
+
+  it('keeps cleanup idempotent and available before a start', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    await handle.control.cleanup()
+    await handle.control.cleanup()
+    expect(supervisor.hosts[0]!.calls.cleanup).toBe(1)
+  })
+
+  it('keeps the revocation receipt stable across repeated calls', () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    const first = handle.control.revokeAndQuarantine()
+    const second = handle.control.revokeAndQuarantine()
+    expect(second).toBe(first)
+    expect(supervisor.hosts[0]!.calls.revoke).toBe(1)
+  })
+})
+
+describe('supervisor identity lifetime', () => {
+  it('never reuses an identifier inside one supervisor lifetime', async () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const first = supervisor.executor.allocate(fixtureRequest())
+    await first.control.terminateAndJoin()
+    const second = supervisor.executor.allocate(fixtureRequest())
+    expect(second.control.executionId).not.toBe(first.control.executionId)
+    expect(supervisor.retiredExecutionIds()).toContain(first.control.executionId)
+  })
+
+  it('generates opaque printable identifiers without path semantics', () => {
+    const supervisor = createFakeSupervisor(() => ({}))
+    const handle = supervisor.executor.allocate(fixtureRequest())
+    expect(isStructResolverExecutionId(handle.control.executionId)).toBe(true)
+    expect(handle.control.executionId).not.toContain('/')
+    expect(handle.control.executionId).not.toContain('\\')
+  })
+})
+
+describe('resolver runtime module boundary', () => {
+  const modules = [
+    'resolver-protocol.ts',
+    'resolver-supervisor.ts',
+    'resolver-execution.ts',
+  ]
+  const forbidden = [
+    /from\s+'node:/u,
+    /from\s+"node:/u,
+    /\bfetch\s*\(/u,
+    /XMLHttpRequest/u,
+    /require\s*\(/u,
+    /process\./u,
+  ]
+
+  it.each(modules)('%s performs no ambient input or output', (name) => {
+    const path = fileURLToPath(new URL(`../src/bundle/${name}`, import.meta.url))
+    const contents = readFileSync(path, 'utf8')
+    for (const pattern of forbidden)
+      expect(contents).not.toMatch(pattern)
+  })
+
+  it('keeps the resolver runtime free of application boundary references', () => {
+    for (const name of modules) {
+      const path = fileURLToPath(new URL(`../src/bundle/${name}`, import.meta.url))
+      const contents = readFileSync(path, 'utf8')
+      expect(contents).not.toMatch(/ResearchPaper|BookWorld|Astro/u)
+      expect(contents).not.toMatch(/from-reconstruction/u)
+    }
   })
 })
