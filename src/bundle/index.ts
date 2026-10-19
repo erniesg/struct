@@ -3,9 +3,15 @@
  * boundary only. External asset resolution is not part of this version: an
  * envelope carrying an external payload fails closed with `UNRESOLVED`.
  *
- * Every operation returns a structured result. A verified handle proves
- * integrity and conservation of the bytes/value it was created from; it is not
- * a signature and proves nothing about producer authenticity.
+ * The facade follows the approved ADR-0001 minimum stable contract:
+ * `createStructBundle` and `verifyStructBundle` return a genuine handle or
+ * throw `StructBundleError`; `decodeStructBundle` always returns a promise of
+ * a genuine handle and rejects with `StructBundleError`; `encodeStructBundle`
+ * returns canonical bytes and throws `StructBundleError` for a forged handle.
+ *
+ * A verified handle proves integrity and conservation of the bytes/value it was
+ * created from; it is not a signature and proves nothing about producer
+ * authenticity.
  */
 import {
   createStructBundleFacade,
@@ -17,25 +23,29 @@ import type {
   StructBundleDecodeOptions,
   StructBundleEmbeddedOptions,
 } from './facade'
-import {
-  encodeVerifiedEmbeddedBundle,
-} from './embedded'
-import type {
-  EmbeddedAcceptanceResult,
-  EmbeddedEncodingResult,
-  VerifiedEmbeddedBundle,
-} from './embedded'
+import { encodeVerifiedEmbeddedBundle } from './embedded'
+import type { VerifiedEmbeddedBundle } from './embedded'
 import {
   STRUCT_BUNDLE_LIMITS_PROFILE,
   STRUCT_BUNDLE_LIMITS_PROFILE_VERSION,
 } from './limits'
 import type { StructBundleLimitsProfile } from './limits'
+import { StructBundleError } from './error'
+import type {
+  StructBundleErrorCode,
+  StructBundleErrorStage,
+} from './error'
 
 export {
   STRUCT_BUNDLE_LIMITS_PROFILE,
   STRUCT_BUNDLE_LIMITS_PROFILE_VERSION,
+  StructBundleError,
 }
-export type { StructBundleLimitsProfile }
+export type {
+  StructBundleErrorCode,
+  StructBundleErrorStage,
+  StructBundleLimitsProfile,
+}
 export type {
   StructBundleCreateInput,
   StructBundleDecodeOptions,
@@ -45,61 +55,69 @@ export type {
 /** Verified bundle handle: integrity and conservation, never authenticity. */
 export type VerifiedStructBundle = VerifiedEmbeddedBundle
 
-/** Structured failure for every public bundle operation. */
-export type StructBundleFailure = Extract<EmbeddedAcceptanceResult, { ok: false }>['error']
-
-export type StructBundleAcceptanceResult =
-  | Readonly<{ ok: true; bundle: VerifiedStructBundle }>
-  | Readonly<{ ok: false; error: StructBundleFailure }>
-
-export type StructBundleEncodingResult =
-  | Readonly<{ ok: true; bytes: Uint8Array }>
-  | Readonly<{ ok: false; error: StructBundleFailure }>
-
 /**
  * Creates an embedded bundle from a runtime or JSON document. Asset bytes must
  * be present on the document and match their declared SHA-256; the document's
  * serialized projection never contains them. External payloads cannot be
  * requested through this API.
+ *
+ * @throws {StructBundleError} with a static stage and code.
  */
 export function createStructBundle(
   input: StructBundleCreateInput,
   options?: StructBundleEmbeddedOptions,
-): StructBundleAcceptanceResult {
-  return (arguments.length > 1
+): VerifiedStructBundle {
+  const result = arguments.length > 1
     ? createStructBundleFacade(input, options)
-    : createStructBundleFacade(input)) as StructBundleAcceptanceResult
+    : createStructBundleFacade(input)
+  if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
+  return result.bundle
 }
 
 /**
- * Untrusted wire ingress. Applies the raw cap and optional expected
- * `bundleSha256` before parsing, proves canonical input, and returns either a
- * verified handle or a structured failure.
+ * Untrusted wire ingress. It applies the raw cap and optional expected
+ * `bundleSha256` before parsing, proves canonical input, and always resolves
+ * to a genuine handle.
+ *
+ * @throws {StructBundleError} as a promise rejection, never synchronously.
  */
-export function decodeStructBundle(
+export async function decodeStructBundle(
   raw: Uint8Array,
   options?: StructBundleDecodeOptions,
-): StructBundleAcceptanceResult {
-  return (arguments.length > 1
+): Promise<VerifiedStructBundle> {
+  const result = arguments.length > 1
     ? decodeStructBundleFacade(raw, options)
-    : decodeStructBundleFacade(raw)) as StructBundleAcceptanceResult
+    : decodeStructBundleFacade(raw)
+  if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
+  return result.bundle
 }
 
 /**
  * Embedded-only in-memory value verifier. It accepts strict JSON values with
  * embedded base64 payloads, computes canonical bytes itself, and exposes no
- * expected-raw-digest, resolver, or executor option.
+ * expected-raw-digest, resolver, or executor option. It makes no claim about
+ * prior wire bytes.
+ *
+ * @throws {StructBundleError} with a static stage and code.
  */
 export function verifyStructBundle(
   value: unknown,
   options?: StructBundleEmbeddedOptions,
-): StructBundleAcceptanceResult {
-  return (arguments.length > 1
+): VerifiedStructBundle {
+  const result = arguments.length > 1
     ? verifyStructBundleFacade(value, options)
-    : verifyStructBundleFacade(value)) as StructBundleAcceptanceResult
+    : verifyStructBundleFacade(value)
+  if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
+  return result.bundle
 }
 
-/** Encodes only a genuine package-created handle; forged handles fail closed. */
-export function encodeStructBundle(handle: unknown): StructBundleEncodingResult {
-  return encodeVerifiedEmbeddedBundle(handle) as StructBundleEncodingResult
+/**
+ * Encodes only a genuine package-created handle. Forged handles fail closed.
+ *
+ * @throws {StructBundleError} with stage `handle` and code `FORGED`.
+ */
+export function encodeStructBundle(handle: unknown): Uint8Array {
+  const result = encodeVerifiedEmbeddedBundle(handle)
+  if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
+  return result.bytes
 }

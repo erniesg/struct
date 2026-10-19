@@ -4,8 +4,9 @@
 **Worktree:** `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/embedded`
 **Branch:** `feat/bundle-embedded-completion-20261020`
 **Base head:** `998be09922dd07779b13153d45b06cbe3a3171b3`
-**Status:** embedded Stage 1 completion; S-03 remains open for the isolated
-resolver/executor lane and any published full-contract claim.
+**Status:** embedded Stage 1 completion on the approved ADR-0001 minimum stable
+facade. S-03 remains open for the isolated resolver/executor lane and any
+published full-contract claim.
 
 ## Scope
 
@@ -18,14 +19,16 @@ Stage 1 decoder:
 - genuine package-created opaque handles shared by create/decode/value paths;
 - strict forbidden-key, byte-free projection, receipt equality, asset-set,
   metadata, base64, digest, raw-canonical, copy-on-read, forgery, and hostile
-  input behavior.
+  input behavior;
+- the ADR-aligned public contract: direct handles, a promise-returning bytes
+  decoder, a byte-returning encoder, and one static structured error type.
 
 It deliberately does not add a resolver executor, executor conformance harness,
 network/filesystem access, producer authenticity, package publication, consumer
 activation, or an export-manifest edit. External payloads continue to fail
-closed with `stage: 'assets'`, `code: 'UNRESOLVED'`.
+closed with stage `assets` and code `UNRESOLVED`.
 
-## Minimal public interfaces
+## Public contract (ADR-0001 section 13 / minimum stable facade)
 
 ```ts
 type StructBundleCreateInput = Readonly<{
@@ -43,23 +46,36 @@ type StructBundleEmbeddedOptions = Readonly<{
 createStructBundle(
   input: StructBundleCreateInput,
   options?: StructBundleEmbeddedOptions,
-): StructBundleAcceptanceResult
+): VerifiedStructBundle            // throws StructBundleError
 
 decodeStructBundle(
   rawJsonBytes: Uint8Array,
   options?: StructBundleDecodeOptions,
-): StructBundleAcceptanceResult
+): Promise<VerifiedStructBundle>    // rejects StructBundleError, never throws sync
 
 verifyStructBundle(
   value: unknown,
   options?: StructBundleEmbeddedOptions,
-): StructBundleAcceptanceResult
+): VerifiedStructBundle            // throws StructBundleError
 
-encodeStructBundle(handle: unknown): StructBundleEncodingResult
+encodeStructBundle(handle: unknown): Uint8Array  // throws StructBundleError
 ```
 
-`StructBundleAcceptanceResult` is `{ ok: true; bundle: VerifiedStructBundle }`
-or `{ ok: false; error }`. There is no accepted unverified value.
+The public API never returns a result object and never returns an accepted
+unverified value. The private result-object helpers in `src/bundle/facade.ts`
+and `src/bundle/embedded.ts` are retained as internal implementation detail
+and are not part of the public surface.
+
+`StructBundleError` is a public export. It carries only static facts:
+
+| Field | Values |
+| --- | --- |
+| `stage` | `input`, `digest`, `canonical`, `assets`, `handle` |
+| `code` | `OPTIONS`, `TYPE`, `LIMIT`, `MISMATCH`, `SYNTAX`, `NONCANONICAL`, `SHAPE`, `SET`, `METADATA`, `BASE64`, `DIGEST`, `UNRESOLVED`, `FORGED` |
+| `message` | one static message per stage |
+
+No caller value, path, identifier, byte, or digest is retained or echoed. The
+error instance is frozen and carries no `input`, `value`, or `cause` property.
 
 The value verifier intentionally has no `expectedBundleSha256`, resolver,
 executor, transport, or filesystem option. It makes no claim about prior wire
@@ -80,7 +96,7 @@ bytes. Consumer ingress for untrusted wire data must use `decodeStructBundle`.
 | decoded-byte cap | 4 MiB |
 | canonical base64 characters | 5,592,408 |
 | concurrency | 1 (embedded, single-pass) |
-| nesting depth | 128 |
+| nesting depth | 128 nested containers |
 | one UTF-8 string | 5,592,408 bytes |
 | JSON nodes | 1,000,000 |
 
@@ -88,8 +104,17 @@ The raw cap is applied while copying caller bytes and before digest/parse.
 Nesting, node, string, and top-level field caps run before canonical envelope
 and asset allocation. Asset count, per-asset, aggregate, decoded, and base64
 caps run in the asset verifier. N-1/N/N+1 behavior is covered for raw, count,
-per-asset, aggregate, base64, string, nesting, nodes, and field boundaries across
-the private Stage 1 and new public tests.
+per-asset, aggregate, base64, string, nesting, nodes, and field boundaries.
+
+### Profile-view stability
+
+The profile is enforced twice for the in-memory value API: once against the
+caller's live object (fail-fast) and once against a private snapshot of the
+canonical bytes that actually become the handle. A caller-supplied proxy can
+present a different view to each traversal, so only the second check is
+authoritative for the accepted content. The bytes decoder needs the single
+check only: canonical wire bytes and their parsed value are the same content by
+construction.
 
 ## Required invariants
 
@@ -133,17 +158,21 @@ Test-first pilot, run before the full matrix:
    noncanonical base64, declared-length mismatch, and payload digest mismatch.
 5. Exercise hostile accessors, cycles, prototypes, sparse arrays, lone
    surrogates, unsafe integers, and string/nesting/node/field boundaries.
+6. Exercise the ADR public contract: direct handles, promise-returning decode,
+   byte-returning encode, static structured errors, and the profile-view
+   stability regression.
 
-After the pilot passes, run the full Bundle suite, the full package suite,
-typecheck, and the source-boundary check. No app goldens are regenerated.
+After the pilot passes, run the full Bundle suite, typecheck, and the
+source-boundary check. No app goldens are regenerated.
 
 ## Future integration interfaces (coordinator-owned)
 
-The embedded facade exports six runtime names from `./bundle`:
+The embedded facade exports seven runtime names from `./bundle`:
 
 ```text
 STRUCT_BUNDLE_LIMITS_PROFILE
 STRUCT_BUNDLE_LIMITS_PROFILE_VERSION
+StructBundleError
 createStructBundle
 decodeStructBundle
 encodeStructBundle
@@ -152,19 +181,20 @@ verifyStructBundle
 
 The coordinator must, in its package/export-manifest lane:
 
-- update `API_MANIFEST.json` `runtimeExports['./bundle']` to exactly those six
-  names and update `API.md`/the packed-consumer expectation accordingly;
-- update `tests/public-consumer/runtime.mjs` and `types.ts` to exercise
-  `createStructBundle`, `verifyStructBundle`, and the limits profile through the
-  packed package;
+- update `API_MANIFEST.json` `runtimeExports['./bundle']` to exactly those
+  seven names and update `API.md` to the ADR contract (direct handle, promise
+  decoder, byte encoder, `StructBundleError`);
+- update `tests/public-consumer/runtime.mjs` and `types.ts` to exercise the
+  promise decoder, the direct handle, the byte encoder, and the thrown error;
 - keep `package.json` export-map paths unchanged (`./bundle` already exists);
 - rebase the S-04 clean-tarball proof onto the integrated exact head.
 
 The resolver lane must add a separate versioned executor surface and must not
-widen `verifyStructBundle` or the embedded options. Its bytes-ingress integration
-should extend `decodeStructBundle` options only through explicit resolver policy
-objects and must preserve zero executor starts on expected-digest mismatch,
-noncanonical input, strict-value failure, or external-payload policy failure.
+widen `verifyStructBundle` or the embedded options. Its bytes-ingress
+integration should extend `decodeStructBundle` options only through explicit
+resolver policy objects and must preserve zero executor starts on
+expected-digest mismatch, noncanonical input, strict-value failure, or
+external-payload policy failure.
 
 ## Remaining gaps
 

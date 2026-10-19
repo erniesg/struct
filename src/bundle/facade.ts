@@ -46,6 +46,8 @@ export type StructBundleEmbeddedOptions = Readonly<{
 type Failure = Extract<EmbeddedAcceptanceResult, { ok: false }>
 type FailureError = Failure['error']
 
+const canonicalDecoder = new TextDecoder('utf-8', { fatal: true })
+
 function failure(error: FailureError): Failure {
   return Object.freeze({ ok: false, error: Object.freeze(error) })
 }
@@ -198,6 +200,19 @@ export function verifyStructBundleFacade(
   }
   if (canonical.byteLength > profile.maxRawBytes)
     return failure({ stage: 'canonical', code: 'LIMIT' })
+
+  // The canonical bytes that become the handle are the only authority for the
+  // published profile. A caller-supplied proxy can present a different view to
+  // each traversal, so the profile is re-checked against a private snapshot of
+  // exactly those bytes instead of trusting the caller's live object.
+  try {
+    assertStructBundleValueLimits(
+      JSON.parse(canonicalDecoder.decode(canonical)),
+      profile,
+    )
+  } catch (error) {
+    return canonicalFailure(error)
+  }
 
   return decodeEmbeddedBundleBytes(canonical)
 }

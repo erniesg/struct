@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import vectors from './fixtures/bundle-canonical/vectors.json'
 import {
   STRUCT_BUNDLE_LIMITS_PROFILE,
+  StructBundleError,
   createStructBundle,
   decodeStructBundle,
   encodeStructBundle,
@@ -18,26 +19,37 @@ function createInput() {
   return { document }
 }
 
-function accepted(result: ReturnType<typeof createStructBundle>) {
-  expect(result.ok).toBe(true)
-  if (!result.ok) throw new Error(JSON.stringify(result))
-  return result.bundle
+function accepted<T>(run: () => T): T {
+  try {
+    return run()
+  } catch (error) {
+    throw new Error(`unexpected failure: ${String(error)}`)
+  }
+}
+
+function rejects(run: () => unknown, stage: string, code: string): void {
+  let error: unknown
+  try {
+    run()
+  } catch (thrown) {
+    error = thrown
+  }
+  expect(error).toBeInstanceOf(StructBundleError)
+  expect((error as StructBundleError).stage).toBe(stage)
+  expect((error as StructBundleError).code).toBe(code)
 }
 
 describe('embedded Bundle creation pilot', () => {
   it('creates the exact frozen canonical envelope from a runtime document', () => {
-    const bundle = accepted(createStructBundle(createInput()))
+    const bundle = accepted(() => createStructBundle(createInput()))
     expect(bundle.bundleSha256).toBe(current.sha256)
-    expect(encodeStructBundle(bundle)).toEqual({
-      ok: true,
-      bytes: utf8(current.canonical),
-    })
+    expect(encodeStructBundle(bundle)).toEqual(utf8(current.canonical))
     expect(bundle.documentSnapshot()).toEqual(envelope().document)
   })
 
   it('isolates the created handle from every later input mutation', () => {
     const input = createInput()
-    const bundle = accepted(createStructBundle(input))
+    const bundle = accepted(() => createStructBundle(input))
     input.document.metadata.title = 'mutated'
     input.document.assets[0].sha256 = '0'.repeat(64)
     input.document.assets[0].bytes.fill(0)
@@ -45,10 +57,7 @@ describe('embedded Bundle creation pilot', () => {
     expect(bundle.documentSnapshot().metadata.title).toBe('Fixture')
     expect(bundle.assetIds()).toEqual(['asset-1'])
     expect(bundle.assetBytes('asset-1')).toEqual(new Uint8Array([0, 255, 128]))
-    expect(encodeStructBundle(bundle)).toEqual({
-      ok: true,
-      bytes: utf8(current.canonical),
-    })
+    expect(encodeStructBundle(bundle)).toEqual(utf8(current.canonical))
   })
 
   it.each([
@@ -59,33 +68,31 @@ describe('embedded Bundle creation pilot', () => {
   ])('fails closed on %s', (_name, mutate, stage, code) => {
     const input: any = createInput()
     mutate(input)
-    expect(createStructBundle(input)).toEqual({
-      ok: false,
-      error: { stage, code },
-    })
+    rejects(() => createStructBundle(input), stage, code)
   })
 
   it('rejects capability-bearing and unknown create options/inputs', () => {
-    expect(createStructBundle(createInput() as any, {
-      expectedBundleSha256: current.sha256,
-    } as any)).toEqual({
-      ok: false,
-      error: { stage: 'input', code: 'OPTIONS' },
-    })
-    expect(createStructBundle({ ...createInput(), resolverExecutor: {} } as any))
-      .toEqual({ ok: false, error: { stage: 'input', code: 'TYPE' } })
+    rejects(
+      () => createStructBundle(createInput() as never, {
+        expectedBundleSha256: current.sha256,
+      } as never),
+      'input',
+      'OPTIONS',
+    )
+    rejects(
+      () => createStructBundle({ ...createInput(), resolverExecutor: {} } as never),
+      'input',
+      'TYPE',
+    )
   })
 })
 
 describe('embedded Bundle in-memory value verification', () => {
   it('accepts a strict embedded value and returns a genuine handle', () => {
     const value = envelope()
-    const bundle = accepted(verifyStructBundle(value))
+    const bundle = accepted(() => verifyStructBundle(value))
     expect(bundle.bundleSha256).toBe(current.sha256)
-    expect(encodeStructBundle(bundle)).toEqual({
-      ok: true,
-      bytes: utf8(current.canonical),
-    })
+    expect(encodeStructBundle(bundle)).toEqual(utf8(current.canonical))
     expect(bundle.documentSnapshot()).toEqual(value.document)
   })
 
@@ -96,15 +103,18 @@ describe('embedded Bundle in-memory value verification', () => {
       { limitsProfile: '2.0.0' },
       { limitsProfile: '1.0.0', expectedBundleSha256: current.sha256 },
     ]) {
-      expect(verifyStructBundle(envelope(), options as any)).toEqual({
-        ok: false,
-        error: { stage: 'input', code: 'OPTIONS' },
-      })
+      rejects(() => verifyStructBundle(envelope(), options as never), 'input', 'OPTIONS')
     }
-    expect(verifyStructBundle(utf8(current.canonical) as any)).toMatchObject({
-      ok: false,
-      error: { stage: 'canonical', code: 'TYPE' },
-    })
+    rejects(() => verifyStructBundle(utf8(current.canonical) as never), 'canonical', 'TYPE')
+  })
+
+  it('rejects external payloads without invoking a resolver', () => {
+    const value = envelope()
+    value.assets[0].payload = {
+      kind: 'external',
+      resourceId: `sha256:${value.assets[0].sha256}`,
+    }
+    rejects(() => verifyStructBundle(value), 'assets', 'UNRESOLVED')
   })
 
   it.each([
@@ -133,22 +143,7 @@ describe('embedded Bundle in-memory value verification', () => {
   ])('fails closed on %s in a value', (_name, mutate, stage, code) => {
     const value = envelope()
     mutate(value)
-    expect(verifyStructBundle(value)).toEqual({
-      ok: false,
-      error: { stage, code },
-    })
-  })
-
-  it('rejects external payloads without invoking a resolver', () => {
-    const value = envelope()
-    value.assets[0].payload = {
-      kind: 'external',
-      resourceId: `sha256:${value.assets[0].sha256}`,
-    }
-    expect(verifyStructBundle(value)).toEqual({
-      ok: false,
-      error: { stage: 'assets', code: 'UNRESOLVED' },
-    })
+    rejects(() => verifyStructBundle(value), stage, code)
   })
 
   it.each([
@@ -173,10 +168,7 @@ describe('embedded Bundle in-memory value verification', () => {
   ])('fails closed on %s in a value', (_name, mutate) => {
     const value = envelope()
     mutate(value)
-    expect(verifyStructBundle(value)).toMatchObject({
-      ok: false,
-      error: { stage: 'canonical', code: 'TYPE' },
-    })
+    rejects(() => verifyStructBundle(value), 'canonical', 'TYPE')
   })
 
   it('rejects hostile in-memory objects without invoking accessors', () => {
@@ -186,36 +178,24 @@ describe('embedded Bundle in-memory value verification', () => {
       enumerable: true,
       get: getter,
     })
-    expect(verifyStructBundle(hostile)).toMatchObject({
-      ok: false,
-      error: { stage: 'canonical', code: 'TYPE' },
-    })
+    rejects(() => verifyStructBundle(hostile), 'canonical', 'TYPE')
 
     const cycle: any = envelope()
     cycle.document.metadata.self = cycle
-    expect(verifyStructBundle(cycle)).toMatchObject({
-      ok: false,
-      error: { stage: 'canonical', code: 'TYPE' },
-    })
+    rejects(() => verifyStructBundle(cycle), 'canonical', 'TYPE')
 
     const surrogate = envelope()
     surrogate.document.metadata.title = '\ud800'
-    expect(verifyStructBundle(surrogate)).toMatchObject({
-      ok: false,
-      error: { stage: 'canonical', code: 'TYPE' },
-    })
+    rejects(() => verifyStructBundle(surrogate), 'canonical', 'TYPE')
 
     const unsafe = envelope()
     unsafe.document.metadata.order = Number.MAX_SAFE_INTEGER + 1
-    expect(verifyStructBundle(unsafe)).toMatchObject({
-      ok: false,
-      error: { stage: 'canonical', code: 'TYPE' },
-    })
+    rejects(() => verifyStructBundle(unsafe), 'canonical', 'TYPE')
   })
 
   it('isolates the handle from later value and returned byte mutation', () => {
     const value = envelope()
-    const bundle = accepted(verifyStructBundle(value))
+    const bundle = accepted(() => verifyStructBundle(value))
     value.document.metadata.title = 'mutated'
     value.assets[0].payload.base64 = 'AAAA'
     value.assets.push({ ...value.assets[0], id: 'later' })
@@ -224,34 +204,25 @@ describe('embedded Bundle in-memory value verification', () => {
     expect(bundle.assetBytes('asset-1')).toEqual(new Uint8Array([0, 255, 128]))
     expect(() => { (bundle.documentSnapshot() as any).documentId = 'changed' })
       .toThrow()
-    expect(encodeStructBundle({ ...bundle })).toEqual({
-      ok: false,
-      error: { stage: 'handle', code: 'FORGED' },
-    })
-    expect(encodeStructBundle(bundle)).toEqual({
-      ok: true,
-      bytes: utf8(current.canonical),
-    })
+    rejects(() => encodeStructBundle({ ...bundle }), 'handle', 'FORGED')
+    expect(encodeStructBundle(bundle)).toEqual(utf8(current.canonical))
   })
 
   it('enforces the profile string cap before semantic normalization', () => {
     const value = envelope()
     value.document.metadata.title =
       'x'.repeat(STRUCT_BUNDLE_LIMITS_PROFILE.maxStringLength + 1)
-    expect(verifyStructBundle(value)).toEqual({
-      ok: false,
-      error: { stage: 'canonical', code: 'LIMIT' },
-    })
+    rejects(() => verifyStructBundle(value), 'canonical', 'LIMIT')
   })
 
-  it('keeps bytes ingress canonical even with the same embedded verifier', () => {
+  it('keeps bytes ingress canonical even with the same embedded verifier', async () => {
     const noncanonical = current.canonical.replace(
       '"bundleVersion":"1.0.0"',
       '"bundleVersion":"1.0.0" ',
     )
-    expect(decodeStructBundle(utf8(noncanonical))).toEqual({
-      ok: false,
-      error: { stage: 'canonical', code: 'NONCANONICAL' },
+    await expect(decodeStructBundle(utf8(noncanonical))).rejects.toMatchObject({
+      stage: 'canonical',
+      code: 'NONCANONICAL',
     })
   })
 })
