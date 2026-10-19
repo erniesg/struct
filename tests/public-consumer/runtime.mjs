@@ -10,6 +10,7 @@ const modules = {
   './recovery': await import('@erniesg/struct/recovery'),
   './renderers/xhtml': await import('@erniesg/struct/renderers/xhtml'),
   './renderers/epub': await import('@erniesg/struct/renderers/epub'),
+  './bundle': await import('@erniesg/struct/bundle'),
 }
 
 const manifest = JSON.parse(
@@ -27,7 +28,7 @@ for (const [path, module] of Object.entries(modules)) {
   assert.deepEqual(Object.keys(module).sort(), manifest.runtimeExports[path])
 }
 
-for (const subpath of ['core', 'schema', 'ids', 'bundle']) {
+for (const subpath of ['core', 'schema', 'ids']) {
   await assert.rejects(
     import(`@erniesg/struct/${subpath}`),
     (error) => error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED',
@@ -45,3 +46,9 @@ assert.equal(
 assert.equal('legacyStructDigest' in modules['./identity'], false)
 assert.equal('legacyStructDigestMatches' in modules['./identity'], false)
 assert.equal('legacyStructDigests' in modules['./identity'], false)
+assert.deepEqual(
+  Object.keys(modules['./bundle']).sort(),
+  ['decodeStructBundle', 'encodeStructBundle'],
+)
+assert.equal(typeof modules['./bundle'].decodeStructBundle, 'function')
+assert.equal(typeof modules['./bundle'].encodeStructBundle, 'function')

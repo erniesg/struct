@@ -39,5 +39,16 @@ buildStructEpub(document)
 
 // @ts-expect-error removed prerelease package subpath
 await import('@erniesg/struct/core')
-// @ts-expect-error Bundle remains unavailable until S-03
-await import('@erniesg/struct/bundle')
+import {
+  decodeStructBundle,
+  encodeStructBundle,
+  type VerifiedStructBundle,
+} from '@erniesg/struct/bundle'
+
+declare const wireBytes: Uint8Array
+declare const handle: VerifiedStructBundle
+decodeStructBundle(wireBytes)
+decodeStructBundle(wireBytes, { expectedBundleSha256: 'a'.repeat(64) })
+encodeStructBundle(handle)
+// Forged values are rejected at runtime; the encoder takes an opaque unknown.
+encodeStructBundle({ bundleVersion: '1.0.0' })
