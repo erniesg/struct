@@ -223,6 +223,28 @@ describe('sacrificial resolver verification host harness', () => {
     expect(record.ledger_after.free_slots).toBe(0)
   })
 
+  it('projects the published fail-stop receipt shape from real evidence', () => {
+    const receipts: Json[] = []
+    for (const entry of evidence.cases) {
+      if (entry.fail_stop_receipt) receipts.push(entry.fail_stop_receipt)
+      for (const step of entry.steps ?? []) {
+        if (step.fail_stop_receipt) receipts.push(step.fail_stop_receipt)
+      }
+    }
+    expect(receipts.length).toBeGreaterThanOrEqual(5)
+    for (const receipt of receipts) {
+      expect(receipt.protocolVersion).toBe('1.0.0')
+      expect(typeof receipt.executionId).toBe('string')
+      expect(receipt.hostTerminated).toBe(true)
+      expect(receipt.descendantsDead).toBe(true)
+      expect(receipt.capacityRetired).toBe(true)
+      expect(receipt.evidence.hostReaped).toBe(true)
+      expect(receipt.evidence.descendantCount).toBe(0)
+      expect(receipt.evidence.method).toBe('pid-namespace')
+      expect(receipt.evidence.waitedMs).toBeGreaterThan(0)
+    }
+  })
+
   it('does not claim conformance or approval for anything it did not do', () => {
     const claims = evidence.not_claimed.join(' ')
     expect(claims).toMatch(/not a security approval/)

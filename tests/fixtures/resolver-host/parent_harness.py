@@ -261,6 +261,44 @@ def ns_outer_members(ns_id):
     return sorted(members)
 
 
+def fail_stop_receipt(execution_id, host_reaped, descendant_count, waited_ms,
+                      method="pid-namespace"):
+    """Projection of the published StructResolverFailStopReceipt shape.
+
+    The published resolver contract
+    (/home/ubuntu/.local/state/struct-migration/20261020-continuation/resolver-contract.json)
+    pins that receipt as
+    Readonly<{ protocolVersion; executionId; hostTerminated; descendantsDead;
+    capacityRetired; evidence: { hostReaped; descendantCount; waitedMs;
+    method: 'process-group' | 'cgroup' | 'pid-namespace' } }>.
+    This projection is harness evidence for the coordinator's wiring. It is
+    not a package export and it does not change the pinned surface.
+    """
+    return {
+        "protocolVersion": "1.0.0",
+        "executionId": execution_id,
+        "hostTerminated": True,
+        "descendantsDead": descendant_count == 0,
+        "capacityRetired": True,
+        "evidence": {
+            "hostReaped": bool(host_reaped),
+            "descendantCount": descendant_count,
+            "waitedMs": waited_ms,
+            "method": method,
+        },
+    }
+
+
+def execution_descendant_count(handle):
+    """Live descendants of one execution, counted from outside its namespace.
+
+    The outer-visible members of an execution's PID namespace are exactly the
+    namespace init plus every in-namespace descendant that still has an outer
+    PID. After a fail-stop that list must be empty.
+    """
+    return len(ns_outer_members(handle.get("pid_ns")))
+
+
 def realm_capabilities(identity_value):
     """Capability bitmasks the host realm actually holds."""
     if not identity_value:
@@ -779,10 +817,12 @@ def _never_settling_case(supervisor, ledger, token, name, mode, question):
     cleanup_settled = supervisor.wait_file(cleanup_path, CLEANUP_BUDGET_MS / 1000.0)
     join_settled = supervisor.wait_file(join_path, JOIN_BUDGET_MS / 1000.0)
 
+    fail_stop_started = time.monotonic()
     termination = supervisor.terminate(handle)
     eof = supervisor.wait_lifetime_eof(handle)
     reap = supervisor.reap_launcher(handle)
     residual = supervisor.prove_zero_residual([handle])
+    waited_ms = int(round((time.monotonic() - fail_stop_started) * 1000))
 
     record["settlement"] = {
         "cleanup_ack_requested": True,
@@ -800,6 +840,12 @@ def _never_settling_case(supervisor, ledger, token, name, mode, question):
         "launcher_status": reap["launcher_status"],
     }
     record["residual"] = residual
+    record["fail_stop_receipt"] = fail_stop_receipt(
+        execution_id,
+        reap["launcher_reaped"],
+        execution_descendant_count(handle),
+        waited_ms,
+    )
 
     retired, retired_slot = ledger.retire(execution_id, "FAIL_STOP_%s" % name.upper())
     record["capacity_retirement"] = {
@@ -898,12 +944,14 @@ def case_daemonized_escaped_descendant(supervisor, ledger, token):
     descendant_inside_namespace = descendant_outer_pid is not None
     namespace_local_pid = descendant.get("pid") not in members_while_alive
 
+    fail_stop_started = time.monotonic()
     termination = supervisor.terminate(handle)
     eof = supervisor.wait_lifetime_eof(handle)
     stopped, hb_pre_stop, hb_final = supervisor.heartbeat_stopped(heartbeat_path)
     reap = supervisor.reap_launcher(handle)
     residual = supervisor.prove_zero_residual([handle])
     members_after_death = ns_outer_members(handle["pid_ns"])
+    waited_ms = int(round((time.monotonic() - fail_stop_started) * 1000))
 
     record["descendant"]["realm_capabilities"] = realm_capabilities(descendant)
     record["descendant"]["realm_is_unprivileged"] = realm_is_unprivileged(descendant)
@@ -952,6 +1000,12 @@ def case_daemonized_escaped_descendant(supervisor, ledger, token):
         "launcher_status": reap["launcher_status"],
     }
     record["residual"] = residual
+    record["fail_stop_receipt"] = fail_stop_receipt(
+        execution_id,
+        reap["launcher_reaped"],
+        execution_descendant_count(handle),
+        waited_ms,
+    )
 
     retired, retired_slot = ledger.retire(execution_id, "FAIL_STOP_DAEMONIZED_ESCAPED_DESCENDANT")
     record["capacity_retirement"] = {
@@ -1043,9 +1097,12 @@ def case_aggregate_pressure(supervisor, ledger, token):
     cleanup_settled_a = supervisor.wait_file(
         os.path.join(supervisor.rundir, "cleanup-ack-%s-A.json" % token), CLEANUP_BUDGET_MS / 1000.0
     )
+    fail_stop_a_started = time.monotonic()
     termination_a = supervisor.terminate(handle_a)
     eof_a = supervisor.wait_lifetime_eof(handle_a)
     reap_a = supervisor.reap_launcher(handle_a)
+    waited_a_ms = int(round((time.monotonic() - fail_stop_a_started) * 1000))
+    residual_a = supervisor.prove_zero_residual([handle_a])
     retired_a, retired_slot_a = ledger.retire(id_a, "FAIL_STOP_AGGREGATE_PRESSURE")
     steps.append({
         "step": "fail_stop_execution_a",
@@ -1057,6 +1114,9 @@ def case_aggregate_pressure(supervisor, ledger, token):
         "launcher_reaped": reap_a["launcher_reaped"],
         "slot_retired": retired_a,
         "retired_slot": retired_slot_a,
+        "fail_stop_receipt": fail_stop_receipt(
+            id_a, reap_a["launcher_reaped"], execution_descendant_count(handle_a), waited_a_ms
+        ),
     })
 
     ok_reuse, reason_reuse, slot_reuse = ledger.reserve(id_a)
@@ -1130,9 +1190,12 @@ def case_aggregate_pressure(supervisor, ledger, token):
         supervisor.wait_file(
             os.path.join(supervisor.rundir, "cleanup-ack-%s-E.json" % token), CLEANUP_BUDGET_MS / 1000.0
         )
+        fail_stop_e_started = time.monotonic()
         termination_e = supervisor.terminate(handle_e)
         eof_e = supervisor.wait_lifetime_eof(handle_e)
         reap_e = supervisor.reap_launcher(handle_e)
+        waited_e_ms = int(round((time.monotonic() - fail_stop_e_started) * 1000))
+        residual_e = supervisor.prove_zero_residual([handle_e])
         retired_e, retired_slot_e = ledger.retire(id_e, "FAIL_STOP_AGGREGATE_PRESSURE_SECOND")
     else:
         termination_e = {"escalated_to_sigkill": False}
@@ -1148,6 +1211,9 @@ def case_aggregate_pressure(supervisor, ledger, token):
         "launcher_reaped": reap_e["launcher_reaped"],
         "slot_retired": retired_e,
         "retired_slot": retired_slot_e,
+        "fail_stop_receipt": fail_stop_receipt(
+            id_e, reap_e["launcher_reaped"], execution_descendant_count(handle_e), waited_e_ms
+        ),
     })
 
     id_g = ledger.new_execution_id()

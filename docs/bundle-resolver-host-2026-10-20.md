@@ -122,11 +122,65 @@ slot, so an implicated capacity can never be handed out again.
 The parent/host channel is intentionally **not** a protocol proposal. It is
 newline markers on stdin (`cleanup`, `terminate`) plus small JSON
 acknowledgement files in the run directory. It exists so that this fixture
-cannot conflict with, or pre-empt, the separately published resolver contract
-(`/home/ubuntu/.local/state/struct-migration/20261020-continuation/resolver-contract.json`,
-not yet published at the time of writing). When that contract is fixed, the
-marker/acknowledgement shape must be replaced by the contract's own control
-channel; the cases, the containment mechanism, and the death proof stay valid.
+cannot conflict with, or pre-empt, the resolver protocol.
+
+## Relationship to the published resolver contract
+
+The resolver contract was published at
+`/home/ubuntu/.local/state/struct-migration/20261020-continuation/resolver-contract.json`
+(contract version `1.0.0`, published `2026-10-20`). It pins
+`StructResolverHostSupervisorV1` as the additive fail-stop port:
+
+```ts
+interface StructResolverHostSupervisorV1 {
+  readonly protocolVersion: '1.0.0'
+  failStop(executionId: string, reason: StructResolverFailStopReason): Promise<StructResolverFailStopReceipt>
+}
+```
+
+and pins the receipt shape as
+
+```ts
+Readonly<{
+  protocolVersion: '1.0.0'
+  executionId: string
+  hostTerminated: true
+  descendantsDead: true
+  capacityRetired: true
+  evidence: Readonly<{
+    hostReaped: true
+    descendantCount: 0
+    waitedMs: number
+    method: 'process-group' | 'cgroup' | 'pid-namespace'
+  }>
+}>
+```
+
+This harness is the OS substrate for exactly that port. Every fail-stop case
+therefore records a `fail_stop_receipt` projection built from the real
+observations, using the contract's own `method: 'pid-namespace'` value:
+
+| Contract field | Harness source |
+|---|---|
+| `hostTerminated` | the namespace init was signalled and is gone |
+| `hostReaped` | the launcher was waited for and reported the host's wait status |
+| `descendantCount` | outer-visible members of that execution's PID namespace after the fail-stop |
+| `descendantsDead` | `descendantCount === 0` |
+| `capacityRetired` | the ledger permanently retired the implicated slot |
+| `waitedMs` | measured elapsed time of the terminate-and-proof sequence |
+
+The projection is **harness evidence for the coordinator's wiring**, not a
+package export. It does not change the pinned surface, and the pinned TypeScript
+types live on the contract's own branch
+(`feat/bundle-resolver-lifecycle-20261020`, worktree `.../worktrees/resolver-runtime`),
+not in this lane's branch, so no TypeScript port is implemented here.
+
+The marker/acknowledgement channel between the parent and the host is a
+lower layer than the contract's port: the contract fixes what the package
+calls, not the byte channel between a parent and its host process. If the
+contract later fixes a host wire channel, this fixture's channel has to be
+re-bound to it; the containment mechanism, the five cases, and the death proof
+stay valid.
 
 ## Explicit non-claims
 
@@ -151,24 +205,34 @@ channel; the cases, the containment mechanism, and the death proof stay valid.
 
 ## Integration gaps
 
-1. **The resolver contract is not published.** The marker/acknowledgement
-   channel has to be re-bound to the fixed contract once
-   `resolver-contract.json` exists.
+1. **The TypeScript port is not implemented here.** The contract pins
+   `StructResolverHostSupervisorV1.failStop()`, but the pinned protocol types
+   (`src/bundle/resolver-protocol.ts`) live on the contract's own branch
+   (`feat/bundle-resolver-lifecycle-20261020`, worktree
+   `.../worktrees/resolver-runtime`). This lane's branch is based on
+   `0eecf16` and does not contain them, and this lane owns no `src/**` file.
+   The `fail_stop_receipt` projection in the harness evidence is the input for
+   that implementation.
 2. **No executor is wired.** Nothing here implements
-   `StructResolverExecutorV1`. This harness is the OS substrate that an
-   executor's fail-stop path will have to satisfy; the package-level
-   conformance assertions (duplicate IDs, retired-ID reuse, one-shot start,
-   post-revocation broker-call counting, endpoint-map aliasing, DNS rebinding,
-   traversal/symlink, redirect loops, deceptive length, cancellation,
-   iterator cleanup) remain to be built by the S-03 lane that owns the
-   contract.
+   `StructResolverExecutorV1`. The contract's `conformanceHostLane` also asks
+   for a consumer executor and for **non-conforming** fixtures that violate
+   each invariant so the harness can prove the rejection, not only the happy
+   path. Those fixtures are not built yet.
 3. **The one-shot state machine and the revocation/terminal receipt binding**
    are modelled only indirectly, through the ledger and the fail-stop
    behaviour. The ADR's execution-ID-bound receipts must be checked against
    the published contract, not against this fixture.
-4. **Capacity retirement is per-harness-lifetime.** A production supervisor
-   needs the same tombstones to survive process restarts if the contract
-   requires lifetime uniqueness across restarts.
+4. **Capacity retirement is per-harness-lifetime.** Whether the retired-ID
+   tombstones and the retired slots must survive a supervisor restart depends
+   on the contract's lifetime-uniqueness wording; the current implementation
+   does not persist them.
+5. **The parent/host byte channel is generic.** If the contract later fixes a
+   host wire channel, this fixture's marker/acknowledgement shape has to be
+   re-bound to it.
+6. **The harness does not model the resolver budget.** Fixed stand-in budgets
+   are used (500 ms cleanup, 500 ms join, 300 ms terminate grace); the ADR's
+   monotonic clock and the `totalTimeoutMs` / `cleanupReserveMs` split are not
+   exercised.
 
 ## How to run
 
