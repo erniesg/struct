@@ -18,8 +18,29 @@ const repository = fileURLToPath(new URL('../', import.meta.url))
 const packageJson = JSON.parse(
   await readFile(join(repository, 'package.json'), 'utf8'),
 )
-const temporary = await mkdtemp(join(tmpdir(), 'struct-public-consumer-'))
-const consumer = join(temporary, 'consumer')
+
+function commandVersion(command) {
+  return execFileSync(command, ['--version'], {
+    cwd: repository,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim()
+}
+
+function selectInstaller() {
+  const requested = process.env.STRUCT_PACKED_CONSUMER_INSTALLER
+  if (requested !== undefined && requested !== 'pnpm' && requested !== 'npm')
+    throw new Error(
+      `unknown STRUCT_PACKED_CONSUMER_INSTALLER: ${requested}`,
+    )
+  if (requested) return { name: requested, version: commandVersion(requested) }
+  try {
+    return { name: 'pnpm', version: commandVersion('pnpm') }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+    return { name: 'npm', version: commandVersion('npm') }
+  }
+}
 
 function sourceState() {
   try {
@@ -33,10 +54,27 @@ function sourceState() {
       { cwd: repository, encoding: 'utf8' },
     )
     return { head, dirty: status.trim().length > 0 }
-  } catch {
-    return { head: null, dirty: null }
+  } catch (error) {
+    throw new Error(
+      `source Git binding unavailable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
   }
 }
+
+const source = sourceState()
+const installer = selectInstaller()
+const installArguments =
+  installer.name === 'pnpm'
+    ? ['install', '--ignore-scripts', '--offline', '--no-frozen-lockfile']
+    : ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--offline']
+const installEnvironment =
+  installer.name === 'npm'
+    ? { ...process.env, RUCKSACK_NPM_SHIM: 'passthrough' }
+    : process.env
+const temporary = await mkdtemp(join(tmpdir(), 'struct-public-consumer-'))
+const consumer = join(temporary, 'consumer')
 
 try {
   const packed = JSON.parse(
@@ -93,11 +131,11 @@ try {
     ) ?? []
   if (resolutionPaths.includes(join(repository, 'node_modules')))
     throw new Error('packed consumer can resolve producer node_modules')
-  execFileSync(
-    'npm',
-    ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--offline'],
-    { cwd: consumer, stdio: 'inherit' },
-  )
+  execFileSync(installer.name, installArguments, {
+    cwd: consumer,
+    stdio: 'inherit',
+    env: installEnvironment,
+  })
   execFileSync(process.execPath, ['runtime.mjs'], {
     cwd: consumer,
     stdio: 'inherit',
@@ -119,6 +157,13 @@ try {
     { cwd: consumer, stdio: 'inherit' },
   )
 
+  const finalSource = sourceState()
+  if (
+    finalSource.head !== source.head ||
+    finalSource.dirty !== source.dirty
+  )
+    throw new Error('source Git state changed during packed-consumer verification')
+
   process.stdout.write(
     `${JSON.stringify({
       schemaVersion: '1.0.0',
@@ -129,7 +174,8 @@ try {
         filename: metadata.filename,
         sha256: tarballSha256,
       },
-      source: sourceState(),
+      installer: { ...installer, arguments: installArguments },
+      source: finalSource,
     })}\n`,
   )
 } finally {

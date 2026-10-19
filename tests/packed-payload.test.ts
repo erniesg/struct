@@ -121,4 +121,16 @@ describe('packed payload proof', () => {
       /unexpected packed path/u,
     )
   })
+
+  it.each([
+    'dist/probe.test.js',
+    'dist/probe.spec.d.ts',
+    'dist/__tests__/probe.js',
+    'dist/fixtures/probe.js',
+    'dist/src/index.js',
+  ])('rejects compiled test/spec/fixture/source debris under dist: %s', (path) => {
+    expect(() => validate([...packedFiles, path])).toThrow(
+      /unexpected packed path/u,
+    )
+  })
 })
