@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import vectors from './fixtures/bundle-canonical/vectors.json'
+import * as bundle from '../src/bundle/index'
 import {
   decodeStructBundle,
   encodeStructBundle,
@@ -70,9 +71,22 @@ describe('public ./bundle surface', () => {
     })
     expect(manifest.exportPaths).toContain('./bundle')
     expect(manifest.unavailablePaths).not.toContain('./bundle')
+    // The coordinator owns the package/export-manifest integration lane. This
+    // test pins the recorded manifest without editing it from this worktree.
     expect(manifest.runtimeExports['./bundle']).toEqual([
       'decodeStructBundle',
       'encodeStructBundle',
+    ])
+  })
+
+  it('exposes the embedded create/value facade in addition to wire ingress', () => {
+    expect(Object.keys(bundle).sort()).toEqual([
+      'STRUCT_BUNDLE_LIMITS_PROFILE',
+      'STRUCT_BUNDLE_LIMITS_PROFILE_VERSION',
+      'createStructBundle',
+      'decodeStructBundle',
+      'encodeStructBundle',
+      'verifyStructBundle',
     ])
   })
 })
