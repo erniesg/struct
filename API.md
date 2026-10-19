@@ -13,10 +13,33 @@ export map and packed-consumer test enforce these accepted paths:
 | `@erniesg/struct/recovery` | Source-neutral recovery facts and summaries without application copy. |
 | `@erniesg/struct/renderers/xhtml` | Deterministic XHTML rendering. |
 | `@erniesg/struct/renderers/epub` | Deterministic EPUB construction and archive bounds. |
+| `@erniesg/struct/bundle` | Verified StructBundle bytes ingress and encoding. |
 
-The prerelease thin paths `./core`, `./schema`, and `./ids` are removed. The
-`./bundle` path remains unavailable until S-03 is complete. Private `src/**`
-modules are not consumer APIs.
+The prerelease thin paths `./core`, `./schema`, and `./ids` are removed.
+Private `src/**` modules are not consumer APIs.
+
+## Bundle surface
+
+`@erniesg/struct/bundle` exposes the first portable interchange boundary:
+
+- `decodeStructBundle(rawJsonBytes, options?)` accepts untrusted wire bytes
+  only. It applies the raw-input cap, checks an optional expected
+  `bundleSha256` before parsing, proves canonical input, validates the
+  byte-free document projection and receipt equality, and verifies every
+  embedded asset's base64, length, and digest. It returns a structured result.
+- `encodeStructBundle(handle)` re-encodes only a genuine package-created
+  handle. Structurally copied or forged values fail with `stage: 'handle'`,
+  `code: 'FORGED'`.
+
+A verified handle proves integrity and conservation of the exact bytes it was
+created from. It is not a signature and proves nothing about producer
+authenticity. Handles are frozen, expose deep-copied snapshots, and copy asset
+bytes on every read.
+
+This version accepts embedded assets only. An envelope carrying an external
+payload fails closed with `stage: 'assets'`, `code: 'UNRESOLVED'`: the versioned
+isolated resolver/executor protocol and its conformance harness are not part of
+this surface yet.
 
 ## Decode compatibility and deprecated alias
 

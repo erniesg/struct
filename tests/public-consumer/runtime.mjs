@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const packageRoot = new URL('./node_modules/@erniesg/struct/', import.meta.url)
+
 const manifest = JSON.parse(
   await readFile(new URL('API_MANIFEST.json', packageRoot), 'utf8'),
 )
@@ -61,3 +62,11 @@ assert.equal(
 assert.equal('legacyStructDigest' in modules.get('./identity'), false)
 assert.equal('legacyStructDigestMatches' in modules.get('./identity'), false)
 assert.equal('legacyStructDigests' in modules.get('./identity'), false)
+
+const bundleModule = modules.get('./bundle')
+assert.equal(typeof bundleModule.createStructBundle, 'function')
+assert.equal(typeof bundleModule.decodeStructBundle, 'function')
+assert.equal(typeof bundleModule.verifyStructBundle, 'function')
+assert.equal(typeof bundleModule.encodeStructBundle, 'function')
+assert.equal(typeof bundleModule.STRUCT_BUNDLE_LIMITS_PROFILE, 'object')
+assert.equal(typeof bundleModule.STRUCT_BUNDLE_LIMITS_PROFILE_VERSION, 'string')

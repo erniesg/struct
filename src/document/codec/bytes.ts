@@ -1,4 +1,5 @@
 import { array, fail, integer, isStructCodecError } from './primitives'
+import { canonicalBase64Padding } from './base64-lexical'
 
 /** Bound decoded binary data before allocating an output buffer. */
 export const MAX_STRUCT_ASSET_BYTES = 128 * 1024 * 1024
@@ -62,17 +63,12 @@ function arrayByteLength(value: unknown, path: string) {
 function encodedByteLength(value: unknown, path: string) {
   if (typeof value !== 'string') fail('TYPE', path, 'expected a base64 string')
   const encoded = value
-  if (
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-      encoded,
-    )
-  )
+  const padding = canonicalBase64Padding(encoded)
+  if (padding === undefined)
     fail('BYTES', path, 'bytes must use canonical base64')
   return {
     encoded,
-    length:
-      (encoded.length / 4) * 3 -
-      (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0),
+    length: (encoded.length / 4) * 3 - padding,
   }
 }
 
