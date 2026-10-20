@@ -377,7 +377,7 @@ STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=/path/to/outside node scripts/build-release-
 | Typecheck | `npx tsc --noEmit` | 0 | — |
 | Source boundary | `node scripts/check-source-boundary.mjs` | 0 | — |
 | Full test suite | `npx vitest run --maxWorkers=1` | 0 | 1003 passed, 35 files |
-| S-04 packet tests | `npx vitest run --maxWorkers=1 tests/s04-release-packet.test.ts` | 0 | 11 passed |
+| S-04 packet tests | `npx vitest run --maxWorkers=1 tests/s04-release-packet.test.ts` | 0 | 9 passed |
 | Packed consumer | `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=... node scripts/test-packed-consumer.mjs` | 0 | 9 exports, 33 files |
 | Three-run goldens | `node scripts/s04-goldens-packed.mjs` (in consumer) | 0 | 3 variants × 3 runs |
 | Regenerability | two `npm pack` runs | 0 | 2 builds, identical SHA-256 |
