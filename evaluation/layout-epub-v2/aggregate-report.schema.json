@@ -1,0 +1,443 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Struct source-neutral EPUB aggregate report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "versions",
+    "publicArtifact",
+    "evaluation",
+    "outcomes",
+    "counts",
+    "rates",
+    "zeroTolerance",
+    "categories"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "2.0.0"
+    },
+    "versions": {
+      "$ref": "#/$defs/versions"
+    },
+    "publicArtifact": {
+      "$ref": "#/$defs/publicArtifact"
+    },
+    "evaluation": {
+      "$ref": "#/$defs/evaluation"
+    },
+    "outcomes": {
+      "$ref": "#/$defs/outcomes"
+    },
+    "counts": {
+      "$ref": "#/$defs/counts"
+    },
+    "rates": {
+      "$ref": "#/$defs/rates"
+    },
+    "zeroTolerance": {
+      "$ref": "#/$defs/zeroTolerance"
+    },
+    "categories": {
+      "$ref": "#/$defs/categories"
+    }
+  },
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 64,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "nonNegativeCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "positiveCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "reportingDenominator": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 1000000
+    },
+    "rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "multipleOf": 0.000001
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "fixtureVersion",
+        "rendererVersion",
+        "profileVersion",
+        "bridgeVersion",
+        "cohortVersion"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        },
+        "fixtureVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        },
+        "rendererVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        },
+        "profileVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        },
+        "bridgeVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        },
+        "cohortVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        }
+      }
+    },
+    "publicArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageName",
+        "packageVersion",
+        "gitCommit",
+        "packedArtifactSha256"
+      ],
+      "properties": {
+        "packageName": {
+          "const": "@erniesg/struct"
+        },
+        "packageVersion": {
+          "$ref": "#/$defs/semanticVersion"
+        },
+        "gitCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "packedArtifactSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate"
+      ],
+      "properties": {
+        "gate": {
+          "const": "development"
+        }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rendered-ready",
+        "source-preserved-ready",
+        "expected-review-refusal",
+        "invalid-bridge-document",
+        "unexpected-renderer-refusal",
+        "conformance-failure"
+      ],
+      "properties": {
+        "rendered-ready": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "source-preserved-ready": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "expected-review-refusal": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "invalid-bridge-document": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "unexpected-renderer-refusal": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "conformance-failure": {
+          "$ref": "#/$defs/nonNegativeCount"
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assigned",
+        "completed",
+        "neutralObligations",
+        "conservedNeutralObligations",
+        "publicationEligible",
+        "publicationReady",
+        "ambiguityEligible",
+        "ambiguitySafe",
+        "semanticEligible",
+        "renderedSemantically"
+      ],
+      "properties": {
+        "assigned": {
+          "$ref": "#/$defs/positiveCount"
+        },
+        "completed": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "neutralObligations": {
+          "$ref": "#/$defs/positiveCount"
+        },
+        "conservedNeutralObligations": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "publicationEligible": {
+          "$ref": "#/$defs/positiveCount"
+        },
+        "publicationReady": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "ambiguityEligible": {
+          "$ref": "#/$defs/positiveCount"
+        },
+        "ambiguitySafe": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "semanticEligible": {
+          "$ref": "#/$defs/positiveCount"
+        },
+        "renderedSemantically": {
+          "$ref": "#/$defs/nonNegativeCount"
+        }
+      }
+    },
+    "rates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assignedCompletion",
+        "neutralConservation",
+        "publicationReady",
+        "ambiguitySafety",
+        "semanticCoverage"
+      ],
+      "properties": {
+        "assignedCompletion": {
+          "$ref": "#/$defs/rate"
+        },
+        "neutralConservation": {
+          "$ref": "#/$defs/rate"
+        },
+        "publicationReady": {
+          "$ref": "#/$defs/rate"
+        },
+        "ambiguitySafety": {
+          "$ref": "#/$defs/rate"
+        },
+        "semanticCoverage": {
+          "$ref": "#/$defs/rate"
+        }
+      }
+    },
+    "zeroTolerance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "privacySanitizerFailureCount",
+        "falseLinkCount",
+        "falseVerifiedTableCount",
+        "inventedVisibleTextCount",
+        "digestMismatchCount",
+        "danglingReferenceCount",
+        "unsafePathCount",
+        "xmlFailureCount",
+        "idFailureCount",
+        "linkFailureCount",
+        "manifestFailureCount",
+        "spineFailureCount",
+        "containerFailureCount",
+        "metadataFailureCount",
+        "accessibilityFailureCount",
+        "boundsFailureCount",
+        "xhtmlByteMismatchCount",
+        "epubByteMismatchCount"
+      ],
+      "properties": {
+        "privacySanitizerFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "falseLinkCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "falseVerifiedTableCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "inventedVisibleTextCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "digestMismatchCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "danglingReferenceCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "unsafePathCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "xmlFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "idFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "linkFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "manifestFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "spineFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "containerFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "metadataFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "accessibilityFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "boundsFailureCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "xhtmlByteMismatchCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "epubByteMismatchCount": {
+          "$ref": "#/$defs/nonNegativeCount"
+        }
+      }
+    },
+    "reportedCategory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "numerator",
+        "denominator",
+        "rate"
+      ],
+      "properties": {
+        "status": {
+          "const": "reported"
+        },
+        "numerator": {
+          "$ref": "#/$defs/nonNegativeCount"
+        },
+        "denominator": {
+          "$ref": "#/$defs/reportingDenominator"
+        },
+        "rate": {
+          "$ref": "#/$defs/rate"
+        }
+      }
+    },
+    "suppressedCategory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "const": "suppressed"
+        }
+      }
+    },
+    "category": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/reportedCategory"
+        },
+        {
+          "$ref": "#/$defs/suppressedCategory"
+        }
+      ]
+    },
+    "categories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paragraph",
+        "hierarchy",
+        "tables",
+        "figures",
+        "citations",
+        "notes",
+        "multicolumn",
+        "rtl",
+        "navigation",
+        "assets",
+        "metadata",
+        "malformed",
+        "bounds",
+        "ambiguity"
+      ],
+      "properties": {
+        "paragraph": {
+          "$ref": "#/$defs/category"
+        },
+        "hierarchy": {
+          "$ref": "#/$defs/category"
+        },
+        "tables": {
+          "$ref": "#/$defs/category"
+        },
+        "figures": {
+          "$ref": "#/$defs/category"
+        },
+        "citations": {
+          "$ref": "#/$defs/category"
+        },
+        "notes": {
+          "$ref": "#/$defs/category"
+        },
+        "multicolumn": {
+          "$ref": "#/$defs/category"
+        },
+        "rtl": {
+          "$ref": "#/$defs/category"
+        },
+        "navigation": {
+          "$ref": "#/$defs/category"
+        },
+        "assets": {
+          "$ref": "#/$defs/category"
+        },
+        "metadata": {
+          "$ref": "#/$defs/category"
+        },
+        "malformed": {
+          "$ref": "#/$defs/category"
+        },
+        "bounds": {
+          "$ref": "#/$defs/category"
+        },
+        "ambiguity": {
+          "$ref": "#/$defs/category"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,382 @@
+{
+  "cases": [
+    {
+      "caseId": "paragraph-positive",
+      "requiredCategories": [
+        "paragraph"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "paragraph-positive-origin"
+    },
+    {
+      "caseId": "paragraph-negative",
+      "requiredCategories": [
+        "paragraph"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "paragraph-negative-origin"
+    },
+    {
+      "caseId": "hierarchy-positive",
+      "requiredCategories": [
+        "hierarchy"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "hierarchy-positive-origin"
+    },
+    {
+      "caseId": "hierarchy-negative",
+      "requiredCategories": [
+        "hierarchy"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "hierarchy-negative-origin"
+    },
+    {
+      "caseId": "tables-positive",
+      "requiredCategories": [
+        "tables"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "tables-positive-origin"
+    },
+    {
+      "caseId": "tables-negative",
+      "requiredCategories": [
+        "tables"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "tables-negative-origin"
+    },
+    {
+      "caseId": "figures-positive",
+      "requiredCategories": [
+        "figures"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "figures-positive-origin"
+    },
+    {
+      "caseId": "figures-negative",
+      "requiredCategories": [
+        "figures"
+      ],
+      "expectedDisposition": "review-required-publication-refusal",
+      "goldenEntries": [],
+      "provenanceKey": "figures-negative-origin"
+    },
+    {
+      "caseId": "citations-positive",
+      "requiredCategories": [
+        "citations"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "citations-positive-origin"
+    },
+    {
+      "caseId": "citations-safe-ambiguity",
+      "requiredCategories": [
+        "citations"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "citations-safe-ambiguity-origin"
+    },
+    {
+      "caseId": "notes-positive",
+      "requiredCategories": [
+        "notes"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "notes-positive-origin"
+    },
+    {
+      "caseId": "notes-safe-ambiguity",
+      "requiredCategories": [
+        "notes"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "notes-safe-ambiguity-origin"
+    },
+    {
+      "caseId": "multicolumn-positive",
+      "requiredCategories": [
+        "multicolumn"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "multicolumn-positive-origin"
+    },
+    {
+      "caseId": "multicolumn-negative",
+      "requiredCategories": [
+        "multicolumn"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "multicolumn-negative-origin"
+    },
+    {
+      "caseId": "rtl-positive",
+      "requiredCategories": [
+        "rtl"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "rtl-positive-origin"
+    },
+    {
+      "caseId": "rtl-safe-ambiguity",
+      "requiredCategories": [
+        "rtl"
+      ],
+      "expectedDisposition": "review-required-publication-refusal",
+      "goldenEntries": [],
+      "provenanceKey": "rtl-safe-ambiguity-origin"
+    },
+    {
+      "caseId": "navigation-positive",
+      "requiredCategories": [
+        "navigation"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "navigation-positive-origin"
+    },
+    {
+      "caseId": "navigation-safe-ambiguity",
+      "requiredCategories": [
+        "navigation"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "navigation-safe-ambiguity-origin"
+    },
+    {
+      "caseId": "assets-positive",
+      "requiredCategories": [
+        "assets"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "assets-positive-origin"
+    },
+    {
+      "caseId": "assets-negative",
+      "requiredCategories": [
+        "assets"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "assets-negative-origin"
+    },
+    {
+      "caseId": "metadata-positive",
+      "requiredCategories": [
+        "metadata"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "metadata-positive-origin"
+    },
+    {
+      "caseId": "metadata-negative",
+      "requiredCategories": [
+        "metadata"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "metadata-negative-origin"
+    },
+    {
+      "caseId": "malformed-positive",
+      "requiredCategories": [
+        "malformed"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "malformed-positive-origin"
+    },
+    {
+      "caseId": "malformed-negative",
+      "requiredCategories": [
+        "malformed"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "malformed-negative-origin"
+    },
+    {
+      "caseId": "bounds-positive",
+      "requiredCategories": [
+        "bounds"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "bounds-positive-origin"
+    },
+    {
+      "caseId": "bounds-negative",
+      "requiredCategories": [
+        "bounds"
+      ],
+      "expectedDisposition": "codec-rejection",
+      "goldenEntries": [],
+      "provenanceKey": "bounds-negative-origin"
+    },
+    {
+      "caseId": "ambiguity-positive",
+      "requiredCategories": [
+        "ambiguity"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "ambiguity-positive-origin"
+    },
+    {
+      "caseId": "ambiguity-safe",
+      "requiredCategories": [
+        "ambiguity"
+      ],
+      "expectedDisposition": "render",
+      "goldenEntries": [
+        "content.xhtml",
+        "nav.xhtml",
+        "package.opf",
+        "container.xml",
+        "styles.css",
+        "archive.json"
+      ],
+      "provenanceKey": "ambiguity-safe-origin"
+    }
+  ]
+}
