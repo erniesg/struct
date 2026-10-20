@@ -1,7 +1,8 @@
 # S04 release matrix — document compatibility and renderer repeatability (2026-10-20)
 
 Status: **bounded S04 evidence only** (superseded by the current runtime
-baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`; original `049f96a` claims
+baseline (the cutover candidate head; the exact commit is recorded in the
+release packet); original `049f96a` claims
 preserved below). This document records the *document*
 compatibility matrix and the *renderer repeatability* baselines implemented in
 this lane. It does **not** claim a release, does not authorize publication, and
@@ -189,13 +190,13 @@ the assertions are not pure self-equality:
 ## Supersession (2026-10-20 continuation)
 
 The original claim that `./bundle` is unavailable (`"pending S-03"`) is
-superseded at the current runtime baseline
-`7db63613d22c0faba63cd65cc1c4e247b615d491`: the embedded `./bundle` export
+superseded at the current runtime baseline: the embedded `./bundle` export
 exists with all seven runtime names. The isolated resolver/executor protocol
 and its execution driver are implemented privately in-tree but are not public
 surface; the public external-bytes decode seam (`decodeStructBundle`) is
-part of the current surface; the real-host conformance harness remains
-separately pending, so the full S-04 bundle negative matrix and the
-three-run goldens for external payloads remain gated, but the embedded
+part of the current surface; the real-host conformance harness is
+implemented in-tree as test-only evidence, so the full S-04 bundle negative
+matrix and the three-run goldens for external payloads are still not covered
+by this lane and remain open, but the embedded
 surface covered by this lane (renderer repeatability, compatibility matrix)
 remains valid and unchanged.

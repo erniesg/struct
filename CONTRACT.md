@@ -22,7 +22,8 @@ Emitted XHTML identifier normalization, collision checks, and publication
 planning belong to the XHTML renderer boundary; a semantically valid document
 is not rejected merely because renderer-normalized identifiers collide.
 
-At the current runtime baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`,
+At the current runtime baseline (the cutover candidate head; the exact commit
+is recorded in the release packet),
 the private `0.0.0` document/codecs/IDs/recovery/XHTML/EPUB capabilities plus
 the current embedded-only public `./bundle` facade are **current, implemented,
 unreleased** surface. The facade exports all seven runtime names recorded in
@@ -38,8 +39,8 @@ to fail closed with `UNRESOLVED`. The isolated resolver/executor protocol and
 its execution driver are implemented privately in-tree but are not public
 surface. The public external-bytes decode seam (`decodeStructBundle`) is wired
 through the private external core and is part of the current surface; the
-real-host conformance harness remains separately pending, and full S-03/S-04
-acceptance remains open.
+real-host conformance harness is implemented in-tree as test-only evidence and
+is not public surface; full S-03/S-04 acceptance remains open.
 
 Ernie.SG constructs bundles from approved revisions and authenticates producer
 approval/release records. Aether consumes only a verified, exact-pinned bundle
@@ -48,13 +49,13 @@ does not own a Struct model or renderer.
 
 ## Planned Bundle semantics (normative)
 
-The semantics below are the normative target. Stage 1 implements only the
-embedded subset described in [Current public
-surface](#current-public-surface) — the embedded create/verify/encode/decode
-facade and the frozen versioned limits profile. The resolver/executor
-protocol remains private, and nothing in this section asserts that the public
-external-bytes decode seam, the resolver conformance harness, or the target
-operations exist today.
+The semantics below are the normative target. Stage 1 implements the surface described in
+[Current public surface](#current-public-surface) — the embedded
+create/verify/encode facade, the frozen versioned limits profile, and the public
+external-bytes decode seam. The resolver/executor protocol remains private; the
+real-host conformance harness exists only as in-tree test evidence. Nothing in
+this section asserts that the target operations beyond that surface exist
+today.
 
 The JSON envelope (`StructBundleJson`), its byte-free document projection
 (`StructBundleDocumentJson`), and an opaque runtime `VerifiedStructBundle` are
@@ -175,7 +176,8 @@ external core (`decodeStructBundle`). The isolated
 resolver/executor protocol and its execution driver are implemented privately
 in-tree but are not part of the public surface. The public external-bytes
 decode seam is part of the current surface; the real-host conformance
-harness and full S-03/S-04 acceptance remain separately pending. These
+harness is implemented in-tree as test-only evidence, while full S-03/S-04
+acceptance remains separately pending. These
 documents ship in the package file list; a documentation correction changes packed contents, so any repin requires a
 fresh packaged-artifact and installed-consumer proof. No application repin is
 part of this documentation change.

@@ -1,8 +1,8 @@
 # Packed consumer proof — 2026-10-20
 
 Status: **bounded S04 preparation only** (superseded by the current runtime
-baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`; see supersession note
-below).
+baseline (the cutover candidate head; the exact commit is recorded in the
+release packet); see supersession note below).
 This proves the local packed artifact
 and consumer surface. It does **not** implement Bundle, expose `./bundle`,
 change the API manifest/export map, complete S03, run the full S04 matrix, or
@@ -120,7 +120,6 @@ at the final exact release head.
 
 Bundle implementation and `./bundle` stay unavailable at the original
 `befe11c…` base; at the current runtime baseline
-`7db63613d22c0faba63cd65cc1c4e247b615d491`
 `./bundle` is available as a current embedded-only export with all seven
 runtime names, but no full packed-consumer proof was produced at that head
 (`F3` remains open; see integration baseline). The full S04 matrix and

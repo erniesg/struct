@@ -43,10 +43,11 @@ payloads fail closed with `UNRESOLVED`. The public external-bytes decode
 seam (`decodeStructBundle`) is wired through the private external core and
 is part of the current surface. Bundle creation, value verification, and the
 public versioned limits profile are implemented at the current runtime
-baseline for the embedded subset; the external resolver wiring and the full
-conformance harness remain gated. The isolated resolver/executor protocol and
-its execution driver are implemented privately in-tree but are not public
-surface; full S-03/S-04 acceptance remains open.
+baseline; the external resolver wiring is public through the decode seam. The
+isolated resolver/executor protocol and its execution driver are implemented
+privately in-tree but are not public surface; the real-host conformance
+harness is implemented in-tree as test-only evidence and is not public surface;
+full S-03/S-04 acceptance remains open.
 
 ## Staged migration contract
 

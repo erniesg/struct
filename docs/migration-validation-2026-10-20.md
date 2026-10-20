@@ -1,12 +1,13 @@
 # Migration validation — 2026-10-20
 
 Status: **package remains private and unreleased** (supersession: at the
-current runtime baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`, `./bundle`
+current runtime baseline (the cutover candidate head; the exact commit is
+recorded in the release packet), `./bundle`
 is available as an embedded-only export with all seven runtime names, so the
 embedded subset is no longer blocked by the missing `./bundle` export; the
 public external-bytes decode seam (`decodeStructBundle`) is part of the current
-surface; the full conformance harness remains
-separately pending). Nothing in this validation changes the E02/E03/E04 app
+surface; the real-host conformance harness is implemented in-tree as
+test-only evidence and is not public surface). Nothing in this validation changes the E02/E03/E04 app
 gates.
 
 Base: `fae461e9` (`fix: validate MathML fragments before publication rendering
@@ -77,7 +78,7 @@ Logs are under `/home/ubuntu/.local/state/struct-migration/20261020/`:
 The packed-consumer check proves the artifact builds and installs; it does not
 complete the Bundle surface or authorize a release.
 
-## Supersession (current runtime baseline `7db6361…`)
+## Supersession (current runtime baseline)
 
 The historical claim that `./bundle` is unavailable is superseded for the
 embedded subset at the current runtime baseline: the facade, the seven runtime
@@ -86,6 +87,6 @@ with `maxConcurrency` 1 and `maxResolverTimeoutMs` 120000), and the structured
 `StructBundleError` are all current and unreleased. The isolated
 resolver/executor protocol and its execution driver are implemented privately
 in-tree but are not public surface; the public external-bytes decode seam (`decodeStructBundle`) is part of the current surface; the real-host
-conformance harness, full S-03/S-04 acceptance, and any application
-repin remain separately pending. The E02/E03/E04 app gates are unchanged by
+conformance harness is implemented in-tree as test-only evidence; full
+S-03/S-04 acceptance and any application repin remain separately pending. The E02/E03/E04 app gates are unchanged by
 this validation.
