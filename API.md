@@ -113,7 +113,6 @@ The complete static stage-to-message mapping is defined in `src/bundle/error.ts`
 | `maxConcurrency` | 1 |
 | `maxDepth` | 128 |
 | `maxStringLength` | 5592408 |
-| `maxStringBytes` (new cap) | 1048576 (1 MiB) — enforced in `visitValue`; see profile adoption note below |
 | `maxNodes` | 1000000 |
 | `maxResolverTimeoutMs` | 120000 |
 
@@ -124,7 +123,8 @@ Profile rules:
 - `resolverBudget.totalTimeoutMs` must be a safe positive integer `1 <= totalTimeoutMs <= maxResolverTimeoutMs` (120000). A value above the profile cap is rejected before any allocation (`budget` / `BUDGET`).
 - `resolverPolicy.maxConcurrent` must satisfy `1 <= maxConcurrent <= maxConcurrency` (1). A policy above the profile bound is rejected before any allocation.
 - There is no implicit default budget: when any `resolver*` field is present, `resolverBudget` is mandatory; the package never substitutes a timeout or cleanup reserve.
-- `maxStringBytes` and `maxFieldBytes` are new public caps adopted by the profile at this head. They are validated against the existing canonical corpus: no currently accepted fixture exceeds the proposed cap, and the cap is never silently tightened below existing input. N-1/N/N+1 boundary vectors apply.
+- `maxFieldBytes` is the new public cap adopted by the profile at this head. It is validated against the existing canonical corpus: no currently accepted fixture exceeds the proposed cap, and the cap is never silently tightened below existing input. N-1/N/N+1 boundary vectors apply.
+- There is **no** `maxStringBytes` cap in the frozen profile. The per-string bound is `maxStringLength` (5592408), and it is enforced as a UTF-8 **byte** length in the canonicalizer's `visitValue` (which also applies it to every object key) and in the create preflight. A 1 MiB `maxStringBytes` cap was proposed in the resolver-executor plan but was **not** adopted: the frozen profile is the authority for every number, and its published caps are unchanged.
 
 ### What a verified handle proves
 

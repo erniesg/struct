@@ -370,6 +370,17 @@ One frozen profile lives in `src/bundle/limits.ts` as `STRUCT_BUNDLE_LIMITS_PROF
 | `maxConcurrency` | 1 | package ceiling for concurrent resolver executions |
 | `maxResolverTimeoutMs` | 120000 | upper bound for `resolverBudget.totalTimeoutMs` |
 
+**Adoption status at the cutover candidate head.** This table is a proposal; the
+frozen profile is the authority. At the cutover candidate the published
+`STRUCT_BUNDLE_LIMITS_PROFILE` adopted `maxFieldBytes = 5600000` (not the
+1048576 proposed above) and did **not** adopt `maxStringBytes`,
+`maxReceiptBytes` or `maxErrorBytes`. The published caps are `maxRawBytes`,
+`maxFieldBytes`, `maxAssets`, `maxAssetBytes`, `maxTotalBytes`,
+`maxDecodedBytes`, `maxBase64Chars`, `maxConcurrency`, `maxDepth`,
+`maxStringLength`, `maxNodes`, `maxResolverTimeoutMs` and `profileVersion`.
+The per-string bound is `maxStringLength`, enforced as a UTF-8 byte length in
+the canonicalizer's `visitValue` and in the create preflight.
+
 Profile rules:
 
 - The embedded fast path keeps its current constants and semantics. The profile module is the single source of those values, so the embedded numbers are unchanged by construction; no external cap is applied to the embedded path beyond the values it already enforces.
