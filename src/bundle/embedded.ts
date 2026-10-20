@@ -75,6 +75,58 @@ function freezeJson<T>(value: T): T {
   return value
 }
 
+/**
+ * Private factory for creating a genuine verified bundle handle.
+ *
+ * Both the embedded decoder and the external-bytes decoder use this factory so
+ * that encoder provenance is shared through the same WeakMap. The handle keeps
+ * two independent byte copies:
+ *
+ * - `documentBytes`: the canonical byte-free document projection used for
+ *   `documentSnapshot()`. Every call returns a fresh frozen JSON copy.
+ * - `wireBytes`: the ORIGINAL canonical wire envelope used for `encode`.
+ *   External decoding passes the original external wire, not a synthetic
+ *   embedded envelope.
+ * - `assetBytes`: copied on creation; `assetBytes(id)` returns a fresh copy on
+ *   every call, including for caller-supplied Map inputs.
+ *
+ * The factory must only be called after all validation and, for external
+ * bundles, after every asset has been resolved and joined.
+ */
+export function createVerifiedBundleHandle(
+  bundleVersion: '1.0.0',
+  schemaVersion: string,
+  documentSha256: string,
+  bundleSha256: string,
+  documentBytes: Uint8Array,
+  wireBytes: Uint8Array,
+  assetBytes: Map<string, Uint8Array>,
+): VerifiedEmbeddedBundle {
+  const copiedAssets = new Map<string, Uint8Array>()
+  for (const [id, bytes] of assetBytes) copiedAssets.set(id, bytes.slice())
+  const sortedIds = (): string[] => [...copiedAssets.keys()].sort((left, right) => {
+    const a = Array.from(left)
+    const b = Array.from(right)
+    for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+      const difference = a[index]!.codePointAt(0)! - b[index]!.codePointAt(0)!
+      if (difference !== 0) return difference
+    }
+    return a.length - b.length
+  })
+
+  const bundle: VerifiedEmbeddedBundle = Object.freeze({
+    bundleVersion,
+    schemaVersion,
+    documentSha256,
+    bundleSha256,
+    documentSnapshot: () => freezeJson(JSON.parse(decoder.decode(documentBytes)) as ByteFreeStructDocumentJson),
+    assetIds: () => Object.freeze(sortedIds()),
+    assetBytes: (id: string) => copiedAssets.get(id)?.slice(),
+  })
+  retained.set(bundle, wireBytes.slice())
+  return bundle
+}
+
 /** Embedded wire ingress only; no external resolver or value-verifier capability. */
 export function decodeEmbeddedBundleBytes(
   raw: Uint8Array,
@@ -121,16 +173,20 @@ export function decodeEmbeddedBundleBytes(
 
   try {
     const assets = verifyEmbeddedAssets(envelope.document.assets, envelope.assets, ASSET_LIMITS)
-    const bundle: VerifiedEmbeddedBundle = Object.freeze({
-      bundleVersion: envelope.bundleVersion,
-      schemaVersion: envelope.schemaVersion,
-      documentSha256: envelope.documentSha256,
+    const assetBytesMap = new Map<string, Uint8Array>()
+    for (const id of assets.assetIds()) {
+      const bytes = assets.assetBytes(id)
+      if (bytes) assetBytesMap.set(id, bytes)
+    }
+    const bundle = createVerifiedBundleHandle(
+      envelope.bundleVersion,
+      envelope.schemaVersion,
+      envelope.documentSha256,
       bundleSha256,
-      documentSnapshot: () => freezeJson(JSON.parse(decoder.decode(documentBytes)) as ByteFreeStructDocumentJson),
-      assetIds: () => Object.freeze(assets.assetIds()),
-      assetBytes: (id: string) => assets.assetBytes(id),
-    })
-    retained.set(bundle, snapshot)
+      documentBytes,
+      snapshot,
+      assetBytesMap,
+    )
     return Object.freeze({ ok: true, bundle })
   } catch (error) {
     return failure({ stage: 'assets', code: error instanceof EmbeddedAssetError
