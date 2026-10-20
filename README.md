@@ -15,22 +15,30 @@ remains generic orchestration and owns none of these domain models.
 
 ## State and evidence
 
-**Current runtime baseline** `e9ea4b8be0b92e6f35262da572a855216286716c`:
+**Current runtime baseline** `7db63613d22c0faba63cd65cc1c4e247b615d491` (HEAD
+`e9ea4b8be0b92e6f35262da572a855216286716c` now superseded by this head):
 this is a private `0.0.0` package with source-neutral document/codecs/IDs/
-recovery/XHTML/EPUB code and an **embedded-only Stage 1** public `./bundle`
-facade. That facade exports `decodeStructBundle`, `encodeStructBundle`, and the
-`VerifiedStructBundle` handle for canonical embedded-asset envelopes. External
-payloads fail closed with `UNRESOLVED`. Bundle creation, strict in-memory value
-verification, resolver/executor capability, full conformance, and public
-limit-profile acceptance remain incomplete. There is no exact-pinned external
-consumer of this Bundle surface, registry release, or publish workflow.
+recovery/XHTML/EPUB capabilities plus a current embedded-only public
+`./bundle` facade that exports all seven runtime names:
+`STRUCT_BUNDLE_LIMITS_PROFILE`, `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`,
+`StructBundleError`, `createStructBundle`, `decodeStructBundle`,
+`encodeStructBundle`, `verifyStructBundle`. The facade returns direct handles
+and throws/rejects the documented structured `StructBundleError`; decode is
+always async (`Promise<VerifiedStructBundle>`); encode returns `Uint8Array`.
+External payloads still fail closed with `UNRESOLVED` (`stage: 'assets'`,
+`code: 'UNRESOLVED'`). The isolated resolver/executor protocol (`BAL001`),
+conformance harness, and full S-03/S-04 acceptance remain separately pending.
+There is no exact-pinned external consumer, registry release, or publish
+workflow.
 
 **Documented target** is the ADR-0001 contract in [CONTRACT.md](./CONTRACT.md):
 a source-neutral package with a fail-closed verified `StructBundle` boundary.
-The remaining Bundle capabilities, including `createStructBundle`,
-`verifyStructBundle`, external resolution, conformance, and the public versioned
-limits profile, are planned for the remainder of S-03 and S-04 and are not
-current.
+The current embedded facade (`createStructBundle`, `verifyStructBundle`,
+direct-handle return, async `decodeStructBundle`, byte-returning
+`encodeStructBundle`, structured `StructBundleError`, and the frozen
+versioned limits profile) is implemented at HEAD; the isolated
+resolver/executor protocol and its conformance harness (`BAL001`) and full
+S-03/S-04 acceptance remain separately pending.
 
 **Stage status:** Stage 1 is implemented and unreleased; it does not complete
 S-03, S-04, or E-02, and it does not activate a release, route, or writer.

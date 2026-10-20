@@ -31,11 +31,16 @@ removed after that date. No transform or migration receipt is invented.
 
 The old package paths `./core`, `./schema`, and `./ids` are removed in favor of
 the explicit paths in [API.md](./API.md). `./bundle` is a current embedded-only
-Stage 1 export (`decodeStructBundle`, `encodeStructBundle`,
-`VerifiedStructBundle`); its external-payload path fails closed with
-`UNRESOLVED`. Full S-03 bundle creation, value verification, resolver/executor
-conformance, and the public versioned limits profile remain gated, as do the
-staged migration steps below.
+export with all seven runtime names (`STRUCT_BUNDLE_LIMITS_PROFILE`,
+`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
+`createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
+`verifyStructBundle`); it follows the ADR-0001 contract (direct handle,
+async decode with structured rejection, byte encoder with structured throw for
+forged handles). Its external-payload path fails closed with `UNRESOLVED`
+(`BAL001` still separately pending). Full S-03 bundle creation, value
+verification, resolver/executor conformance, and the public versioned limits
+profile are implemented at HEAD for the embedded subset; the external resolver
+and full conformance harness remain gated.
 
 ## Staged migration contract
 

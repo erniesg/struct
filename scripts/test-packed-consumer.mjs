@@ -164,6 +164,38 @@ try {
   )
     throw new Error('source Git state changed during packed-consumer verification')
 
+  // Optional outside-repo artifact retention (honest identity, no hiding dirty).
+  const artifactDir = process.env.STRUCT_PACKED_CONSUMER_ARTIFACT_DIR
+  if (artifactDir) {
+    const artifactPath = join(artifactDir)
+    await mkdir(artifactPath, { recursive: true })
+    const retainedTarball = join(artifactPath, metadata.filename)
+    await copyFile(tarball, retainedTarball)
+    const retainedTarballSha256 = createHash('sha256')
+      .update(await readFile(retainedTarball))
+      .digest('hex')
+    if (retainedTarballSha256 !== tarballSha256)
+      throw new Error('retained tarball digest mismatch')
+    const proofRecord = {
+      schemaVersion: '1.0.0',
+      package: { name: packageJson.name, version: packageJson.version },
+      source: finalSource,
+      tarball: {
+        filename: metadata.filename,
+        sha256: tarballSha256,
+        retainedPath: retainedTarball,
+        retainedDigestVerified: retainedTarballSha256 === tarballSha256,
+      },
+      packedFiles,
+      installer: { ...installer, arguments: installArguments },
+      note: 'interim proof only; coordinator owns final release/evidence. Dirty identity preserved honestly.',
+    }
+    await writeFile(
+      join(artifactPath, `proof-${finalSource.head}.json`),
+      `${JSON.stringify(proofRecord, null, 2)}\n`,
+    )
+  }
+
   process.stdout.write(
     `${JSON.stringify({
       schemaVersion: '1.0.0',

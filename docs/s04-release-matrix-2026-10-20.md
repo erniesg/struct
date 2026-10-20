@@ -1,6 +1,8 @@
 # S04 release matrix — document compatibility and renderer repeatability (2026-10-20)
 
-Status: **bounded S04 evidence only**. This document records the *document*
+Status: **bounded S04 evidence only** (superseded by current HEAD
+`7db63613d22c0faba63cd65cc1c4e247b615d491`; original `049f96a` claims
+preserved below). This document records the *document*
 compatibility matrix and the *renderer repeatability* baselines implemented in
 this lane. It does **not** claim a release, does not authorize publication, and
 does not complete S-04.
@@ -182,3 +184,12 @@ the assertions are not pure self-equality:
   own receipt, not a change to `decodeCompatibleStructDocument`.
 - The package stays private `0.0.0` until an explicit, separately authorized
   publication decision.
+
+## Supersession (2026-10-20 continuation)
+
+The original claim that `./bundle` is unavailable (`"pending S-03"`) is
+superseded at current HEAD `7db63613d22c0faba63cd65cc1c4e247b615d491`: the
+embedded `./bundle` export exists with all seven runtime names. The full S-04
+bundle negative matrix and the three-run goldens for external payloads remain
+gated (`BAL001` separately pending), but the embedded surface covered by this
+lane (renderer repeatability, compatibility matrix) remains valid and unchanged.

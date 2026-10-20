@@ -1,6 +1,8 @@
 # Packed consumer proof — 2026-10-20
 
-Status: **bounded S04 preparation only**. This proves the local packed artifact
+Status: **bounded S04 preparation only** (superseded by current HEAD
+`7db63613d22c0faba63cd65cc1c4e247b615d491`; see supersession note below).
+This proves the local packed artifact
 and consumer surface. It does **not** implement Bundle, expose `./bundle`,
 change the API manifest/export map, complete S03, run the full S04 matrix, or
 authorize a release. The package remains `private` and `0.0.0`.
@@ -73,5 +75,9 @@ be labeled as development evidence. Acceptance evidence requires
 `source.head` to equal the current producer HEAD and `source.dirty: false`,
 generated after commit in the VM-local log/PR rather than embedded here.
 
-Bundle implementation and `./bundle` stay unavailable; the full S04 matrix and
+Bundle implementation and `./bundle` stay unavailable at the original
+`befe11c…` base; at current HEAD `7db63613d22c0faba63cd65cc1c4e247b615d491`
+`./bundle` is available as a current embedded-only export with all seven
+runtime names, but no full packed-consumer proof was produced at that head
+(`F3` remains open; see integration baseline). The full S04 matrix and
 three-run goldens remain gated.
