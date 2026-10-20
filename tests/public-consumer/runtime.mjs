@@ -70,3 +70,13 @@ assert.equal(typeof bundleModule.verifyStructBundle, 'function')
 assert.equal(typeof bundleModule.encodeStructBundle, 'function')
 assert.equal(typeof bundleModule.STRUCT_BUNDLE_LIMITS_PROFILE, 'object')
 assert.equal(typeof bundleModule.STRUCT_BUNDLE_LIMITS_PROFILE_VERSION, 'string')
+
+// The manifest-declared error type must be a real public class in the
+// installed artifact, not merely a name in the export map.
+assert.equal(typeof bundleModule.StructBundleError, 'function')
+const bundleError = new bundleModule.StructBundleError('handle', 'FORGED')
+assert.ok(bundleError instanceof Error)
+assert.ok(bundleError instanceof bundleModule.StructBundleError)
+assert.equal(bundleError.name, 'StructBundleError')
+assert.equal(bundleError.stage, 'handle')
+assert.equal(bundleError.code, 'FORGED')

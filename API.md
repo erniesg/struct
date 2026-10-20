@@ -30,7 +30,9 @@ Private `src/**` modules are not consumer APIs.
   only. It applies the raw-input cap, checks an optional expected
   `bundleSha256` before parsing, proves canonical input, validates the
   byte-free document projection and receipt equality, and verifies every
-  embedded asset's base64, length, and digest. It returns a structured result.
+  embedded asset's base64, length, and digest. It resolves to a
+  `VerifiedStructBundle` handle and rejects with a structured
+  `StructBundleError`.
 - `verifyStructBundle(value, options?)` performs strict in-memory value
   verification for embedded-asset envelopes only. It exposes no
   expected-raw-digest, resolver, or executor option.
@@ -48,8 +50,10 @@ bytes on every read.
 
 This version accepts embedded assets only. An envelope carrying an external
 payload fails closed with `stage: 'assets'`, `code: 'UNRESOLVED'`: the versioned
-isolated resolver/executor protocol and its conformance harness are not part of
-this surface yet.
+isolated resolver/executor protocol and its execution driver are implemented
+privately in-tree but are not public surface, and the public external-bytes
+decode seam and the real-host conformance harness are not part of this surface
+yet.
 
 ## Decode compatibility and deprecated alias
 

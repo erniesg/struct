@@ -78,6 +78,7 @@ describe('public ./bundle surface', () => {
     expect(manifest.runtimeExports['./bundle']).toEqual([
       'STRUCT_BUNDLE_LIMITS_PROFILE',
       'STRUCT_BUNDLE_LIMITS_PROFILE_VERSION',
+      'StructBundleError',
       'createStructBundle',
       'decodeStructBundle',
       'encodeStructBundle',
