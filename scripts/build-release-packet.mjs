@@ -55,16 +55,20 @@ async function main() {
   console.log('\n2. Running TypeScript typecheck...')
   execFileSync('npx', ['tsc', '--noEmit'], { cwd: repository, stdio: 'inherit' })
 
-  // 3. Source boundary check
-  console.log('\n3. Running source boundary check...')
+  // 3. Build the project
+  console.log('\n3. Building project...')
+  execFileSync('npm', ['run', 'build'], { cwd: repository, stdio: 'inherit' })
+
+  // 4. Source boundary check
+  console.log('\n4. Running source boundary check...')
   execFileSync('node', ['scripts/check-source-boundary.mjs'], { cwd: repository, stdio: 'inherit' })
 
-  // 4. Full test suite
-  console.log('\n4. Running full test suite...')
+  // 5. Full test suite
+  console.log('\n5. Running full test suite...')
   execFileSync('npx', ['vitest', 'run', '--maxWorkers=1'], { cwd: repository, stdio: 'inherit' })
 
-  // 5. Build tarball
-  console.log('\n5. Building package tarball...')
+  // 6. Build tarball
+  console.log('\n6. Building package tarball...')
   const temporary = await mkdtemp(join(tmpdir(), 'struct-pack-'))
   const packed = JSON.parse(
     execFileSync('npm', ['pack', '--json', '--pack-destination', temporary], {
