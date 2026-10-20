@@ -40,23 +40,46 @@ function validUnicode(value: string): boolean {
   return true
 }
 
-function canonicalText(value: unknown): string {
+/**
+ * Walk one strict JSON value in canonical order.
+ *
+ * The traversal is the single definition of the canonical form: the same
+ * accepted shapes, the same depth and node caps, the same cycle rule, the same
+ * key order, and the same JSON escaping. The walk reports the value either as
+ * canonical text or as its exact UTF-8 byte length, and never both: the byte
+ * count is derived arithmetically, so measuring a value never materializes its
+ * canonical text.
+ */
+function canonicalWalk(
+  value: unknown,
+  emitText: (chunk: string) => void,
+  emitBytes: (bytes: number) => void,
+  measure: boolean,
+): void {
   const active = new WeakSet<object>()
   let nodes = 0
 
-  function visit(item: unknown, depth: number): string {
+  function visit(item: unknown, depth: number): void {
     nodes += 1
     if (depth > MAX_DEPTH || nodes > MAX_NODES)
       throw new CanonicalJsonError('LIMIT')
-    if (item === null || typeof item === 'boolean') return JSON.stringify(item)
+    if (item === null || typeof item === 'boolean') {
+      if (measure) emitBytes(item === null ? 4 : item ? 4 : 5)
+      else emitText(JSON.stringify(item))
+      return
+    }
     if (typeof item === 'string') {
       if (!validUnicode(item)) throw new CanonicalJsonError('TYPE')
-      return JSON.stringify(item)
+      if (measure) emitBytes(canonicalStringByteLength(item))
+      else emitText(JSON.stringify(item))
+      return
     }
     if (typeof item === 'number') {
       if (!Number.isFinite(item) || (Number.isInteger(item) && !Number.isSafeInteger(item)))
         throw new CanonicalJsonError('TYPE')
-      return JSON.stringify(item)
+      if (measure) emitBytes(canonicalNumberByteLength(item))
+      else emitText(JSON.stringify(item))
+      return
     }
     if (typeof item !== 'object') throw new CanonicalJsonError('TYPE')
     if (active.has(item)) throw new CanonicalJsonError('TYPE')
@@ -75,14 +98,21 @@ function canonicalText(value: unknown): string {
               Number(key) >= item.length),
           )
         ) throw new CanonicalJsonError('TYPE')
-        const entries: string[] = []
+        if (measure) emitBytes(1) // the opening bracket
+        else emitText('[')
         for (let index = 0; index < item.length; index += 1) {
           const property = Object.getOwnPropertyDescriptor(item, String(index))
           if (!property || !property.enumerable || !Object.hasOwn(property, 'value'))
             throw new CanonicalJsonError('TYPE')
-          entries.push(visit(property.value, depth + 1))
+          if (index > 0) {
+            if (measure) emitBytes(1) // the separator
+            else emitText(',')
+          }
+          visit(property.value, depth + 1)
         }
-        return `[${entries.join(',')}]`
+        if (measure) emitBytes(1) // the closing bracket
+        else emitText(']')
+        return
       }
       const prototype = Object.getPrototypeOf(item)
       if (prototype !== Object.prototype && prototype !== null)
@@ -90,25 +120,147 @@ function canonicalText(value: unknown): string {
       const keys = Reflect.ownKeys(item)
       if (keys.some((key) => typeof key !== 'string'))
         throw new CanonicalJsonError('TYPE')
-      const entries = (keys as string[]).sort().map((key) => {
+      if (measure) emitBytes(1) // the opening brace
+      else emitText('{')
+      let first = true
+      for (const key of (keys as string[]).sort()) {
         if (!validUnicode(key)) throw new CanonicalJsonError('TYPE')
         const property = Object.getOwnPropertyDescriptor(item, key)
         if (!property || !property.enumerable || !Object.hasOwn(property, 'value'))
           throw new CanonicalJsonError('TYPE')
-        return `${JSON.stringify(key)}:${visit(property.value, depth + 1)}`
-      })
-      return `{${entries.join(',')}}`
+        if (!first) {
+          if (measure) emitBytes(1) // the separator
+          else emitText(',')
+        }
+        first = false
+        if (measure) {
+          emitBytes(canonicalStringByteLength(key))
+          emitBytes(1) // the colon
+        } else {
+          emitText(JSON.stringify(key))
+          emitText(':')
+        }
+        visit(property.value, depth + 1)
+      }
+      if (measure) emitBytes(1) // the closing brace
+      else emitText('}')
     } finally {
       active.delete(item)
     }
   }
 
-  return visit(value, 0)
+  visit(value, 0)
+}
+
+function canonicalText(value: unknown): string {
+  const parts: string[] = []
+  canonicalWalk(value, (chunk) => parts.push(chunk), () => {}, false)
+  return parts.join('')
 }
 
 /** RFC 8785 bytes for strict JSON-safe in-memory data; no acceptance claim. */
 export function canonicalJsonBytes(value: unknown): Uint8Array {
   return encoder.encode(canonicalText(value))
+}
+
+/**
+ * UTF-8 byte length of the canonical JSON spelling of one string.
+ *
+ * The length matches the encoded length of `JSON.stringify(value)`: the
+ * surrounding quotes, the two-byte escapes for `"` and `\`, the two-byte
+ * escapes for `\b \t \n \f \r`, the six-byte `\u00xx` escape for the
+ * remaining control characters, and the literal UTF-8 bytes for everything else.
+ *
+ * A lone surrogate is rejected with the same `TYPE` failure the canonicalizer
+ * reports for it, and it is rejected before the length is used, so a hostile
+ * string is never half-measured and never materialized.
+ */
+function canonicalStringByteLength(value: string): number {
+  let bytes = 2 // the surrounding quotes
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index)
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) throw new CanonicalJsonError('TYPE')
+      bytes += 4
+      index += 1
+      continue
+    }
+    if (unit >= 0xdc00 && unit <= 0xdfff) throw new CanonicalJsonError('TYPE')
+    if (unit < 0x20) {
+      bytes +=
+        unit === 0x08 || unit === 0x09 || unit === 0x0a || unit === 0x0c || unit === 0x0d
+          ? 2
+          : 6
+      continue
+    }
+    if (unit === 0x22 || unit === 0x5c) {
+      bytes += 2
+      continue
+    }
+    if (unit < 0x80) {
+      bytes += 1
+      continue
+    }
+    if (unit < 0x800) {
+      bytes += 2
+      continue
+    }
+    bytes += 3
+  }
+  return bytes
+}
+
+/**
+ * UTF-8 byte length of the canonical JSON spelling of one finite number.
+ *
+ * A safe integer is written in plain decimal, so its length is counted
+ * arithmetically and without allocating. Any other finite number is written
+ * in the shortest round-trip form, whose spelling is bounded to a couple of
+ * dozen characters.
+ */
+function canonicalNumberByteLength(value: number): number {
+  if (Number.isInteger(value)) {
+    if (value === 0) return 1 // `JSON.stringify(-0)` is `"0"`
+    let digits = 0
+    let magnitude = Math.abs(value)
+    while (magnitude >= 1) {
+      digits += 1
+      magnitude = Math.floor(magnitude / 10)
+    }
+    return digits + (value < 0 ? 1 : 0)
+  }
+  return JSON.stringify(value).length
+}
+
+/**
+ * Exact UTF-8 byte length of the canonical JSON form of a strict JSON value.
+ *
+ * The traversal is the canonicalizer's own: the same accepted shapes, the same
+ * depth and node caps relative to the measured value, the same cycle rule, and
+ * the same JSON escaping. The difference is that the size is counted instead
+ * of materialized, so a hostile value is measured without a canonical buffer
+ * for it. The result equals `canonicalJsonBytes(value).byteLength` for every
+ * value the canonicalizer accepts.
+ *
+ * When `maximumBytes` is given, the count is abandoned as soon as it passes
+ * that bound, so an oversized value is rejected before its full size is known.
+ */
+export function canonicalJsonByteSize(
+  value: unknown,
+  maximumBytes = Number.POSITIVE_INFINITY,
+): number {
+  let total = 0
+  canonicalWalk(
+    value,
+    () => {},
+    (bytes) => {
+      total += bytes
+      if (total > maximumBytes) throw new CanonicalJsonError('LIMIT')
+    },
+    true,
+  )
+  return total
 }
 
 /** Private bounded copy shared by raw-digest and canonical parsing callers. */
