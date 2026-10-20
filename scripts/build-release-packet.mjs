@@ -101,9 +101,10 @@ async function main() {
       env: { ...process.env, STRUCT_PACKED_CONSUMER_ARTIFACT_DIR: artifactDir },
     },
   ).trim()
-
-  const packedConsumerResult = JSON.parse(packedConsumerOutput)
-  console.log(`   Tarball SHA-256 verified: ${packedConsumerResult.tarball.sha256 === tarballSha256}`)
+  // The output may contain progress lines before the JSON; take the last line
+  const packedConsumerJsonLine = packedConsumerOutput.split('\n').pop()?.trim()
+  const packedConsumerResult = JSON.parse(packedConsumerJsonLine || '{}')
+  console.log(`   Tarball SHA-256 verified: ${packedConsumerResult.tarball?.sha256 === tarballSha256}`)
 
   // 7. Run S-04 packet tests
   console.log('\n7. Running S-04 packet tests...')
