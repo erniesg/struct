@@ -164,6 +164,13 @@ try {
     join(repository, 'tests/public-consumer/types.ts'),
     join(consumer, 'types.ts'),
   )
+  // The frozen fixture document the bundle acceptance matrix creates a bundle
+  // from. It is a test input, not a package file, so it is copied next to the
+  // runtime instead of being published.
+  await copyFile(
+    join(repository, 'tests/public-consumer/document.json'),
+    join(consumer, 'document.json'),
+  )
   const resolutionPaths =
     createRequire(join(consumer, 'runtime.mjs')).resolve.paths(
       '__struct_isolation_probe__',
@@ -179,6 +186,12 @@ try {
     cwd: consumer,
     stdio: 'inherit',
   })
+  // The runtime writes the measured bundle acceptance matrix next to itself.
+  // It is read back here so that the summary this script prints carries the
+  // measured packed-artifact values, not a copy of the expectations.
+  const bundleAcceptance = JSON.parse(
+    await readFile(join(consumer, 'bundle-acceptance.json'), 'utf8'),
+  )
   execFileSync(
     process.execPath,
     [
@@ -264,6 +277,7 @@ try {
       },
       installer: { ...installer, arguments: installArguments },
       source: finalSource,
+      bundleAcceptance,
     })}\n`,
   )
 } finally {

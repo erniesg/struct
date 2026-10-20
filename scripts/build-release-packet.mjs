@@ -102,21 +102,32 @@ async function main() {
     },
   ).trim()
   // The packed consumer prints progress lines before its JSON result. Select the
-  // last line that is a JSON object instead of the last line by position, and
-  // fail closed when no such line exists: a positional pick silently accepts a
-  // truncated or reordered output.
-  const packedConsumerJsonLine = packedConsumerOutput
+  // result by content, scanning from the end for the last line that parses as
+  // a JSON object, and fail closed when there is none: a positional pick
+  // silently accepts a truncated or reordered output.
+  const packedConsumerLines = packedConsumerOutput
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.startsWith('{'))
-    .pop()
-  if (!packedConsumerJsonLine) {
+  let packedConsumerResult
+  for (let index = packedConsumerLines.length - 1; index >= 0; index -= 1) {
+    const line = packedConsumerLines[index]
+    if (!line || !line.startsWith('{')) continue
+    try {
+      const parsed = JSON.parse(line)
+      if (parsed && typeof parsed === 'object') {
+        packedConsumerResult = parsed
+        break
+      }
+    } catch {
+      continue
+    }
+  }
+  if (!packedConsumerResult) {
     throw new Error(
       'packed consumer produced no JSON result line; output was:\n' +
         packedConsumerOutput,
     )
   }
-  const packedConsumerResult = JSON.parse(packedConsumerJsonLine)
   console.log(
     `   Tarball SHA-256 verified: ${packedConsumerResult.tarball?.sha256 === tarballSha256}`,
   )
@@ -127,6 +138,20 @@ async function main() {
       'packed consumer verified a different tarball than the one that was built',
     )
   }
+
+  // The packed consumer also measures the packed `./bundle` acceptance
+  // surface. The measurement is part of the packet: a missing summary means
+  // the matrix was not exercised.
+  if (!packedConsumerResult.bundleAcceptance)
+    throw new Error(
+      'the packed consumer did not report the bundle acceptance matrix',
+    )
+  console.log(
+    `   Bundle acceptance matrix: exports=${packedConsumerResult.bundleAcceptance.publicSurface?.exports?.length}` +
+      ` profileVersion=${packedConsumerResult.bundleAcceptance.profile?.version}` +
+      ` versionAxis=${Object.keys(packedConsumerResult.bundleAcceptance.versionAxis ?? {}).length}` +
+      ` payloadGuards=${Object.keys(packedConsumerResult.bundleAcceptance.payloadGuards ?? {}).length}`,
+  )
 
   // 7. Run S-04 packet tests
   console.log('\n7. Running S-04 packet tests...')
