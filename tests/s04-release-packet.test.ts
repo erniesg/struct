@@ -30,6 +30,14 @@ describe('S-04 release packet: tarball integrity', () => {
   let packedMetadata: any
 
   beforeAll(async () => {
+    // Build `dist/` first so the packed file list is deterministic.
+    // `npm pack` does not run a build: it packs whatever `dist/` happens to
+    // contain. Without this step the packed file list depends on the state of
+    // a previous build, and a concurrent or interrupted `tsup --clean` can
+    // produce a tarball that is missing an export target. This mirrors
+    // scripts/build-release-packet.mjs, which builds before it packs.
+    execFileSync('npm', ['run', 'build'], { cwd: repository, stdio: 'inherit' })
+
     // Build the tarball
     const temporary = await mkdtemp(join(tmpdir(), 'struct-pack-'))
     const packed = JSON.parse(
