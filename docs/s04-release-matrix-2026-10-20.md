@@ -1,6 +1,6 @@
 # S04 release matrix — complete evidence (2026-10-20)
 
-Status: **complete S04 evidence** at the integrated head recorded below. This
+Status: **S-04 release-packet evidence for the measured tree recorded below.** This
 document records the *document* compatibility matrix, the *renderer
 repeatability* baselines, the *nine-subpath import matrix*, the *Bundle
 acceptance/version matrix*, the *three-run renderer goldens* against the packed
@@ -9,10 +9,22 @@ artifact, the *retained tarball* with file list and digests, and the
 publication, and does not complete any cutover. The package remains private
 `0.0.0`.
 
-- Evidence source commit (final head): `90809feda2875c0fb851b0839a2332d53db87865`
-  (`test(release): complete the S-04 release packet evidence`)
-- Source tree clean at start: yes (`git status --porcelain` empty)
-- Source tree clean at finish: no (this document and new test file added)
+- Evidence source commit (measured tree): `a35582d04eb45d24585e0c667c92dc9e60a0efe1`
+  (`test(release): give the packet test's build hook an explicit timeout`)
+- This document is committed in a descendant of the measured tree. A document
+  inside the repository can never name the commit that carries it (the commit id
+  covers this file's own blob), so the binding "artifact digest -> exact clean
+  source commit" is recorded **outside Git** in
+  `/home/ubuntu/.local/state/struct-migration/20261020-continuation/retention-s04-final/release-proof-final.json`
+  (`source.head`, `source.dirty`, `tarball.sha256`, `tarball.retainedPath`).
+- Source tree clean at the start of the measurement: yes (the proof records
+  `source.dirty: false`; the packed-consumer script asserts that the head and
+  the dirty flag are unchanged across the run).
+- Source tree clean at the finish of the measurement: yes (the proof records
+  `source.dirty: false`). This document is added afterwards, in a descendant
+  commit, and it is not part of the packed file set (`package.json` `files`
+  lists only `dist` and the root documents), so committing it does not change
+  the tarball digest.
 - Installer used: `pnpm 12.8.1` (`pnpm install --ignore-scripts --offline --no-frozen-lockfile`)
 
 ## Owned artifacts (this lane)
@@ -114,7 +126,9 @@ the assertions are not pure self-equality:
   constructed arrays by `finalizeS04Document` using the package's own digest
   primitives; no value is read back from a rendered artifact.
 - The frozen digests were produced **once**, at commit
-  `049f96ae6a8303dc0e00b92527da8df68f29fbd5`, and stored as literals in
+  `872d6a2efed87317e319f98b306344412163b882`
+  (`test(release): freeze S04 compatibility matrix and renderer repeatability baselines`),
+  and stored as literals in
   `tests/renderer-repeatability.test.ts`.
 - They were independently re-verified on the VM with tools outside the
   package's own hashing code:
@@ -179,7 +193,9 @@ Root and `./document` exports are equivalent for shared symbols
 
 ## Bundle acceptance/version matrix (packed artifact)
 
-Verified by `tests/s04-release-packet.test.ts` against the installed tarball.
+Verified against the installed tarball by `tests/public-consumer/runtime.mjs` (run by
+`scripts/test-packed-consumer.mjs`) and asserted by the committed test
+`tests/s04-bundle-acceptance-packed.test.ts`.
 Only the public `./bundle` surface is tested (private modules `./bundle/canonical`,
 `./bundle/external`, etc. are not exported and correctly fail closed).
 
@@ -238,14 +254,21 @@ The package's payload guards hold in the packed artifact:
 - Non-canonical base64 rejected (stage `assets`, code `BASE64`)
 - Payload decoded length mismatch rejected (stage `assets`, code `BASE64`)
 - Payload bytes vs. declared digest mismatch rejected (stage `assets`, code `DIGEST`)
-- Oversized base64 payload rejected (stage `assets`, code `LIMIT`)
+- Oversized base64 payload rejected (stage `canonical`, code `LIMIT`) — the string
+  cap (`maxStringLength` = `maxBase64Chars` = 5,592,408) is applied before the asset
+  cap, so an oversized base64 string is refused at the canonical stage. The
+  asset-stage `LIMIT` code is reachable through `maxAssetBytes` / `maxTotalBytes`
+  / `maxAssets`, not through an oversized base64 string.
 
-Note: Full `decodeStructBundle` wire-path testing (canonical bytes, external
-resolver, concurrency, timeouts) requires the package's canonical serializer
-and resolver harness which are not public exports. Those are comprehensively
-tested in the source tree suites (`bundle-public-matrix.test.ts`,
-`bundle-public-negative-matrix.test.ts`, etc.). This lane verifies the public
-API surface exists and the version/cap/error hygiene checks are reachable.
+Note: This lane measures the **embedded** public path against the packed
+artifact (the create -> encode -> decode round trip, the version axis, the
+error hygiene and the payload guards). The **external-resolver** wire path (a
+consumer-supplied executor, concurrency, budget expiry, cleanup) is exercised in
+the source-tree suites (`bundle-public-matrix.test.ts`,
+`bundle-public-negative-matrix.test.ts`, `bundle-public-decode-wiring.test.ts`,
+`bundle-public-resolver-conformance.test.ts`), because the resolver harness and
+the sacrificial OS host are not part of the packed artifact. **No external
+resolver conformance is claimed by this lane.**
 
 ## Three-run renderer goldens (packed artifact)
 
@@ -273,23 +296,26 @@ frozen baselines exactly. No baseline was refreshed.
 ## Retained tarball
 
 - **Filename**: `erniesg-struct-0.0.0.tgz`
-- **SHA-256**: `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d`
-- **Retained at**: `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR/erniesg-struct-0.0.0.tgz` (outside repository)
-- **Re-hash verified**: yes (retained copy digest matches built tarball)
+- **SHA-256**: `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1`
+- **Retained at**: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/retention-s04-final/erniesg-struct-0.0.0.tgz` (outside the repository)
+- **Re-hash verified**: yes (the retained copy digest equals the built tarball digest;
+  the proof record carries `tarball.retainedDigestVerified: true`)
+- **Bound to the final clean source commit**: see the proof record named at the top
+  of this document
 
-### File list (35 entries)
+### File list (33 entries)
 
 | Path | Size (bytes) | SHA-256 |
 | --- | --- | --- |
+| `API.md` | 13579 | `23f168450ffb497efe8d3e528ea95dd90d6940bfe18afb293ec49c09e9c455db` |
 | `API_MANIFEST.json` | 2132 | `0c548efcb62e92c2d8e2981c2023b696a62818025646df007ef0286c3c194afc` |
-| `API.md` | 12768 | `9340bd021b4414e3806e7fd58af21491e2b0f789bf489aef610031c54633bc22` |
 | `CONTRACT.md` | 11541 | `267f52b1ba624f64242d35754ba8a152c72579e6fe09e819f32b731b4dfb6ca3` |
 | `LICENSE` | 1065 | `14bb0d08b9a59c5c025c2247c0c56da32840cade3af1935a27d49921aba75b76` |
 | `MIGRATION.md` | 5746 | `4e6ebbd17a014d14476782c7b051499c1a0790d3e88d321b132a563d925a489c` |
 | `NOTICE` | 131 | `8ec296d3437244761f79415f81424ab321445e342dbd8ec4c11776a7640ae21a` |
 | `README.md` | 5200 | `f747b42b7cd4a0f2a71070e57356a29434f08607d340c540e80cf9e6ba4e2bfb` |
-| `dist/bundle/index.d.ts` | 14436 | `5b54d1e1c4a6a9f1e09438669e612685083fa62e58289af8a413b8752acd3e79` |
-| `dist/bundle/index.js` | 100443 | `e3aeeb29df0f4728a242a8089b3a9bf1c606464d7a09245853cfdbb34431ef45` |
+| `dist/bundle/index.d.ts` | 15024 | `7672c598ae3b0a70dbc89140033b503da9383f4c75baa46b17c6d4a0b7f723c2` |
+| `dist/bundle/index.js` | 100443 | `4ef488568866f247fc3124903d4b0cdf427ded3a0636295e38011496b3989bd6` |
 | `dist/chunk-7BBGSLQ3.js` | 21563 | `f1c07434b69652ed8178a924763dbae8ff21ec16509c05f7e51b5201a2643e0a` |
 | `dist/chunk-JWLJY4O4.js` | 74823 | `90d1b4ebb1d937c0352a1d8628967624d52d3c96eddcee1e5574fde6ea759325` |
 | `dist/chunk-QB5SP7CM.js` | 4724 | `0e765a454f6aeef9f1c60a1347e2d1c768e5b817089b918fb71eceac15110046` |
@@ -315,7 +341,7 @@ frozen baselines exactly. No baseline was refreshed.
 | `dist/types-DRghr3d6.d.ts` | 9065 | `ebc0e7999372bf95a1a472cabc66c443b027f96e3d073be0bbc838f6bd8d93f6` |
 | `package.json` | 2215 | `4ee997b5c23619a7bacfed26c2c5079d406eed0c64d55b4f710b556cc2f82e91` |
 
-Total: 35 files, 312,471 bytes (uncompressed tarball size).
+Total: 33 files, 346288 bytes (uncompressed tarball size).
 
 ## Regenerability proof
 
@@ -323,16 +349,25 @@ Two independent `npm pack` runs at the same head produce byte-identical tarballs
 
 | Build | Tarball SHA-256 |
 | --- | --- |
-| 1 | `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d` |
-| 2 | `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d` |
+| 1 | `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1` |
+| 2 | `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1` |
 | **Match** | **yes** |
 
 The packet is regenerable by a single documented command from a clean checkout:
 ```sh
-git checkout 90809feda2875c0fb851b0839a2332d53db87865
+git checkout a35582d04eb45d24585e0c667c92dc9e60a0efe1
 npm run build
 STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=/path/to/outside node scripts/test-packed-consumer.mjs
 node scripts/s04-goldens-packed.mjs  # in a consumer dir with the tarball
+```
+
+or, in one command, the whole packet (typecheck, build, source-boundary check,
+full suite, packed-consumer verification, the S-04 packet tests, the three-run
+goldens and the second-build regenerability check):
+
+```sh
+git checkout a35582d04eb45d24585e0c667c92dc9e60a0efe1
+STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=/path/to/outside node scripts/build-release-packet.mjs
 ```
 
 ## Validation performed (all commands, exit codes, counts)
@@ -341,9 +376,9 @@ node scripts/s04-goldens-packed.mjs  # in a consumer dir with the tarball
 | --- | --- | --- | --- |
 | Typecheck | `npx tsc --noEmit` | 0 | — |
 | Source boundary | `node scripts/check-source-boundary.mjs` | 0 | — |
-| Full test suite | `npx vitest run --maxWorkers=1` | 0 | 991 passed, 34 files |
+| Full test suite | `npx vitest run --maxWorkers=1` | 0 | 1003 passed, 35 files |
 | S-04 packet tests | `npx vitest run --maxWorkers=1 tests/s04-release-packet.test.ts` | 0 | 11 passed |
-| Packed consumer | `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=... node scripts/test-packed-consumer.mjs` | 0 | 9 exports, 35 files |
+| Packed consumer | `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=... node scripts/test-packed-consumer.mjs` | 0 | 9 exports, 33 files |
 | Three-run goldens | `node scripts/s04-goldens-packed.mjs` (in consumer) | 0 | 3 variants × 3 runs |
 | Regenerability | two `npm pack` runs | 0 | 2 builds, identical SHA-256 |
 | `git diff --check` | `git diff --check` | 0 | — |
@@ -375,12 +410,12 @@ node scripts/s04-goldens-packed.mjs  # in a consumer dir with the tarball
 
 The coordinator must still verify:
 
-1. The final head `90809feda2875c0fb851b0839a2332d53db87865` matches the cutover candidate.
-2. The retained tarball at `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR/erniesg-struct-0.0.0.tgz` has SHA-256 `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d`.
-3. The file list matches the 35 entries recorded above.
+1. The measured tree `a35582d04eb45d24585e0c667c92dc9e60a0efe1` is an ancestor of the cutover candidate head.
+2. The retained tarball at `/home/ubuntu/.local/state/struct-migration/20261020-continuation/retention-s04-final/erniesg-struct-0.0.0.tgz` has SHA-256 `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1`.
+3. The file list matches the 33 entries recorded above.
 4. The nine-subpath matrix passes (public exports work, types exist, private paths fail).
 5. The Bundle public API surface exports all seven runtime names plus limits and error class.
 6. The three-run goldens match the frozen baselines exactly (no drift).
-7. The regenerability proof holds (two builds, identical tarball SHA-256).
+7. The regenerability proof holds (two builds, identical tarball SHA-256 `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1`).
 8. All validation commands exit 0 with the recorded counts.
 9. No external mutations were made (`pushed: false`, `externalMutations: "none"`).

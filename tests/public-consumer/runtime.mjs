@@ -56,6 +56,32 @@ assert.equal(
   modules.get('.').decodeCompatibleStructDocument,
   modules.get('./document').decodeCompatibleStructDocument,
 )
+// Every private module path must fail closed in the INSTALLED artifact, not
+// only the three the public manifest lists. This is the committed backing for
+// the nine-subpath matrix in docs/s04-release-matrix-2026-10-20.md.
+const PRIVATE_MODULE_PATHS = [
+  './core',
+  './schema',
+  './ids',
+  './parsers',
+  './sha256',
+  './renderers',
+  './bundle/canonical',
+  './bundle/external',
+  './bundle/facade',
+]
+for (const path of PRIVATE_MODULE_PATHS) {
+  assert.equal(
+    availablePaths.has(path),
+    false,
+    `${path} cannot be exported`,
+  )
+  await assert.rejects(
+    import(`${manifest.packageName}/${path.slice(2)}`),
+    (error) => error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+    `${path} must fail closed in the installed artifact`,
+  )
+}
 assert.equal(
   manifest.deprecated.migrateStructDocument.removalDate,
   '2026-11-30',
