@@ -47,7 +47,7 @@ export type StructAssetResolutionRequest = Readonly<{
   }>
   policy: StructAssetResolutionPolicyV1
   expectedPolicySha256: string
-  budget: Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>
+  budget: StructResolverBudgetInput
   signal: AbortSignal
 }>
 
@@ -379,27 +379,46 @@ function safeCount(value: unknown): number {
 }
 
 /**
- * Validates a budget pair and returns the derived work/cleanup split.
+ * Caller-supplied resolver budget pair.
  *
- * The total budget bounds one execution. The cleanup reserve is withheld
- * from the work phase so that teardown always has time inside the total
- * budget. A reserve that is zero, negative, or not smaller than the total is
- * rejected before any allocation.
+ * This is the value a caller passes as `resolverBudget`, and it is the only
+ * budget shape the runtime accepts: exactly `totalTimeoutMs` and
+ * `cleanupReserveMs`, and nothing else. The total bounds one execution; the
+ * cleanup reserve is withheld from the work phase so teardown always has time
+ * inside the total budget.
  *
  * The budget is mandatory and explicit: there is no implicit default. The
  * total is also bounded by the single frozen limits profile, so a caller
  * cannot enlarge the resolver budget past the published cap.
  */
-export type StructResolverBudgetPlan = Readonly<{
+export type StructResolverBudgetInput = Readonly<{
+  totalTimeoutMs: number
+  cleanupReserveMs: number
+}>
+
+/**
+ * Internal derived budget plan.
+ *
+ * The package derives this work/cleanup split from the caller's
+ * {@link StructResolverBudgetInput}; it is **not** the value a caller passes
+ * to `decodeStructBundle`, and a caller must not pass it as `resolverBudget`.
+ * The extra `workTimeoutMs` key is refused by the strict option parser.
+ */
+export type StructResolverDerivedBudgetPlan = Readonly<{
   totalTimeoutMs: number
   cleanupReserveMs: number
   workTimeoutMs: number
 }>
 
-/** Validates a budget pair and returns the derived work/cleanup split. */
+/**
+ * Validates a budget pair and returns the derived work/cleanup split.
+ *
+ * A reserve that is zero, negative, or not smaller than the total is
+ * rejected before any allocation.
+ */
 export function planStructResolverBudget(
   budget: unknown,
-): StructResolverBudgetPlan {
+): StructResolverDerivedBudgetPlan {
   const fields = readStructResolverFields(budget, ['totalTimeoutMs', 'cleanupReserveMs'])
   const totalTimeoutMs = fields.totalTimeoutMs
   const cleanupReserveMs = fields.cleanupReserveMs

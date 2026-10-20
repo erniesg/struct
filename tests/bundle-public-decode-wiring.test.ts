@@ -9,8 +9,13 @@ import {
   encodeStructBundle,
   STRUCT_BUNDLE_LIMITS_PROFILE,
 } from '../src/bundle/index'
+import type {
+  StructBundleDecodeOptions,
+  StructResolverBudgetInput,
+} from '../src/bundle/index'
 import { decodeEmbeddedBundleBytes } from '../src/bundle/embedded'
 import { canonicalJsonBytes, canonicalBundleDocumentBytes, canonicalBundleEnvelopeBytes } from '../src/bundle/canonical'
+import { planStructResolverBudget } from '../src/bundle/resolver-protocol'
 import { sha256HexSync } from '../src/sha256'
 import { seal, validDocument } from './codec-fixtures'
 import {
@@ -18,6 +23,30 @@ import {
   createFakeSupervisor,
   httpsPolicy,
 } from './fixtures/resolver/fake-host'
+
+/** Compile-time identity check: `X` and `Y` must be the same type. */
+type Exact<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false
+
+/** Compile-time assertion: the checked type must be exactly `true`. */
+type Assert<T extends true> = T
+
+// The published budget type is exactly the two-key caller-facing input pair.
+type _BudgetInputIsExactlyTheCallerPair = Assert<Exact<
+  StructResolverBudgetInput,
+  Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>
+>>
+
+// The public decode options carry that same caller-facing budget type.
+type _DecodeOptionsUseTheCallerBudget = Assert<Exact<
+  NonNullable<StructBundleDecodeOptions['resolverBudget']>,
+  StructResolverBudgetInput
+>>
+
+// The caller-facing budget has no derived-plan key.
+type _CallerBudgetHasNoDerivedPlanKey = Assert<
+  'workTimeoutMs' extends keyof StructResolverBudgetInput ? false : true
+>
 
 const encoder = new TextEncoder()
 const utf8 = (value: string) => encoder.encode(value)
@@ -132,6 +161,82 @@ describe('bundle public decode wiring', () => {
       'encodeStructBundle',
       'verifyStructBundle',
     ])
+  })
+
+  it('publishes exactly seven runtime values measured on the real module object', () => {
+    const names = Object.keys(bundle)
+    expect(names).toHaveLength(7)
+    expect(names.sort()).toEqual([
+      'STRUCT_BUNDLE_LIMITS_PROFILE',
+      'STRUCT_BUNDLE_LIMITS_PROFILE_VERSION',
+      'StructBundleError',
+      'createStructBundle',
+      'decodeStructBundle',
+      'encodeStructBundle',
+      'verifyStructBundle',
+    ])
+    // The published budget types are type-only: they add no runtime value.
+    expect(names).not.toContain('StructResolverBudgetInput')
+    expect(names).not.toContain('StructResolverDerivedBudgetPlan')
+  })
+
+  it('publishes the caller-facing budget type and accepts exactly that shape', async () => {
+    const sourceBytes = new Uint8Array([9, 8, 7, 6])
+    const built = buildBundle([{ id: 'asset-1', bytes: sourceBytes, external: true }])
+    const supervisor = successSupervisor(built.specs)
+    const host = createFakeHostSupervisor()
+    // The type a consumer annotates its budget with is the public one, and
+    // it describes exactly the value the runtime accepts.
+    const budget: StructResolverBudgetInput = {
+      totalTimeoutMs: 1000,
+      cleanupReserveMs: 200,
+    }
+    const handle = await decodeStructBundle(built.canonical, {
+      resolverExecutor: supervisor.executor,
+      resolverPolicy: httpsPolicy(),
+      resolverBudget: budget,
+      resolverHostSupervisor: host,
+    })
+    expect(handle.bundleSha256).toBe(built.bundleSha256)
+    expect(handle.assetBytes('asset-1')).toEqual(sourceBytes)
+  })
+
+  it('the published budget type refuses the derived plan key at compile time', () => {
+    // `npx tsc --noEmit` covers this file, so the directive below is a real
+    // compile-time assertion: the published budget type carries exactly the
+    // two keys the runtime accepts, and the derived plan's third key is an
+    // excess property for a consumer that types its budget with it.
+    const planLiteral: StructResolverBudgetInput = {
+      totalTimeoutMs: 1000,
+      cleanupReserveMs: 200,
+      // @ts-expect-error `workTimeoutMs` belongs to the internal derived plan, not to the caller budget.
+      workTimeoutMs: 800,
+    }
+    expect(planLiteral).toBeTruthy()
+  })
+
+  it('refuses a budget that carries the derived plan extra key', async () => {
+    const built = buildBundle([{ id: 'asset-1', bytes: new Uint8Array([1]), external: true }])
+    const supervisor = successSupervisor(built.specs)
+    const host = createFakeHostSupervisor()
+    // The package derives a work/cleanup split internally. That derived plan
+    // is not the caller budget: the strict option parser refuses its extra
+    // `workTimeoutMs` key, so the trap fails closed.
+    const plan = planStructResolverBudget({ totalTimeoutMs: 1000, cleanupReserveMs: 200 })
+    expect(plan).toEqual({
+      totalTimeoutMs: 1000,
+      cleanupReserveMs: 200,
+      workTimeoutMs: 800,
+    })
+    const error = await rejectedBy(() => decodeStructBundle(built.canonical, {
+      resolverExecutor: supervisor.executor,
+      resolverPolicy: httpsPolicy(),
+      resolverBudget: plan,
+      resolverHostSupervisor: host,
+    })) as StructBundleError
+    expect(error).toBeInstanceOf(StructBundleError)
+    expect(error.stage).toBe('input')
+    expect(error.code).toBe('OPTIONS')
   })
 
   it('decode never throws synchronously and always returns a promise', async () => {
