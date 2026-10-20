@@ -703,10 +703,11 @@ describe('public decode seam real OS resolver conformance', () => {
   )
 
   it(
-    'PUBLIC BUDGET AND ABORT: fails closed when explicit budget expires',
+    'PUBLIC BUDGET: invalid budget rejected at option parse (BUDGET stage, no host contacted)',
     async () => {
-      // Use a conformant host but with a tiny budget that expires before
-      // resolution can complete. The budget is validated at decode entry.
+      // Use a conformant host but with an invalid budget pair where
+      // totalTimeoutMs < cleanupReserveMs. The package validates the budget
+      // at decode entry and rejects it before any host realm is started.
       await withPool({ mode: 'conformant', slots: 1 }, async (pool) => {
         const asset = pool.assets[0]!
         const canonical = await buildExternalBundle(asset, 'Text/chapter1.xhtml')
@@ -730,7 +731,7 @@ describe('public decode seam real OS resolver conformance', () => {
         expect(failure.code).toBe('BUDGET')
         // No handle was published and no host was contacted.
         expect(pool.ledger().freeSlots).toBe(1)
-        record('public_budget_expired', {
+        record('public_invalid_budget_rejected', {
           outcome: failure.code,
           stage: failure.stage,
           ledger: pool.ledger(),
