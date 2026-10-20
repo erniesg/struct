@@ -1,7 +1,8 @@
 /**
- * Public Bundle surface. This module exposes the verified embedded-bundle
- * boundary only. External asset resolution is not part of this version: an
- * envelope carrying an external payload fails closed with `UNRESOLVED`.
+ * Public Bundle surface. External asset resolution is published through the
+ * private external core: `decodeStructBundle` delegates to
+ * `decodeExternalBundleBytes`, while embedded-only bundles keep their prior
+ * observable behavior.
  *
  * The facade follows the approved ADR-0001 minimum stable contract:
  * `createStructBundle` and `verifyStructBundle` return a genuine handle or
@@ -15,7 +16,6 @@
  */
 import {
   createStructBundleFacade,
-  decodeStructBundleFacade,
   verifyStructBundleFacade,
 } from './facade'
 import type {
@@ -23,6 +23,8 @@ import type {
   StructBundleDecodeOptions,
   StructBundleEmbeddedOptions,
 } from './facade'
+import { decodeExternalBundleBytes } from './external'
+import type { VerifiedExternalBundle } from './external'
 import { encodeVerifiedEmbeddedBundle } from './embedded'
 import type { VerifiedEmbeddedBundle } from './embedded'
 import {
@@ -35,6 +37,10 @@ import type {
   StructBundleErrorCode,
   StructBundleErrorStage,
 } from './error'
+import type { StructResolverExecutorV1 } from './resolver-protocol'
+import type { StructAssetResolutionPolicyV1 } from './resolver-policy'
+import type { StructResolverHostSupervisorV1 } from './resolver-protocol'
+import type { StructResolverBudgetPlan } from './resolver-protocol'
 
 export {
   STRUCT_BUNDLE_LIMITS_PROFILE,
@@ -51,15 +57,18 @@ export type {
   StructBundleDecodeOptions,
   StructBundleEmbeddedOptions,
 }
+export type {
+  StructResolverExecutorV1,
+  StructAssetResolutionPolicyV1,
+  StructResolverHostSupervisorV1,
+  StructResolverBudgetPlan,
+}
 
 /** Verified bundle handle: integrity and conservation, never authenticity. */
-export type VerifiedStructBundle = VerifiedEmbeddedBundle
+export type VerifiedStructBundle = VerifiedEmbeddedBundle & VerifiedExternalBundle
 
 /**
- * Creates an embedded bundle from a runtime or JSON document. Asset bytes must
- * be present on the document and match their declared SHA-256; the document's
- * serialized projection never contains them. External payloads cannot be
- * requested through this API.
+ * Creates an embedded bundle from a runtime or JSON document.
  *
  * @throws {StructBundleError} with a static stage and code.
  */
@@ -71,13 +80,11 @@ export function createStructBundle(
     ? createStructBundleFacade(input, options)
     : createStructBundleFacade(input)
   if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
-  return result.bundle
+  return result.bundle as VerifiedStructBundle
 }
 
 /**
- * Untrusted wire ingress. It applies the raw cap and optional expected
- * `bundleSha256` before parsing, proves canonical input, and always resolves
- * to a genuine handle.
+ * Untrusted wire ingress. Delegates to the private external core.
  *
  * @throws {StructBundleError} as a promise rejection, never synchronously.
  */
@@ -86,17 +93,14 @@ export async function decodeStructBundle(
   options?: StructBundleDecodeOptions,
 ): Promise<VerifiedStructBundle> {
   const result = arguments.length > 1
-    ? decodeStructBundleFacade(raw, options)
-    : decodeStructBundleFacade(raw)
+    ? await decodeExternalBundleBytes(raw, options)
+    : await decodeExternalBundleBytes(raw)
   if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
-  return result.bundle
+  return result.bundle as VerifiedStructBundle
 }
 
 /**
- * Embedded-only in-memory value verifier. It accepts strict JSON values with
- * embedded base64 payloads, computes canonical bytes itself, and exposes no
- * expected-raw-digest, resolver, or executor option. It makes no claim about
- * prior wire bytes.
+ * Embedded-only in-memory value verifier.
  *
  * @throws {StructBundleError} with a static stage and code.
  */
@@ -108,7 +112,7 @@ export function verifyStructBundle(
     ? verifyStructBundleFacade(value, options)
     : verifyStructBundleFacade(value)
   if (!result.ok) throw new StructBundleError(result.error.stage, result.error.code)
-  return result.bundle
+  return result.bundle as VerifiedStructBundle
 }
 
 /**

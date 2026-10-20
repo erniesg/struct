@@ -14,6 +14,8 @@ export type StructBundleErrorStage =
   | 'canonical'
   | 'assets'
   | 'handle'
+  | 'resolve'
+  | 'budget'
 
 /** Fixed failure codes. Every code is package-owned and input-independent. */
 export type StructBundleErrorCode =
@@ -30,6 +32,21 @@ export type StructBundleErrorCode =
   | 'DIGEST'
   | 'UNRESOLVED'
   | 'FORGED'
+  | 'BUDGET'
+  | 'POLICY'
+  | 'TARGET'
+  | 'ALLOCATE'
+  | 'START'
+  | 'RESULT'
+  | 'RECEIPT'
+  | 'STREAM'
+  | 'LENGTH'
+  | 'ABORTED'
+  | 'TIMEOUT'
+  | 'REVOCATION'
+  | 'CLEANUP'
+  | 'TERMINAL'
+  | 'FAIL_STOP'
 
 const STAGE_MESSAGES: Readonly<Record<StructBundleErrorStage, string>> =
   Object.freeze({
@@ -38,6 +55,8 @@ const STAGE_MESSAGES: Readonly<Record<StructBundleErrorStage, string>> =
     canonical: 'struct bundle canonical form rejected',
     assets: 'struct bundle assets rejected',
     handle: 'struct bundle handle rejected',
+    resolve: 'struct bundle resolution rejected',
+    budget: 'struct bundle budget rejected',
   })
 
 /** Static message for a failing stage. */

@@ -10,6 +10,10 @@ import {
 } from './embedded'
 import type { EmbeddedAcceptanceResult } from './embedded'
 import {
+  decodeExternalBundleBytes,
+} from './external'
+import type { ExternalAcceptanceResult, ExternalDecodeOptions } from './external'
+import {
   BundleValueLimitError,
   STRUCT_BUNDLE_LIMITS_PROFILE,
   STRUCT_BUNDLE_LIMITS_PROFILE_VERSION,
@@ -31,10 +35,8 @@ export type StructBundleCreateInput = Readonly<{
   document: StructDocument | StructDocumentJson
 }>
 
-/** Wire-only options. There is deliberately no profile override. */
-export type StructBundleDecodeOptions = Readonly<{
-  expectedBundleSha256?: string
-}>
+/** Flat public decode options. Delegated to the private external core. */
+export type StructBundleDecodeOptions = ExternalDecodeOptions
 
 /**
  * Embedded value/create options. The profile version can be named for future
@@ -95,20 +97,6 @@ function readField(record: Record<string, unknown>, key: string): unknown {
   return descriptor.value
 }
 
-function parseDecodeOptions(
-  supplied: boolean,
-  options: unknown,
-): Readonly<{ expected?: string }> {
-  if (!supplied) return Object.freeze({})
-  const record = exactRecord(options, ['expectedBundleSha256'])
-  if (!Object.hasOwn(record, 'expectedBundleSha256'))
-    return Object.freeze({})
-  const expected = readField(record, 'expectedBundleSha256')
-  if (typeof expected !== 'string' || !/^[0-9a-f]{64}$/u.test(expected))
-    throw new TypeError('invalid digest')
-  return Object.freeze({ expected })
-}
-
 function parseEmbeddedOptions(
   supplied: boolean,
   options: unknown,
@@ -124,51 +112,18 @@ function parseEmbeddedOptions(
 }
 
 /**
- * Untrusted wire ingress. The caller's bytes are copied once, capped, hashed
- * before parsing when an expected digest is supplied, and value limits run
- * before the embedded verifier allocates its canonical envelope copy.
+ * Untrusted wire ingress. Delegates to the private external-bytes core so that
+ * bundles with external asset references can be decoded, while an
+ * embedded-only bundle keeps the prior observable behavior.
  */
-export function decodeStructBundleFacade(
+export async function decodeStructBundleFacade(
   raw: Uint8Array,
   options?: StructBundleDecodeOptions,
-): EmbeddedAcceptanceResult {
-  let expected: string | undefined
-  try {
-    expected = parseDecodeOptions(arguments.length > 1, options).expected
-  } catch {
-    return failure({ stage: 'input', code: 'OPTIONS' })
+): Promise<ExternalAcceptanceResult> {
+  if (arguments.length > 1) {
+    return decodeExternalBundleBytes(raw, options)
   }
-
-  let snapshot: Uint8Array
-  try {
-    snapshot = snapshotCanonicalJsonInput(
-      raw,
-      STRUCT_BUNDLE_LIMITS_PROFILE.maxRawBytes,
-    )
-  } catch (error) {
-    return failure({
-      stage: 'input',
-      code: error instanceof CanonicalJsonError && error.code === 'LIMIT'
-        ? 'LIMIT'
-        : 'TYPE',
-    })
-  }
-
-  const bundleSha256 = sha256HexSync(snapshot)
-  if (expected !== undefined && expected !== bundleSha256)
-    return failure({ stage: 'digest', code: 'MISMATCH' })
-
-  try {
-    const value = parseCanonicalJsonBytes(
-      snapshot,
-      STRUCT_BUNDLE_LIMITS_PROFILE.maxRawBytes,
-    )
-    assertStructBundleValueLimits(value, STRUCT_BUNDLE_LIMITS_PROFILE)
-  } catch (error) {
-    return canonicalFailure(error)
-  }
-
-  return decodeEmbeddedBundleBytes(snapshot)
+  return decodeExternalBundleBytes(raw)
 }
 
 /**
