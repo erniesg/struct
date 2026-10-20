@@ -152,17 +152,91 @@ function ownField(value: object, key: string): unknown {
   return descriptor.value
 }
 
-function isAbortSignalLike(value: unknown): value is AbortSignal {
+/**
+ * The platform's own `AbortSignal` brand.
+ *
+ * A shape check is not a brand check. A caller-controlled object with an
+ * `aborted` boolean and an `addEventListener` function is not a signal, and
+ * the resolver driver would call methods on it. The `aborted` getter of
+ * `AbortSignal.prototype` is captured once from the platform, so a candidate
+ * never supplies the function that decides whether it is accepted. That
+ * getter is applied with `Reflect.apply`, so no candidate code runs: a value
+ * that is not an `AbortSignal` makes the platform getter throw, and the
+ * throw is caught by the caller.
+ */
+type AbortSignalBrand = Readonly<{
+  aborted(candidate: unknown): boolean
+  shadowsListenerMethods(candidate: object): boolean
+}>
+
+function captureAbortSignalBrand(): AbortSignalBrand | undefined {
+  const constructor = (globalThis as { AbortSignal?: { prototype?: unknown } })
+    .AbortSignal
+  if (typeof constructor !== 'function') return undefined
+  const prototype = constructor.prototype
+  if (typeof prototype !== 'object' || prototype === null) return undefined
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, 'aborted')
+  if (!descriptor || typeof descriptor.get !== 'function') return undefined
+  const getter = descriptor.get
+  return Object.freeze({
+    aborted(candidate: unknown): boolean {
+      const value = Reflect.apply(getter, candidate, [])
+      if (typeof value !== 'boolean') throw new Error('options')
+      return value
+    },
+    shadowsListenerMethods(candidate: object): boolean {
+      // A genuine `AbortSignal` has no own listener method. An own property
+      // would replace the platform method the resolver driver calls, so such
+      // a candidate is refused instead of being handed to the driver.
+      for (const key of ['addEventListener', 'removeEventListener']) {
+        if (Object.getOwnPropertyDescriptor(candidate, key) !== undefined)
+          return true
+      }
+      return false
+    },
+  })
+}
+
+const abortSignalBrand = captureAbortSignalBrand()
+
+/**
+ * Accepts only a genuine `AbortSignal`.
+ *
+ * The candidate's own `addEventListener` and `removeEventListener` are never
+ * called while the options are parsed, and `aborted` is read with the
+ * platform getter instead of with a candidate property, so the brand check
+ * itself runs no candidate code. The own-property inspection that follows
+ * can reach a proxy trap, so it is guarded and any error fails closed. An
+ * environment without `AbortSignal` fails closed too: no candidate is
+ * accepted.
+ */
+function isGenuineAbortSignal(value: unknown): value is AbortSignal {
+  const brand = abortSignalBrand
+  if (!brand) return false
   if (value === null || typeof value !== 'object') return false
-  const candidate = value as { aborted?: unknown; addEventListener?: unknown }
-  return typeof candidate.aborted === 'boolean' &&
-    typeof candidate.addEventListener === 'function'
+  try {
+    const aborted: boolean = brand.aborted(value)
+    if (typeof aborted !== 'boolean') return false
+  } catch {
+    return false
+  }
+  try {
+    if (brand.shadowsListenerMethods(value)) return false
+  } catch {
+    return false
+  }
+  return true
 }
 
 /**
  * Reads the strict flat option object. All resolver fields must either be
- * absent together (embedded-only decode) or be present and valid. An explicit
+ * absent together (embedded-only decode) or be present. An explicit
  * `undefined` is not treated as an omitted resolver field.
+ *
+ * This step only reads shapes. The resolver *values* (budget, policy and
+ * signal) are validated by the decoder immediately afterwards, so an invalid
+ * resolver configuration is refused even when the bundle carries no
+ * external asset.
  */
 function parseOptions(
   supplied: boolean,
@@ -247,7 +321,7 @@ function parseOptions(
     let signal: AbortSignal | undefined
     if (Object.hasOwn(options, 'resolverSignal')) {
       const value = ownField(options, 'resolverSignal')
-      if (!isAbortSignalLike(value)) throw new Error('options')
+      if (!isGenuineAbortSignal(value)) throw new Error('options')
       signal = value
     }
     resolver = Object.freeze({
@@ -366,13 +440,14 @@ function preflightAssetSet(
  *
  * The processing order is fixed:
  * 1. options and flat resolver configuration;
- * 2. bounded raw snapshot (single copy);
- * 3. expected bundle SHA-256 check before any parse;
- * 4. canonical parse, profile value limits, full envelope canonicalization;
- * 5. strict asset-set/metadata preflight for every asset;
- * 6. embedded asset decode and external target selection (still no allocate);
- * 7. resolver execution with the remaining package monotonic budget;
- * 8. genuine handle publication only after all assets resolved and joined.
+ * 2. eager resolver value validation (budget, policy, signal);
+ * 3. bounded raw snapshot (single copy);
+ * 4. expected bundle SHA-256 check before any parse;
+ * 5. canonical parse, profile value limits, full envelope canonicalization;
+ * 6. strict asset-set/metadata preflight for every asset;
+ * 7. embedded asset decode and external target selection (still no allocate);
+ * 8. resolver execution with the remaining package monotonic budget;
+ * 9. genuine handle publication only after all assets resolved and joined.
  *
  * It returns a structured result and never throws for expected failures.
  */
@@ -395,6 +470,33 @@ export async function decodeExternalBundleBytes(
     resolver = parsed.resolver
   } catch {
     return failure('input', 'OPTIONS')
+  }
+
+  // The resolver configuration is validated once, here, before a single byte
+  // is read. A bundle without external assets never uses the resolver, but an
+  // invalid budget, policy or signal is still an invalid option: it is
+  // refused with the static taxonomy instead of being ignored. The values
+  // that pass this gate are the ones used later for the driver.
+  let resolverPlan: ReturnType<typeof planStructResolverBudget> | undefined
+  let resolverPolicy: Readonly<{
+    policySha256: string
+    policySnapshot: StructResolverExecutionOptions['policy']
+  }> | undefined
+  if (resolver) {
+    try {
+      resolverPlan = planStructResolverBudget(resolver.budget)
+    } catch {
+      return failure('budget', 'BUDGET')
+    }
+    try {
+      const validated = validateResolverPolicyV1(resolver.policy)
+      resolverPolicy = Object.freeze({
+        policySha256: validated.policySha256,
+        policySnapshot: validated.policySnapshot(),
+      })
+    } catch {
+      return failure('resolve', 'POLICY')
+    }
   }
 
   // Bounded raw snapshot, taken once. The caller's buffer is never retained.
@@ -484,43 +586,37 @@ export async function decodeExternalBundleBytes(
   // External resolution: mandatory configuration and no silent fallback.
   let resolvedExternalAssets: ReadonlyMap<string, Uint8Array> = new Map()
   if (externalTargets.length > 0) {
-    if (!resolver) return failure('assets', 'UNRESOLVED')
+    if (!resolver || !resolverPlan || !resolverPolicy)
+      return failure('assets', 'UNRESOLVED')
 
-    let plan: ReturnType<typeof planStructResolverBudget>
-    try {
-      plan = planStructResolverBudget(resolver.budget)
-    } catch {
-      return failure('budget', 'BUDGET')
-    }
     const elapsed = ((globalThis as { performance?: { now?: () => number } })
       .performance?.now?.() ?? Date.now()) - started
-    const remaining = plan.totalTimeoutMs - Math.floor(elapsed)
+    const remaining = resolverPlan.totalTimeoutMs - Math.floor(elapsed)
     if (remaining < 2) return failure('budget', 'BUDGET')
-
-    let policyDigest: string
-    let policySnapshot: StructResolverExecutionOptions['policy']
-    try {
-      const validated = validateResolverPolicyV1(resolver.policy)
-      policyDigest = validated.policySha256
-      policySnapshot = validated.policySnapshot()
-    } catch {
-      return failure('resolve', 'POLICY')
-    }
 
     const driverOptions: StructResolverExecutionOptions = {
       executor: resolver.executor,
       hostSupervisor: resolver.hostSupervisor,
-      policy: policySnapshot,
-      expectedPolicySha256: policyDigest,
+      policy: resolverPolicy.policySnapshot,
+      expectedPolicySha256: resolverPolicy.policySha256,
       budget: {
         totalTimeoutMs: remaining,
-        cleanupReserveMs: Math.min(plan.cleanupReserveMs, remaining - 1),
+        cleanupReserveMs: Math.min(resolverPlan.cleanupReserveMs, remaining - 1),
       },
       ...(resolver.signal ? { signal: resolver.signal } : {}),
       // The package monotonic clock is used; no caller-supplied now.
     }
 
-    const resolution = await resolveStructResolverAssets(externalTargets, driverOptions)
+    // The driver owns the resolution, but the options it was given are
+    // caller-owned. A foreign error must not escape the decoder, so an
+    // unexpected rejection becomes a static failure and no handle is
+    // published.
+    let resolution: Awaited<ReturnType<typeof resolveStructResolverAssets>>
+    try {
+      resolution = await resolveStructResolverAssets(externalTargets, driverOptions)
+    } catch {
+      return failure('resolve', 'START')
+    }
     if (!resolution.ok)
       return failure('resolve', resolution.error.code as ExternalDecodeCode)
     resolvedExternalAssets = resolution.assets

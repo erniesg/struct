@@ -141,6 +141,49 @@ const expectFailure = (
   expect(result).toEqual({ ok: false, error: { stage, code } })
 }
 
+/**
+ * Counts executor allocate and start calls so a test can prove that no
+ * resolver work ran.
+ */
+function recordingExecutor(inner: StructResolverExecutorV1) {
+  const calls = { allocate: 0, start: 0 }
+  const executor: StructResolverExecutorV1 = {
+    allocate(request) {
+      calls.allocate += 1
+      const handle = inner.allocate(request)
+      return {
+        ...handle,
+        start() {
+          calls.start += 1
+          return handle.start()
+        },
+      }
+    },
+  }
+  return { executor, calls }
+}
+
+/**
+ * Runs the decoder and reports an escaped foreign error instead of letting
+ * it reject the caller.
+ */
+const decodeWithoutThrow = async (
+  raw: Uint8Array,
+  options: unknown,
+): Promise<{
+  thrown: unknown
+  result: Awaited<ReturnType<typeof decodeExternalBundleBytes>> | undefined
+}> => {
+  try {
+    return {
+      thrown: undefined,
+      result: await decodeExternalBundleBytes(raw, options as never),
+    }
+  } catch (error) {
+    return { thrown: error, result: undefined }
+  }
+}
+
 describe('external bytes pilot: successful external resolution', () => {
   it('resolves an external asset and preserves the original external wire', async () => {
     const sourceBytes = new Uint8Array([9, 8, 7, 6])
@@ -433,6 +476,226 @@ describe('external bytes options and mandatory resolver configuration', () => {
     expect(encoded.ok).toBe(true)
     if (!encoded.ok) throw new Error('expected encode')
     expect(encoded.bytes).toEqual(built.canonical)
+  })
+})
+
+describe('external bytes: resolver options fail closed', () => {
+  const externalBuilt = () =>
+    buildBundle([{ id: 'asset-1', bytes: new Uint8Array([1]), external: true }])
+  const embeddedBuilt = () =>
+    buildBundle([{ id: 'asset-1', bytes: new Uint8Array([1]) }])
+
+  it('rejects a fake signal whose addEventListener throws before any allocate', async () => {
+    const built = externalBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const fake = {
+      aborted: false,
+      addEventListener() { throw new Error('foreign add') },
+    }
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: fake as never,
+      }),
+    )
+    // No foreign error escapes, and nothing was allocated or started.
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result).toBeDefined()
+    expectFailure(observed.result!, 'input', 'OPTIONS')
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('rejects a fake signal without removeEventListener before any allocate', async () => {
+    const built = externalBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const fake = { aborted: false, addEventListener() {} }
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: fake as never,
+      }),
+    )
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result).toBeDefined()
+    expectFailure(observed.result!, 'input', 'OPTIONS')
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('rejects a fake signal that only claims to be aborted', async () => {
+    const built = externalBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const fake = {
+      aborted: true,
+      addEventListener() {},
+      removeEventListener() {},
+    }
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: fake as never,
+      }),
+    )
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result).toBeDefined()
+    expectFailure(observed.result!, 'input', 'OPTIONS')
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+  })
+
+  it('accepts a genuine AbortSignal and still resolves the external asset', async () => {
+    const built = externalBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const controller = new AbortController()
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: controller.signal,
+      }),
+    )
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result?.ok).toBe(true)
+    if (!observed.result?.ok) throw new Error(JSON.stringify(observed.result))
+    expect(observed.result.bundle.assetBytes('asset-1')).toEqual(new Uint8Array([1]))
+    expect(recorder.calls.allocate).toBe(1)
+    expect(recorder.calls.start).toBe(1)
+  })
+
+  it('accepts a genuine already-aborted AbortSignal and fails before any allocate', async () => {
+    const built = externalBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const controller = new AbortController()
+    controller.abort()
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: controller.signal,
+      }),
+    )
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result).toBeDefined()
+    expectFailure(observed.result!, 'resolve', 'ABORTED')
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('refuses an invalid budget for an embedded-only bundle', async () => {
+    const built = embeddedBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const budgets = [
+      { totalTimeoutMs: -1, cleanupReserveMs: -1 },
+      { totalTimeoutMs: 0, cleanupReserveMs: 0 },
+      { totalTimeoutMs: Number.NaN, cleanupReserveMs: 1 },
+    ]
+    for (const budget of budgets) {
+      const observed = await decodeWithoutThrow(
+        built.canonical,
+        resolverOptions(recorder.executor, undefined, {
+          resolverBudget: budget,
+        }),
+      )
+      expect(observed.thrown).toBeUndefined()
+      expect(observed.result).toBeDefined()
+      expectFailure(observed.result!, 'budget', 'BUDGET')
+      expect((observed.result as { bundle?: unknown }).bundle).toBeUndefined()
+    }
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+  })
+
+  it('refuses an invalid policy for an embedded-only bundle', async () => {
+    const built = embeddedBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverPolicy: {} as never,
+      }),
+    )
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result).toBeDefined()
+    expectFailure(observed.result!, 'resolve', 'POLICY')
+    expect((observed.result as { bundle?: unknown }).bundle).toBeUndefined()
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+  })
+
+  it('refuses a fake signal for an embedded-only bundle', async () => {
+    const built = embeddedBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const observed = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: { aborted: false, addEventListener() {} } as never,
+      }),
+    )
+    expect(observed.thrown).toBeUndefined()
+    expect(observed.result).toBeDefined()
+    expectFailure(observed.result!, 'input', 'OPTIONS')
+    expect((observed.result as { bundle?: unknown }).bundle).toBeUndefined()
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+  })
+
+  it('accepts an embedded-only bundle with a valid but unused resolver configuration', async () => {
+    const built = embeddedBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const controller = new AbortController()
+    const result = await decodeExternalBundleBytes(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverSignal: controller.signal,
+      }),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(result.bundle.assetBytes('asset-1')).toEqual(new Uint8Array([1]))
+    // The resolver is never used for an embedded-only bundle.
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+    expect(supervisor.hosts).toHaveLength(0)
+  })
+
+  it('refuses an invalid budget or policy for an external bundle before any allocate', async () => {
+    const built = externalBuilt()
+    const supervisor = successSupervisor(built.specs)
+    const recorder = recordingExecutor(supervisor.executor)
+    const badBudget = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverBudget: { totalTimeoutMs: -1, cleanupReserveMs: -1 },
+      }),
+    )
+    expect(badBudget.thrown).toBeUndefined()
+    expect(badBudget.result).toBeDefined()
+    expectFailure(badBudget.result!, 'budget', 'BUDGET')
+
+    const badPolicy = await decodeWithoutThrow(
+      built.canonical,
+      resolverOptions(recorder.executor, undefined, {
+        resolverPolicy: {} as never,
+      }),
+    )
+    expect(badPolicy.thrown).toBeUndefined()
+    expect(badPolicy.result).toBeDefined()
+    expectFailure(badPolicy.result!, 'resolve', 'POLICY')
+
+    expect(recorder.calls.allocate).toBe(0)
+    expect(recorder.calls.start).toBe(0)
+    expect(supervisor.hosts).toHaveLength(0)
   })
 })
 
