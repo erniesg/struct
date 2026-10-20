@@ -16,6 +16,7 @@ import {
   assertStructBundleValueLimits,
 } from './limits'
 import type { StructBundleLimitsProfile } from './limits'
+import { preflightStructBundleCreate } from './create-preflight'
 import {
   decodeStructDocument,
   encodeStructDocument,
@@ -221,6 +222,11 @@ export function verifyStructBundleFacade(
  * Build an embedded bundle from a runtime or JSON document. Asset bytes are
  * copied by the document decoder, digest-checked here, and never written into
  * the byte-free document projection.
+ *
+ * The Bundle profile is the first allocation guard: the untrusted input is
+ * preflighted against the frozen profile before the document codec copies,
+ * decodes, or digests anything, so an oversized asset is rejected before it
+ * is materialized.
  */
 export function createStructBundleFacade(
   input: StructBundleCreateInput,
@@ -240,6 +246,9 @@ export function createStructBundleFacade(
   } catch {
     return failure({ stage: 'input', code: 'TYPE' })
   }
+
+  const preflight = preflightStructBundleCreate(documentInput, profile)
+  if (!preflight.ok) return failure(preflight.error)
 
   let document: StructDocument
   try {
