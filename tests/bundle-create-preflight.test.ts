@@ -8,6 +8,14 @@ import {
 } from '../src/bundle/index'
 import type { StructBundleLimitsProfile } from '../src/bundle/index'
 import { preflightStructBundleCreate } from '../src/bundle/create-preflight'
+import {
+  documentAboveFieldCap,
+  documentBelowFieldCap,
+  documentWithNumericAttributes,
+  documentWithText,
+  projectionSize,
+  withAssetPayload,
+} from './bundle-create-preflight-fixtures'
 import { structReceiptDigest } from '../src/receipt'
 import { sha256HexSync } from '../src/sha256'
 
@@ -309,11 +317,16 @@ describe('O-001 boundary conformance (N-1/N/N+1)', () => {
 
   it('enforces the document size budget at N-1/N/N+1', () => {
     // `{ text: 'x' * n }` charges the braces, the quoted key, and the quoted
-    // string: 2 + 7 + (n + 2) = n + 11 canonical bytes.
-    const small = { maxRawBytes: 32 }
-    expectAccepted(preflight({ text: 'x'.repeat(21) }, small))
+    // string: 2 + 6 + 1 + (n + 2) = n + 11 canonical bytes.
+    //
+    // The byte-free document projection is one top-level envelope field, so
+    // its budget is the envelope field cap; the envelope byte cap bounds it
+    // as well. The field cap of this fixture is 100 bytes, so the document
+    // budget is 100 bytes and `n` is 89 at the boundary.
+    const small = { maxFieldBytes: 100, maxRawBytes: 4096 }
+    expectAccepted(preflight({ text: 'x'.repeat(89) }, small))
     expectRejected(
-      preflight({ text: 'x'.repeat(22) }, small),
+      preflight({ text: 'x'.repeat(90) }, small),
       'canonical',
       'LIMIT',
     )
@@ -465,6 +478,108 @@ describe('O-001 differential no-false-reject', () => {
     const error = createFrom(document)
     expect(error.stage).toBe('assets')
     expect(error.code).toBe('SET')
+  })
+})
+
+describe('O-001 document-size budget: the field cap and the envelope total', () => {
+  it('rejects a document above the field cap before any canonical byte is built', () => {
+    // The projection is larger than the envelope field cap and smaller than
+    // the envelope byte cap, so only the field cap can reject it.
+    const document = documentAboveFieldCap()
+    const size = projectionSize(document)
+    expect(size).toBeGreaterThan(STRUCT_BUNDLE_LIMITS_PROFILE.maxFieldBytes)
+    expect(size).toBeLessThan(STRUCT_BUNDLE_LIMITS_PROFILE.maxRawBytes)
+
+    counters.digest = 0
+    counters.base64 = 0
+    let encodes = 0
+    encodes = instrumentTextEncoder(() => {
+      const error = createFrom(document)
+      expect(error.stage).toBe('canonical')
+      expect(error.code).toBe('LIMIT')
+    })
+    // The document was never decoded, re-encoded, or canonicalized.
+    expect(encodes).toBe(0)
+    expect(counters.digest).toBe(0)
+    expect(counters.base64).toBe(0)
+  })
+
+  it('accepts a document exactly at the field cap', () => {
+    const document = documentAboveFieldCap()
+    const size = projectionSize(document)
+    expectAccepted(
+      preflight(document, {
+        maxFieldBytes: size,
+        maxRawBytes: 10_000_000,
+      }),
+    )
+    expectRejected(
+      preflight(document, {
+        maxFieldBytes: size - 1,
+        maxRawBytes: 10_000_000,
+      }),
+      'canonical',
+      'LIMIT',
+    )
+  })
+
+  it('charges a number its exact canonical length', () => {
+    // The float is spelled with 24 canonical bytes. A one-byte charge would
+    // admit 23,000 bytes more than the projection holds, so the boundary
+    // below only holds when the exact number length is charged.
+    const document = documentWithNumericAttributes(
+      1000,
+      -1.2345678901234567e-300,
+    )
+    const size = projectionSize(document)
+    expectAccepted(
+      preflight(document, { maxFieldBytes: size, maxRawBytes: 10_000_000 }),
+    )
+    expectRejected(
+      preflight(document, {
+        maxFieldBytes: size - 1,
+        maxRawBytes: 10_000_000,
+      }),
+      'canonical',
+      'LIMIT',
+    )
+  })
+
+  it('charges a string its exact canonical length', () => {
+    // Every quote and backslash costs two canonical bytes, so the raw
+    // length under-counts the projection by half.
+    const document = documentWithText('"\\', 100_000)
+    const size = projectionSize(document)
+    expectAccepted(
+      preflight(document, { maxFieldBytes: size, maxRawBytes: 10_000_000 }),
+    )
+    expectRejected(
+      preflight(document, {
+        maxFieldBytes: size - 1,
+        maxRawBytes: 10_000_000,
+      }),
+      'canonical',
+      'LIMIT',
+    )
+  })
+
+  it('rejects a document and asset pair that exceeds the envelope byte budget', () => {
+    // The document alone fits the envelope budget, and the asset alone fits
+    // every asset cap, but together their envelope is larger than the
+    // envelope byte cap.
+    const document = documentBelowFieldCap()
+    expectAccepted(preflight(document))
+    const combined = withAssetPayload(
+      documentBelowFieldCap(),
+      4 * 1024 * 1024,
+    )
+    expect(projectionSize(combined) + 5_592_408).toBeGreaterThan(
+      STRUCT_BUNDLE_LIMITS_PROFILE.maxRawBytes,
+    )
+    expectRejected(preflight(combined), 'canonical', 'LIMIT')
+    const error = createFrom(combined)
+    expect(error.stage).toBe('canonical')
+    expect(error.code).toBe('LIMIT')
   })
 })
 

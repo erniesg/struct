@@ -1,4 +1,8 @@
 import { preflightBytes } from '../document/codec/bytes'
+import {
+  canonicalNumberByteLength,
+  canonicalStringByteLength,
+} from './canonical'
 import type { StructBundleLimitsProfile } from './limits'
 
 /**
@@ -17,9 +21,11 @@ import type { StructBundleLimitsProfile } from './limits'
  *
  * - Every rejection is implied by a cap the current post-decode path already
  *   enforces, so a document the current path accepts is never rejected here.
- * - The document-size charge is a lower bound of the canonical size of the
+ * - The document-size charge is the canonicalizer's own measurement of the
  *   byte-free document projection, so exceeding the budget implies that the
  *   canonical projection would exceed the envelope field cap.
+ * - The envelope total is charged from lower bounds only, so a rejection
+ *   implies that the canonical envelope would exceed the envelope byte cap.
  * - Measurement is arithmetic: no base64 is decoded or encoded, no buffer is
  *   copied, no digest is computed, and no canonical text is materialized.
  * - Caller accessors are never invoked; every value is read through its own
@@ -138,28 +144,85 @@ function base64CharCount(decodedBytes: number): number {
   return 4 * Math.ceil(decodedBytes / 3)
 }
 
+/**
+ * The cap that actually bounds the document projection.
+ *
+ * The projection is one top-level envelope field, so the envelope field cap
+ * binds it, and the envelope byte cap bounds it as well. The smaller of the
+ * two is the budget the projection has to fit in.
+ */
+function documentBudget(profile: StructBundleLimitsProfile): number {
+  return Math.min(profile.maxFieldBytes, profile.maxRawBytes)
+}
+
+/**
+ * Lower bound of the canonical size of one envelope string field.
+ *
+ * The canonical length of a string is its raw UTF-8 length plus its two
+ * quotes, and escaping only ever grows it, so the raw length plus two is a
+ * lower bound of the canonical length.
+ */
+function stringFieldLowerBound(value: unknown): number {
+  if (typeof value !== 'string') return 0
+  const length = rawUtf8Length(value)
+  if (length === undefined) return 0
+  return length + 2
+}
+
+/* The envelope the create path builds, field by field. */
+const envelopeMediaTypeBytes = 36 // `application/vnd.erniesg.struct+json`
+const envelopeBundleVersionBytes = 7 // `1.0.0`
+const envelopeDocumentSha256Bytes = 66 // 64 hexadecimal digits
+const envelopeShellBytes = 8 // the braces and the six field separators
+const envelopeKeyBytes = 77 // the seven field names and their colons
+const envelopeAssetRecordBytes = 72 // one asset record without its payload
+
 type VisitState = {
   readonly profile: StructBundleLimitsProfile
   /** Objects on the current path. A repeat is a cycle. */
   readonly active: WeakSet<object>
   nodes: number
-  /** Lower bound of the canonical size of the byte-free document projection. */
+  /** Canonical size of the byte-free document projection. */
   charged: number
+  /** Canonical size of the document's receipt subtree. */
+  receiptCharged: number
+  /** Canonical size of the document's schema version string. */
+  schemaVersionCharged: number
 }
 
 /**
- * Charge the conservative canonical-size lower bound.
+ * Charge the canonical size of the byte-free document projection.
  *
- * Every charge is a lower bound of the canonical JSON size of the matching
- * node: a string is charged its raw UTF-8 length plus its two quotes, a
- * number one byte, `null` four bytes, a boolean four or five bytes, an object
- * its braces, separators, and quoted keys, and an array its brackets and
- * separators. Canonical escaping only ever grows a value, so the charge can
- * never exceed the canonical size it stands for.
+ * Every charge is the canonicalizer's own measurement of the matching node: a
+ * string is charged its canonical JSON length, a number its canonical JSON
+ * length, `null` four bytes, a boolean four or five bytes, an object its
+ * braces, separators, and quoted keys, and an array its brackets and
+ * separators. The projection is the byte-free document, so the charge is the
+ * size the post-decode path measures for the envelope's `document` field.
  */
 function charge(state: VisitState, bytes: number): void {
   state.charged += bytes
-  if (state.charged > state.profile.maxRawBytes) reject({ stage: 'canonical', code: 'LIMIT' })
+  if (state.charged > documentBudget(state.profile))
+    reject({ stage: 'canonical', code: 'LIMIT' })
+}
+
+/**
+ * Lower bound of the canonical size of one envelope asset record.
+ *
+ * The create path writes one record per asset with exactly the fields
+ * `id`, `sha256`, `mediaType`, `byteLength`, and `payload`, and the payload
+ * holds the base64 spelling of the asset bytes. Every part of that record is
+ * measured here without decoding or copying anything.
+ */
+function envelopeAssetRecord(entry: object, decodedBytes: number): number {
+  return (
+    envelopeAssetRecordBytes +
+    canonicalNumberByteLength(decodedBytes) +
+    stringFieldLowerBound(dataProperty(entry, 'id')?.value) +
+    stringFieldLowerBound(dataProperty(entry, 'mediaType')?.value) +
+    stringFieldLowerBound(dataProperty(entry, 'sha256')?.value) +
+    base64CharCount(decodedBytes)
+  )
 }
 
 /**
@@ -170,16 +233,21 @@ function charge(state: VisitState, bytes: number): void {
  * cumulative decoded length, and the base64 length of every payload. The
  * carrier is measured, never decoded, so an oversized asset is rejected
  * before its bytes are copied or digested.
+ *
+ * The returned value is the lower bound of the canonical size of the
+ * envelope's `assets` field, which the post-decode path adds to the other
+ * envelope fields before it applies the envelope byte cap.
  */
 function preflightAssets(
   assets: unknown[],
   profile: StructBundleLimitsProfile,
-): void {
+): number {
   const length = arrayLength(assets)
-  if (length === undefined) return
+  if (length === undefined) return 0
   if (length > profile.maxAssets) reject({ stage: 'assets', code: 'LIMIT' })
   const totalCap = Math.min(profile.maxTotalBytes, profile.maxDecodedBytes)
   let total = 0
+  let envelope = 2 + Math.max(0, length - 1)
   for (let index = 0; index < length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(assets, String(index))
     if (
@@ -206,7 +274,47 @@ function preflightAssets(
     total += decoded
     if (base64CharCount(decoded) > profile.maxBase64Chars)
       reject({ stage: 'assets', code: 'LIMIT' })
+    envelope += envelopeAssetRecord(entry, decoded)
   }
+  return envelope
+}
+
+/**
+ * Apply the envelope byte cap to the fields the preflight can measure.
+ *
+ * The post-decode path bounds every envelope field by the field cap and the
+ * sum of the envelope fields by the envelope byte cap, and it finally bounds
+ * the canonical envelope itself by the envelope byte cap. The preflight
+ * charges the same fields from lower bounds, in the order the create path
+ * writes them, so a rejection here implies that the post-decode path
+ * rejects the same document.
+ */
+function assertEnvelopeBudget(
+  state: VisitState,
+  assetsEnvelopeBytes: number,
+): void {
+  const profile = state.profile
+  const fields: ReadonlyArray<readonly [string, number]> = [
+    ['mediaType', envelopeMediaTypeBytes],
+    ['bundleVersion', envelopeBundleVersionBytes],
+    ['schemaVersion', state.schemaVersionCharged],
+    ['documentSha256', envelopeDocumentSha256Bytes],
+    ['document', state.charged],
+    ['assets', assetsEnvelopeBytes],
+    ['receipt', state.receiptCharged],
+  ]
+  let accepted = 0
+  for (const [, size] of fields) {
+    const allowance = Math.min(
+      profile.maxFieldBytes,
+      profile.maxRawBytes - accepted,
+    )
+    if (size > allowance) reject({ stage: 'canonical', code: 'LIMIT' })
+    accepted += size
+  }
+  const envelope = accepted + envelopeShellBytes + envelopeKeyBytes
+  if (envelope > profile.maxRawBytes)
+    reject({ stage: 'canonical', code: 'LIMIT' })
 }
 
 /** Where the current value sits in the untrusted document graph. */
@@ -229,40 +337,43 @@ const plainContext: VisitContext = Object.freeze({
  * Walk one strict JSON value of the untrusted document.
  *
  * The walk counts nodes and depth, applies the string cap, and charges the
- * canonical-size lower bound. It reads only own property descriptors, so a
- * caller accessor is never invoked, and it rejects a cycle on the active
- * path. The shapes it rejects are the shapes the document codec rejects as
- * well, so a rejection here never hides an acceptance there.
+ * canonical size of the byte-free projection. It reads only own property
+ * descriptors, so a caller accessor is never invoked, and it rejects a cycle
+ * on the active path. The shapes it rejects are the shapes the document codec
+ * rejects as well, so a rejection here never hides an acceptance there.
+ *
+ * The returned value is the canonical size of the walked subtree.
  */
 function visit(
   item: unknown,
   depth: number,
   state: VisitState,
   context: VisitContext,
-): void {
+): number {
+  const before = state.charged
   state.nodes += 1
   if (depth > state.profile.maxDepth) reject({ stage: 'canonical', code: 'LIMIT' })
   if (state.nodes > state.profile.maxNodes) reject({ stage: 'canonical', code: 'LIMIT' })
 
   if (item === null) {
     charge(state, 4)
-    return
+    return state.charged - before
   }
   if (typeof item === 'boolean') {
     charge(state, item ? 4 : 5)
-    return
+    return state.charged - before
   }
   if (typeof item === 'number') {
     if (!Number.isFinite(item)) reject({ stage: 'input', code: 'TYPE' })
-    charge(state, 1)
-    return
+    charge(state, canonicalNumberByteLength(item))
+    return state.charged - before
   }
   if (typeof item === 'string') {
     const length = rawUtf8Length(item)
     if (length === undefined) reject({ stage: 'input', code: 'TYPE' })
     if (length > state.profile.maxStringLength) reject({ stage: 'canonical', code: 'LIMIT' })
-    charge(state, length + 2)
-    return
+    charge(state, canonicalStringByteLength(item))
+    return state.charged - before
   }
   if (typeof item !== 'object') reject({ stage: 'input', code: 'TYPE' })
 
@@ -287,7 +398,7 @@ function visit(
           reject({ stage: 'input', code: 'TYPE' })
         visit(descriptor.value, depth + 1, state, elementContext)
       }
-      return
+      return state.charged - before
     }
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null)
@@ -309,12 +420,17 @@ function visit(
       )
         reject({ stage: 'input', code: 'TYPE' })
       if (skipped && key === 'bytes') continue
-      charge(state, keyLength + 3)
+      charge(state, canonicalStringByteLength(key) + 1)
       const childContext: VisitContext = context.root && key === 'assets'
         ? Object.freeze({ ...plainContext, assetEntries: true })
         : plainContext
-      visit(descriptor.value, depth + 1, state, childContext)
+      const childCharge = visit(descriptor.value, depth + 1, state, childContext)
+      if (context.root && key === 'receipt')
+        state.receiptCharged = childCharge
+      if (context.root && key === 'schemaVersion')
+        state.schemaVersionCharged = stringFieldLowerBound(descriptor.value)
     }
+    return state.charged - before
   } finally {
     state.active.delete(value)
   }
@@ -326,7 +442,8 @@ function visit(
  * The asset caps are checked first, so an oversized asset is reported as an
  * asset limit even when the rest of the document would fail the codec's own
  * validation. The document graph is then measured for nesting, node count,
- * string length, and canonical size.
+ * string length, and canonical size, and the envelope fields the preflight
+ * can measure are charged against the envelope byte cap.
  */
 export function preflightStructBundleCreate(
   documentInput: unknown,
@@ -344,16 +461,21 @@ export function preflightStructBundleCreate(
       reject({ stage: 'input', code: 'TYPE' })
 
     const assets = dataProperty(documentInput, 'assets')
-    if (assets !== undefined && Array.isArray(assets.value))
-      preflightAssets(assets.value, profile)
+    const assetsEnvelopeBytes =
+      assets !== undefined && Array.isArray(assets.value)
+        ? preflightAssets(assets.value, profile)
+        : 0
 
     const state: VisitState = {
       profile,
       active: new WeakSet<object>(),
       nodes: 0,
       charged: 0,
+      receiptCharged: 0,
+      schemaVersionCharged: 0,
     }
     visit(documentInput, 0, state, Object.freeze({ ...plainContext, root: true }))
+    assertEnvelopeBudget(state, assetsEnvelopeBytes)
     return accepted
   } catch (error) {
     if (error instanceof CreatePreflightRejection) return rejected(error.error)

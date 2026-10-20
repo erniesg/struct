@@ -174,8 +174,13 @@ export function canonicalJsonBytes(value: unknown): Uint8Array {
  * A lone surrogate is rejected with the same `TYPE` failure the canonicalizer
  * reports for it, and it is rejected before the length is used, so a hostile
  * string is never half-measured and never materialized.
+ *
+ * The helper is exported for the private create preflight, so that the
+ * preflight charges the canonicalizer's own string length instead of
+ * duplicating the escaping rules. It is not part of the public surface:
+ * `src/bundle/index.ts` does not re-export this module.
  */
-function canonicalStringByteLength(value: string): number {
+export function canonicalStringByteLength(value: string): number {
   let bytes = 2 // the surrounding quotes
   for (let index = 0; index < value.length; index += 1) {
     const unit = value.charCodeAt(index)
@@ -218,8 +223,13 @@ function canonicalStringByteLength(value: string): number {
  * arithmetically and without allocating. Any other finite number is written
  * in the shortest round-trip form, whose spelling is bounded to a couple of
  * dozen characters.
+ *
+ * The helper is exported for the private create preflight, so that the
+ * preflight charges the canonicalizer's own number length instead of
+ * duplicating the rule. It is not part of the public surface:
+ * `src/bundle/index.ts` does not re-export this module.
  */
-function canonicalNumberByteLength(value: number): number {
+export function canonicalNumberByteLength(value: number): number {
   if (Number.isInteger(value)) {
     if (value === 0) return 1 // `JSON.stringify(-0)` is `"0"`
     let digits = 0
