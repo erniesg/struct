@@ -448,6 +448,13 @@ the portable coverage, and it does not claim to.
 6. The conformance budget is a single explicit `totalTimeoutMs` /
    `cleanupReserveMs` pair. The package never substitutes a default, and
    neither does this lane.
+7. The genuine **mid-flight work-deadline expiry** (`stage: 'resolve'`,
+   `code: 'TIMEOUT'`) is **not** exercised through the public seam by this
+   real-OS suite. The OS host harness has no mode that hangs during the work
+   phase: its hang modes hang during cleanup or terminate, which produce
+   `CLEANUP`/`TERMINAL`. The harness is a reviewed fixture and this lane does
+   not modify it. The public in-process matrix (`tests/bundle-public-matrix.test.ts`)
+   covers the work-deadline expiry with a hanging host.
 
 ## How to run
 
@@ -546,7 +553,7 @@ through the public `decodeStructBundle` entry point.
 
 | Case | What it proves |
 |---|---|
-| fails closed when explicit budget expires | invalid budget (total < cleanup reserve) rejected at options parse with `stage: 'budget', code: 'BUDGET'`, no host contacted |
+| fails closed when an invalid budget is supplied (total < cleanup reserve) | invalid budget rejected at options parse with `stage: 'budget', code: 'BUDGET'`, no host contacted |
 | fails closed when caller AbortSignal aborts mid-flight | pre-aborted signal rejected by driver with `stage: 'resolve', code: 'ABORTED'`, no host realm started, no slot retired |
 
 ### PUBLIC MISSING CONFIGURATION
