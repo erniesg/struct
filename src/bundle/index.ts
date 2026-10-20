@@ -1,8 +1,8 @@
 /**
  * Public Bundle surface. External asset resolution is published through the
- * private external core: `decodeStructBundle` delegates to
- * `decodeExternalBundleBytes`, while embedded-only bundles keep their prior
- * observable behavior.
+ * private external core: `decodeStructBundle` is the one public decode seam
+ * and it delegates directly to `decodeExternalBundleBytes`, while embedded-only
+ * bundles keep their prior observable behavior.
  *
  * The facade follows the approved ADR-0001 minimum stable contract:
  * `createStructBundle` and `verifyStructBundle` return a genuine handle or
@@ -40,7 +40,10 @@ import type {
 import type { StructResolverExecutorV1 } from './resolver-protocol'
 import type { StructAssetResolutionPolicyV1 } from './resolver-policy'
 import type { StructResolverHostSupervisorV1 } from './resolver-protocol'
-import type { StructResolverBudgetPlan } from './resolver-protocol'
+import type {
+  StructResolverBudgetInput,
+  StructResolverDerivedBudgetPlan,
+} from './resolver-protocol'
 
 export {
   STRUCT_BUNDLE_LIMITS_PROFILE,
@@ -61,7 +64,19 @@ export type {
   StructResolverExecutorV1,
   StructAssetResolutionPolicyV1,
   StructResolverHostSupervisorV1,
-  StructResolverBudgetPlan,
+  /**
+   * The caller-facing resolver budget: exactly `totalTimeoutMs` and
+   * `cleanupReserveMs`. This is the value a caller passes as
+   * `resolverBudget`, and it is the only budget shape the runtime accepts.
+   */
+  StructResolverBudgetInput,
+  /**
+   * The internal derived budget plan the package computes from
+   * {@link StructResolverBudgetInput}. It is **not** the caller's budget and
+   * must not be passed as `resolverBudget`; its extra `workTimeoutMs` key is
+   * refused by the strict option parser.
+   */
+  StructResolverDerivedBudgetPlan,
 }
 
 /** Verified bundle handle: integrity and conservation, never authenticity. */
@@ -84,7 +99,8 @@ export function createStructBundle(
 }
 
 /**
- * Untrusted wire ingress. Delegates to the private external core.
+ * Untrusted wire ingress. The one public decode seam: it delegates directly
+ * to the private external core.
  *
  * @throws {StructBundleError} as a promise rejection, never synchronously.
  */

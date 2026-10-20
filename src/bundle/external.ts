@@ -38,6 +38,7 @@ import type {
   StructResolverEnvelopeAssetProjection,
 } from './resolver-execution'
 import { planStructResolverBudget, StructResolverProtocolError } from './resolver-protocol'
+import type { StructResolverBudgetInput } from './resolver-protocol'
 import { validateResolverPolicyV1 } from './resolver-policy'
 import { createVerifiedBundleHandle } from './embedded'
 
@@ -114,8 +115,12 @@ export type ExternalDecodeOptions = Readonly<{
   resolverExecutor?: StructResolverExecutionOptions['executor']
   /** Consumer-owned resolver policy snapshot. */
   resolverPolicy?: StructResolverExecutionOptions['policy']
-  /** Mandatory explicit budget; there is no implicit default. */
-  resolverBudget?: Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>
+  /**
+   * Mandatory explicit budget; there is no implicit default. This is the
+   * caller-facing budget input: exactly `totalTimeoutMs` and
+   * `cleanupReserveMs`, and no other key.
+   */
+  resolverBudget?: StructResolverBudgetInput
   /** Optional caller AbortSignal. The package owns the execution controller. */
   resolverSignal?: AbortSignal
   /** Mandatory parent-owned fail-stop supervisor. */
@@ -129,7 +134,7 @@ const DIGEST = /^[0-9a-f]{64}$/u
 type ResolverOptions = Readonly<{
   executor: StructResolverExecutionOptions['executor']
   policy: StructResolverExecutionOptions['policy']
-  budget: Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>
+  budget: StructResolverBudgetInput
   signal: AbortSignal | undefined
   hostSupervisor: StructResolverExecutionOptions['hostSupervisor']
 }>

@@ -2,17 +2,12 @@ import {
   CanonicalJsonError,
   canonicalBundleDocumentBytes,
   canonicalBundleEnvelopeBytes,
-  parseCanonicalJsonBytes,
-  snapshotCanonicalJsonInput,
 } from './canonical'
 import {
   decodeEmbeddedBundleBytes,
 } from './embedded'
 import type { EmbeddedAcceptanceResult } from './embedded'
-import {
-  decodeExternalBundleBytes,
-} from './external'
-import type { ExternalAcceptanceResult, ExternalDecodeOptions } from './external'
+import type { ExternalDecodeOptions } from './external'
 import {
   BundleValueLimitError,
   STRUCT_BUNDLE_LIMITS_PROFILE,
@@ -109,21 +104,6 @@ function parseEmbeddedOptions(
       throw new TypeError('unsupported limits profile')
   }
   return Object.freeze({ profile: STRUCT_BUNDLE_LIMITS_PROFILE })
-}
-
-/**
- * Untrusted wire ingress. Delegates to the private external-bytes core so that
- * bundles with external asset references can be decoded, while an
- * embedded-only bundle keeps the prior observable behavior.
- */
-export async function decodeStructBundleFacade(
-  raw: Uint8Array,
-  options?: StructBundleDecodeOptions,
-): Promise<ExternalAcceptanceResult> {
-  if (arguments.length > 1) {
-    return decodeExternalBundleBytes(raw, options)
-  }
-  return decodeExternalBundleBytes(raw)
 }
 
 /**
