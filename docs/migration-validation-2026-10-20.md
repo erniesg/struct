@@ -1,11 +1,12 @@
 # Migration validation — 2026-10-20
 
-Status: **package remains private and unreleased** (supersession: at current
-HEAD `7db63613d22c0faba63cd65cc1c4e247b615d491`, `./bundle` is available as
-an embedded-only export with all seven runtime names; `E03` is unblocked for
-the embedded subset, but the external-resolver `BAL001` and full conformance
-harness remain separately pending). Nothing in this validation changes that
-gate for the original base.
+Status: **package remains private and unreleased** (supersession: at the
+current runtime baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`, `./bundle`
+is available as an embedded-only export with all seven runtime names, so the
+embedded subset is no longer blocked by the missing `./bundle` export; the
+public external-bytes decode seam and the full conformance harness remain
+separately pending). Nothing in this validation changes the E02/E03/E04 app
+gates.
 
 Base: `fae461e9` (`fix: validate MathML fragments before publication rendering
 (#31)`). Only `tests/codec.test.ts` changed; no runtime codec, canonical,
@@ -75,12 +76,15 @@ Logs are under `/home/ubuntu/.local/state/struct-migration/20261020/`:
 The packed-consumer check proves the artifact builds and installs; it does not
 complete the Bundle surface or authorize a release.
 
-## Supersession (current HEAD `7db6361…`)
+## Supersession (current runtime baseline `7db6361…`)
 
-The claim that `./bundle` is unavailable (`E03` blocked) is superseded for the
-embedded subset at current HEAD: the facade, the seven runtime exports, the
-frozen profile (`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION` `1.0.0` with
-`maxConcurrency` 1 and `maxResolverTimeoutMs` 120000), and the structured
-`StructBundleError` are all current and unreleased. The external resolver
-protocol (`BAL001`), its conformance harness, full S-03/S-04 acceptance, and
-any application repin remain separately pending.
+The historical claim that `./bundle` is unavailable is superseded for the
+embedded subset at the current runtime baseline: the facade, the seven runtime
+exports, the frozen profile (`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION` `1.0.0`
+with `maxConcurrency` 1 and `maxResolverTimeoutMs` 120000), and the structured
+`StructBundleError` are all current and unreleased. The isolated
+resolver/executor protocol and its execution driver are implemented privately
+in-tree but are not public surface; the public external-bytes decode seam, the
+real-host conformance harness, full S-03/S-04 acceptance, and any application
+repin remain separately pending. The E02/E03/E04 app gates are unchanged by
+this validation.

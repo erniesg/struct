@@ -22,10 +22,10 @@ Emitted XHTML identifier normalization, collision checks, and publication
 planning belong to the XHTML renderer boundary; a semantically valid document
 is not rejected merely because renderer-normalized identifiers collide.
 
-At current HEAD `7db63613d22c0faba63cd65cc1c4e247b615d491`, the private
-`0.0.0` document/codecs/IDs/recovery/XHTML/EPUB capabilities plus the current
-embedded-only public `./bundle` facade are **current, implemented, unreleased**
-surface. The facade exports all seven runtime names recorded in
+At the current runtime baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`,
+the private `0.0.0` document/codecs/IDs/recovery/XHTML/EPUB capabilities plus
+the current embedded-only public `./bundle` facade are **current, implemented,
+unreleased** surface. The facade exports all seven runtime names recorded in
 `API_MANIFEST.json`: `STRUCT_BUNDLE_LIMITS_PROFILE`,
 `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
 `createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
@@ -34,9 +34,10 @@ surface. The facade exports all seven runtime names recorded in
 `StructBundleError`; `decodeStructBundle` is always async and rejects with
 `StructBundleError`; `encodeStructBundle` returns `Uint8Array` and throws
 `StructBundleError` (`FORGED`) for forged handles. External payloads continue
-to fail closed with `UNRESOLVED`. The isolated resolver/executor protocol,
-its conformance harness, and full S-03/S-04 acceptance (`BAL001` and related)
-remain separately pending.
+to fail closed with `UNRESOLVED`. The isolated resolver/executor protocol and
+its execution driver are implemented privately in-tree but are not public
+surface; the public external-bytes decode seam and the real-host conformance
+harness remain separately pending, and full S-03/S-04 acceptance remains open.
 
 Ernie.SG constructs bundles from approved revisions and authenticates producer
 approval/release records. Aether consumes only a verified, exact-pinned bundle
@@ -46,9 +47,12 @@ does not own a Struct model or renderer.
 ## Planned Bundle semantics (normative)
 
 The semantics below are the normative target. Stage 1 implements only the
-embedded decode/encode subset described in [Current public
-surface](#current-public-surface); nothing in this section asserts that the
-target operations exist today.
+embedded subset described in [Current public
+surface](#current-public-surface) — the embedded create/verify/encode/decode
+facade and the frozen versioned limits profile. The resolver/executor
+protocol remains private, and nothing in this section asserts that the public
+external-bytes decode seam, the resolver conformance harness, or the target
+operations exist today.
 
 The JSON envelope (`StructBundleJson`), its byte-free document projection
 (`StructBundleDocumentJson`), and an opaque runtime `VerifiedStructBundle` are
@@ -164,10 +168,11 @@ with all seven runtime names (`STRUCT_BUNDLE_LIMITS_PROFILE`,
 `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
 `createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
 `verifyStructBundle`). It accepts only canonical embedded-asset envelopes and
-fails closed with `UNRESOLVED` for external payloads (`BAL001` still
-separately pending). The isolated resolver/executor protocol, its conformance
-harness, and full S-03/S-04 acceptance are not part of this surface yet. These
-documents ship in the package file list; a documentation correction changes
-packed contents, so any repin requires a fresh packaged-artifact and
-installed-consumer proof. No application repin is part of this documentation
-change.
+fails closed with `UNRESOLVED` for external payloads. The isolated
+resolver/executor protocol and its execution driver are implemented privately
+in-tree but are not part of this public surface; the public external-bytes
+decode seam, the real-host conformance harness, and full S-03/S-04 acceptance
+remain separately pending. These documents ship in the package file list; a
+documentation correction changes packed contents, so any repin requires a
+fresh packaged-artifact and installed-consumer proof. No application repin is
+part of this documentation change.

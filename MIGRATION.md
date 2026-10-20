@@ -36,11 +36,13 @@ export with all seven runtime names (`STRUCT_BUNDLE_LIMITS_PROFILE`,
 `createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
 `verifyStructBundle`); it follows the ADR-0001 contract (direct handle,
 async decode with structured rejection, byte encoder with structured throw for
-forged handles). Its external-payload path fails closed with `UNRESOLVED`
-(`BAL001` still separately pending). Full S-03 bundle creation, value
-verification, resolver/executor conformance, and the public versioned limits
-profile are implemented at HEAD for the embedded subset; the external resolver
-and full conformance harness remain gated.
+forged handles). Its external-payload path fails closed with `UNRESOLVED`;
+the public external-bytes decode seam remains pending. Bundle creation, value
+verification, and the public versioned limits profile are implemented at the
+current runtime baseline for the embedded subset; the external resolver
+wiring and the full conformance harness remain gated. The isolated
+resolver/executor protocol and its execution driver are implemented privately
+in-tree but are not public surface; full S-03/S-04 acceptance remains open.
 
 ## Staged migration contract
 

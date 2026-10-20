@@ -1,15 +1,15 @@
 # S04 release matrix — document compatibility and renderer repeatability (2026-10-20)
 
-Status: **bounded S04 evidence only** (superseded by current HEAD
-`7db63613d22c0faba63cd65cc1c4e247b615d491`; original `049f96a` claims
+Status: **bounded S04 evidence only** (superseded by the current runtime
+baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`; original `049f96a` claims
 preserved below). This document records the *document*
 compatibility matrix and the *renderer repeatability* baselines implemented in
 this lane. It does **not** claim a release, does not authorize publication, and
 does not complete S-04.
 
 The package remains private `0.0.0`. `./bundle` is still unavailable pending
-S-03, so the Bundle negative matrix is **not** covered here. No application
-golden was regenerated or modified.
+S-03 at the original `049f96a` base, so the Bundle negative matrix is **not**
+covered here. No application golden was regenerated or modified.
 
 - Baseline source commit: `049f96ae6a8303dc0e00b92527da8df68f29fbd5`
   (`fix: reject standalone compiled test and source debris`)
@@ -157,7 +157,8 @@ the assertions are not pure self-equality:
 ## Remaining S-04 gaps (not closed by this lane)
 
 1. **Bundle negative matrix through public exports.** Requires the `./bundle`
-   export, which does not exist until S-03 completes. Not attempted.
+   export, which did not exist at the original `049f96a` base until S-03
+   completed. Not attempted.
 2. **Clean packed-consumer proof and tarball digest.** Owned by a separate
    lane; the packed-consumer script, export map, and API manifest were not
    edited here.
@@ -188,8 +189,12 @@ the assertions are not pure self-equality:
 ## Supersession (2026-10-20 continuation)
 
 The original claim that `./bundle` is unavailable (`"pending S-03"`) is
-superseded at current HEAD `7db63613d22c0faba63cd65cc1c4e247b615d491`: the
-embedded `./bundle` export exists with all seven runtime names. The full S-04
-bundle negative matrix and the three-run goldens for external payloads remain
-gated (`BAL001` separately pending), but the embedded surface covered by this
-lane (renderer repeatability, compatibility matrix) remains valid and unchanged.
+superseded at the current runtime baseline
+`7db63613d22c0faba63cd65cc1c4e247b615d491`: the embedded `./bundle` export
+exists with all seven runtime names. The isolated resolver/executor protocol
+and its execution driver are implemented privately in-tree but are not public
+surface; the public external-bytes decode seam and the real-host conformance
+harness remain separately pending, so the full S-04 bundle negative matrix and
+the three-run goldens for external payloads remain gated, but the embedded
+surface covered by this lane (renderer repeatability, compatibility matrix)
+remains valid and unchanged.
