@@ -102,9 +102,40 @@ async function main() {
     },
   ).trim()
   // The output may contain progress lines before the JSON; take the last line
-  const packedConsumerJsonLine = packedConsumerOutput.split('\n').pop()?.trim()
-  const packedConsumerResult = JSON.parse(packedConsumerJsonLine || '{}')
+  // that starts with `{` and parses as the summary object, so an extra
+  // progress line can never break the extraction.
+  const packedConsumerLines = packedConsumerOutput
+    .split('\n')
+    .map((line) => line.trim())
+  let packedConsumerResult = {}
+  for (let index = packedConsumerLines.length - 1; index >= 0; index -= 1) {
+    const line = packedConsumerLines[index]
+    if (!line || !line.startsWith('{')) continue
+    try {
+      const parsed = JSON.parse(line)
+      if (parsed && typeof parsed === 'object') {
+        packedConsumerResult = parsed
+        break
+      }
+    } catch {
+      continue
+    }
+  }
   console.log(`   Tarball SHA-256 verified: ${packedConsumerResult.tarball?.sha256 === tarballSha256}`)
+
+  // The packed consumer also measures the packed `./bundle` acceptance
+  // surface. The measurement is part of the packet: a missing summary means
+  // the matrix was not exercised.
+  if (!packedConsumerResult.bundleAcceptance)
+    throw new Error(
+      'the packed consumer did not report the bundle acceptance matrix',
+    )
+  console.log(
+    `   Bundle acceptance matrix: exports=${packedConsumerResult.bundleAcceptance.publicSurface?.exports?.length}` +
+      ` profileVersion=${packedConsumerResult.bundleAcceptance.profile?.version}` +
+      ` versionAxis=${Object.keys(packedConsumerResult.bundleAcceptance.versionAxis ?? {}).length}` +
+      ` payloadGuards=${Object.keys(packedConsumerResult.bundleAcceptance.payloadGuards ?? {}).length}`,
+  )
 
   // 7. Run S-04 packet tests
   console.log('\n7. Running S-04 packet tests...')
