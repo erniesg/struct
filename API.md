@@ -43,7 +43,8 @@ Public type exports (not in the manifest schema, documented here):
 - `StructResolverExecutorV1`
 - `StructAssetResolutionPolicyV1`
 - `StructResolverHostSupervisorV1`
-- `StructResolverBudgetPlan`
+- `StructResolverBudgetInput` — the caller-facing budget: exactly `{ totalTimeoutMs: number; cleanupReserveMs: number }`. This is the value passed as `resolverBudget`; it is the only budget shape the runtime accepts.
+- `StructResolverDerivedBudgetPlan` — the package's **internal derived** plan. It carries an extra `workTimeoutMs` key and is **not** a value a caller may pass: a budget carrying that key is refused with `input` / `OPTIONS`.
 
 ### Function contracts
 
@@ -71,7 +72,7 @@ Public type exports (not in the manifest schema, documented here):
   - `expectedBundleSha256?: string` — optional; must be exactly 64 lowercase hex characters (`/^[0-9a-f]{64}$/`). If present, checked against the raw snapshot before any parse. A mismatch rejects with stage `digest`, code `MISMATCH`. If missing, no digest gate applies.
   - `resolverExecutor?: StructResolverExecutorV1` — mandatory when any external asset exists in the bundle; mandatory when any other `resolver*` field is present. The executor object must implement `allocate(request: StructAssetResolutionRequest): StructResolverExecutionHandle`. Missing or malformed executor throws/rejects with `input` / `OPTIONS`.
   - `resolverPolicy?: StructAssetResolutionPolicyV1` — mandatory when any other `resolver*` field is present. Must be a strict own-property snapshot with `protocolVersion: '1.0.0'`. An invalid policy rejects with `resolve` / `POLICY`.
-  - `resolverBudget?: Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>` — **mandatory whenever a resolver is used; there is no implicit default budget**. `totalTimeoutMs` must be a safe positive integer within the profile cap (`maxResolverTimeoutMs` = 120000). `cleanupReserveMs` must be a safe positive integer strictly less than `totalTimeoutMs`. A missing budget, a non-object budget, wrong key names, non-number values, or out-of-range values reject with `budget` / `BUDGET` (before any allocation).
+  - `resolverBudget?: StructResolverBudgetInput` — **mandatory whenever a resolver is used; there is no implicit default budget**. `StructResolverBudgetInput` is exactly `Readonly<{ totalTimeoutMs: number; cleanupReserveMs: number }>`. `totalTimeoutMs` must be a safe positive integer within the profile cap (`maxResolverTimeoutMs` = 120000). `cleanupReserveMs` must be a safe positive integer strictly less than `totalTimeoutMs`. A missing budget, a non-object budget, wrong key names, non-number values, or out-of-range values reject with `budget` / `BUDGET` (before any allocation).
   - `resolverSignal?: AbortSignal` — optional caller cancellation signal. If provided, it must be a genuine `AbortSignal` (platform brand check: `aborted` getter from the real prototype, no own listener shadows). A fake signal rejects with `input` / `OPTIONS`. When absent, the package creates its own `AbortController` per execution; the request signal is never omitted.
   - `resolverHostSupervisor?: StructResolverHostSupervisorV1` — mandatory when any other `resolver*` field is present. Must implement the `failStop` port with `protocolVersion: '1.0.0'`. Missing or invalid supervisor throws/rejects with `input` / `OPTIONS`.
   - `limitsProfile?: typeof STRUCT_BUNDLE_LIMITS_PROFILE_VERSION` — optional; only `'1.0.0'` accepted. Any other value throws/rejects with `input` / `OPTIONS`.
