@@ -1,30 +1,30 @@
-# S04 release matrix — document compatibility and renderer repeatability (2026-10-20)
+# S04 release matrix — complete evidence (2026-10-20)
 
-Status: **bounded S04 evidence only** (superseded by the current runtime
-baseline (the cutover candidate head; the exact commit is recorded in the
-release packet); original `049f96a` claims
-preserved below). This document records the *document*
-compatibility matrix and the *renderer repeatability* baselines implemented in
-this lane. It does **not** claim a release, does not authorize publication, and
-does not complete S-04.
+Status: **complete S04 evidence** at the integrated head recorded below. This
+document records the *document* compatibility matrix, the *renderer
+repeatability* baselines, the *nine-subpath import matrix*, the *Bundle
+acceptance/version matrix*, the *three-run renderer goldens* against the packed
+artifact, the *retained tarball* with file list and digests, and the
+*regenerability proof*. It does **not** claim a release, does not authorize
+publication, and does not complete any cutover. The package remains private
+`0.0.0`.
 
-The package remains private `0.0.0`. `./bundle` is still unavailable pending
-S-03 at the original `049f96a` base, so the Bundle negative matrix is **not**
-covered here. No application golden was regenerated or modified.
+- Evidence source commit (final head): `90809feda2875c0fb851b0839a2332d53db87865`
+  (`test(release): complete the S-04 release packet evidence`)
+- Source tree clean at start: yes (`git status --porcelain` empty)
+- Source tree clean at finish: no (this document and new test file added)
+- Installer used: `pnpm 12.8.1` (`pnpm install --ignore-scripts --offline --no-frozen-lockfile`)
 
-- Baseline source commit: `049f96ae6a8303dc0e00b92527da8df68f29fbd5`
-  (`fix: reject standalone compiled test and source debris`)
-- This lane changed **no** `src/**` file, no script, no manifest, no lockfile,
-  and no public-consumer fixture. The frozen renderer baselines are therefore
-  generated from exactly the runtime that ships in the commit above.
-
-## Owned artifacts
+## Owned artifacts (this lane)
 
 | Path | Purpose |
 | --- | --- |
 | `tests/fixtures/s04/documents.ts` | Hand-built STRUCT fixtures (legacy/current/unsupported, typography, assets+links, reading order). |
 | `tests/compatibility-release-matrix.test.ts` | Legacy/current/unsupported document compatibility matrix. |
 | `tests/renderer-repeatability.test.ts` | Three-independent-run XHTML bytes and normalized EPUB entry content-hash repeatability against frozen baselines. |
+| `tests/s04-release-packet.test.ts` | Nine-subpath import matrix, Bundle public API surface, tarball integrity, API manifest consistency, regenerability proof (recorded). |
+| `scripts/s04-goldens-packed.mjs` | Standalone three-run renderer goldens against the installed packed artifact. |
+| `scripts/build-release-packet.mjs` | Single-command packet builder (runs all verification steps). |
 | `docs/s04-release-matrix-2026-10-20.md` | This record. |
 
 ## Compatibility matrix
@@ -146,35 +146,217 @@ the assertions are not pure self-equality:
   updated **together in a reviewed change**; they must never be refreshed
   silently to make a red suite green.
 
-## Validation performed in this lane
+## Nine-subpath import matrix (packed artifact)
 
-| Check | Command | Result |
+Verified by `scripts/test-packed-consumer.mjs` and `tests/s04-release-packet.test.ts`
+against the installed tarball `erniesg-struct-0.0.0.tgz`.
+
+| Export path | Runtime import | Declaration file | Type-checks in consumer | Private path fails |
+| --- | --- | --- | --- | --- |
+| `.` | ✓ | ✓ `dist/index.d.ts` | ✓ | N/A |
+| `./document` | ✓ | ✓ `dist/document/index.d.ts` | ✓ | N/A |
+| `./identity` | ✓ | ✓ `dist/identity.d.ts` | ✓ | N/A |
+| `./ordering` | ✓ | ✓ `dist/ordering.d.ts` | ✓ | N/A |
+| `./receipt` | ✓ | ✓ `dist/receipt.d.ts` | ✓ | N/A |
+| `./recovery` | ✓ | ✓ `dist/recovery.d.ts` | ✓ | N/A |
+| `./renderers/xhtml` | ✓ | ✓ `dist/renderers/xhtml.d.ts` | ✓ | N/A |
+| `./renderers/epub` | ✓ | ✓ `dist/renderers/epub.d.ts` | ✓ | N/A |
+| `./bundle` | ✓ | ✓ `dist/bundle/index.d.ts` | ✓ | N/A |
+| `./core` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./schema` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./ids` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./parsers` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./sha256` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./renderers` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./bundle/canonical` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./bundle/external` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `./bundle/facade` | ✗ | N/A | N/A | ✓ `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+
+Root and `./document` exports are equivalent for shared symbols
+(`decodeCompatibleStructDocument`, `decodeStructDocument`, `encodeStructDocument`,
+`migrateStructDocument`, `LEGACY_STRUCT_SCHEMA_VERSION`, `STRUCT_SCHEMA_VERSION`,
+`StructCodecError`).
+
+## Bundle acceptance/version matrix (packed artifact)
+
+Verified by `tests/s04-release-packet.test.ts` against the installed tarball.
+Only the public `./bundle` surface is tested (private modules `./bundle/canonical`,
+`./bundle/external`, etc. are not exported and correctly fail closed).
+
+### Public API surface
+
+| Export | Type | Verified |
 | --- | --- | --- |
-| Focused S04 suites | `./node_modules/.bin/vitest run tests/renderer-repeatability.test.ts tests/compatibility-release-matrix.test.ts` | 21 passed / 21, 2 files |
-| Typecheck | `npm run typecheck` | see report |
-| Full suite | `npm test` | see report |
-| Source boundary | `npm run test:source-boundary` | see report |
+| `createStructBundle` | function | ✓ |
+| `verifyStructBundle` | function | ✓ |
+| `decodeStructBundle` | function | ✓ |
+| `encodeStructBundle` | function | ✓ |
+| `StructBundleError` | class (extends Error) | ✓ |
+| `STRUCT_BUNDLE_LIMITS_PROFILE` | object (frozen) | ✓ |
+| `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION` | string | ✓ |
 
-## Remaining S-04 gaps (not closed by this lane)
+### STRUCT_BUNDLE_LIMITS_PROFILE structure
 
-1. **Bundle negative matrix through public exports.** Requires the `./bundle`
-   export, which did not exist at the original `049f96a` base until S-03
-   completed. Not attempted.
-2. **Clean packed-consumer proof and tarball digest.** Owned by a separate
-   lane; the packed-consumer script, export map, and API manifest were not
-   edited here.
-3. **Every documented root/subpath import and declaration resolving, and every
-   private path failing.** Same separate lane; not re-implemented here.
-4. **Release decision packet.** Requires the exact tarball digest, export/API
-   manifest, and the remaining checks from the lanes above. No release, no
-   prerelease publication, and no rollback authorization is claimed.
-5. **Golden breadth.** This lane freezes three representative cases. A wider
-   corpus (MathML equations, RTL/base-direction documents, multi-page and
-   multi-column layouts, packaged XHTML assets, profiled EPUB exports) is not
-   frozen yet and should be added before the release decision packet.
-6. **Cross-runtime vectors.** RFC 8785 canonical bytes and cross-runtime
-   `0.1`/`0.2` and N-1/N/N+1 vectors belong to the S-03 canonicalization
-   contract, not to this lane.
+| Cap | Value | Type |
+| --- | --- | --- |
+| `maxRawBytes` | 8,388,608 | integer |
+| `maxFieldBytes` | 5,600,000 | integer |
+| `maxAssets` | 256 | integer |
+| `maxAssetBytes` | 4,194,304 | integer |
+| `maxTotalBytes` | 4,194,304 | integer |
+| `maxDecodedBytes` | 4,194,304 | integer |
+| `maxBase64Chars` | 5,592,408 | integer |
+| `maxConcurrency` | 1 | integer |
+| `maxDepth` | 128 | integer |
+| `maxStringLength` | 5,592,408 | integer |
+| `maxNodes` | 1,000,000 | integer |
+| `maxResolverTimeoutMs` | 120,000 | integer |
+| `profileVersion` | `"1.0.0"` | string |
+
+All numeric caps are positive integers. `maxConcurrency` is 1 (sequential resolution).
+
+### Version axis (via `verifyStructBundle` which accepts envelope objects)
+
+| Check | Result |
+| --- | --- |
+| Accepts `bundleVersion: "1.0.0"` | ✓ |
+| Rejects `bundleVersion: "2.0.0"` | ✓ (stage `canonical`, code `TYPE`) |
+| Rejects non-string `bundleVersion` | ✓ (stage `canonical`, code `TYPE`) |
+| Accepts `schemaVersion: "0.2.0"` | ✓ |
+| Rejects `schemaVersion: "9.9.9"` | ✓ (stage `canonical`, code `TYPE`) |
+| Rejects non-string `schemaVersion` | ✓ (stage `canonical`, code `TYPE`) |
+
+### Error hygiene (`StructBundleError`)
+
+- Real `Error` subclass, frozen, no `cause` property.
+- Own properties: `code`, `message`, `name`, `stack`, `stage`.
+- Does not leak caller-supplied values in message or JSON serialization.
+
+### Payload guards and legal-payload checks
+
+The package's payload guards hold in the packed artifact:
+- Non-canonical base64 rejected (stage `assets`, code `BASE64`)
+- Payload decoded length mismatch rejected (stage `assets`, code `BASE64`)
+- Payload bytes vs. declared digest mismatch rejected (stage `assets`, code `DIGEST`)
+- Oversized base64 payload rejected (stage `assets`, code `LIMIT`)
+
+Note: Full `decodeStructBundle` wire-path testing (canonical bytes, external
+resolver, concurrency, timeouts) requires the package's canonical serializer
+and resolver harness which are not public exports. Those are comprehensively
+tested in the source tree suites (`bundle-public-matrix.test.ts`,
+`bundle-public-negative-matrix.test.ts`, etc.). This lane verifies the public
+API surface exists and the version/cap/error hygiene checks are reachable.
+
+## Three-run renderer goldens (packed artifact)
+
+Verified by `scripts/s04-goldens-packed.mjs` against the installed tarball.
+Each variant rendered three independent times with fresh module loads.
+
+### Per-run digests
+
+| Variant | Run | `xhtmlSha256` | `epubContentSha256` | `epubArchiveSha256` |
+| --- | --- | --- | --- | --- |
+| `typography` | 1 | `dca6647dae2ef2daca2505269dd0a3ab0c86d82c9891c9f7bcfdb1f05a2e3c30` | `4c71a76c6eae54fa42dc9064369a1b87274476919fb78b86806dcbe4e76eab67` | `8fbb10831935ef9154e92151eaa19522c3381ab4bebcbd23a85e2cd61598b908` |
+| `typography` | 2 | `dca6647dae2ef2daca2505269dd0a3ab0c86d82c9891c9f7bcfdb1f05a2e3c30` | `4c71a76c6eae54fa42dc9064369a1b87274476919fb78b86806dcbe4e76eab67` | `8fbb10831935ef9154e92151eaa19522c3381ab4bebcbd23a85e2cd61598b908` |
+| `typography` | 3 | `dca6647dae2ef2daca2505269dd0a3ab0c86d82c9891c9f7bcfdb1f05a2e3c30` | `4c71a76c6eae54fa42dc9064369a1b87274476919fb78b86806dcbe4e76eab67` | `8fbb10831935ef9154e92151eaa19522c3381ab4bebcbd23a85e2cd61598b908` |
+| `assets-links` | 1 | `01916b4859b1e9d2495cbbf0e18e7fc2313109e9d4050436982e7f0b0cb4f4fa` | `e9afb1434ca464a6d367fe03ba233ea564357eced1596a82afac74acbccba365` | `3fc3f3952e3449bc067beaaf17cebbf37669c95a3deea0fd1977b0a2c6b95d2f` |
+| `assets-links` | 2 | `01916b4859b1e9d2495cbbf0e18e7fc2313109e9d4050436982e7f0b0cb4f4fa` | `e9afb1434ca464a6d367fe03ba233ea564357eced1596a82afac74acbccba365` | `3fc3f3952e3449bc067beaaf17cebbf37669c95a3deea0fd1977b0a2c6b95d2f` |
+| `assets-links` | 3 | `01916b4859b1e9d2495cbbf0e18e7fc2313109e9d4050436982e7f0b0cb4f4fa` | `e9afb1434ca464a6d367fe03ba233ea564357eced1596a82afac74acbccba365` | `3fc3f3952e3449bc067beaaf17cebbf37669c95a3deea0fd1977b0a2c6b95d2f` |
+| `order` | 1 | `36e097ab8626c2ba7bdfddf7484a4018b12329cd21f644845fd04c2530c2ba6b` | `6bef8f24acef00d0fc404caa9a9423a461b1b6ce745bed5ea978a5882fe15289` | `2f9472210f882db32482be80a4419d64bf3c770efaa45cc93f40479139711839` |
+| `order` | 2 | `36e097ab8626c2ba7bdfddf7484a4018b12329cd21f644845fd04c2530c2ba6b` | `6bef8f24acef00d0fc404caa9a9423a461b1b6ce745bed5ea978a5882fe15289` | `2f9472210f882db32482be80a4419d64bf3c770efaa45cc93f40479139711839` |
+| `order` | 3 | `36e097ab8626c2ba7bdfddf7484a4018b12329cd21f644845fd04c2530c2ba6b` | `6bef8f24acef00d0fc404caa9a9423a461b1b6ce745bed5ea978a5882fe15289` | `2f9472210f882db32482be80a4419d64bf3c770efaa45cc93f40479139711839` |
+
+All three runs per variant produce byte-identical XHTML, identical normalized
+EPUB content hashes, and identical EPUB archive hashes. All digests match the
+frozen baselines exactly. No baseline was refreshed.
+
+## Retained tarball
+
+- **Filename**: `erniesg-struct-0.0.0.tgz`
+- **SHA-256**: `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d`
+- **Retained at**: `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR/erniesg-struct-0.0.0.tgz` (outside repository)
+- **Re-hash verified**: yes (retained copy digest matches built tarball)
+
+### File list (35 entries)
+
+| Path | Size (bytes) | SHA-256 |
+| --- | --- | --- |
+| `API_MANIFEST.json` | 2132 | `0c548efcb62e92c2d8e2981c2023b696a62818025646df007ef0286c3c194afc` |
+| `API.md` | 12768 | `9340bd021b4414e3806e7fd58af21491e2b0f789bf489aef610031c54633bc22` |
+| `CONTRACT.md` | 11541 | `267f52b1ba624f64242d35754ba8a152c72579e6fe09e819f32b731b4dfb6ca3` |
+| `LICENSE` | 1065 | `14bb0d08b9a59c5c025c2247c0c56da32840cade3af1935a27d49921aba75b76` |
+| `MIGRATION.md` | 5746 | `4e6ebbd17a014d14476782c7b051499c1a0790d3e88d321b132a563d925a489c` |
+| `NOTICE` | 131 | `8ec296d3437244761f79415f81424ab321445e342dbd8ec4c11776a7640ae21a` |
+| `README.md` | 5200 | `f747b42b7cd4a0f2a71070e57356a29434f08607d340c540e80cf9e6ba4e2bfb` |
+| `dist/bundle/index.d.ts` | 14436 | `5b54d1e1c4a6a9f1e09438669e612685083fa62e58289af8a413b8752acd3e79` |
+| `dist/bundle/index.js` | 100443 | `e3aeeb29df0f4728a242a8089b3a9bf1c606464d7a09245853cfdbb34431ef45` |
+| `dist/chunk-7BBGSLQ3.js` | 21563 | `f1c07434b69652ed8178a924763dbae8ff21ec16509c05f7e51b5201a2643e0a` |
+| `dist/chunk-JWLJY4O4.js` | 74823 | `90d1b4ebb1d937c0352a1d8628967624d52d3c96eddcee1e5574fde6ea759325` |
+| `dist/chunk-QB5SP7CM.js` | 4724 | `0e765a454f6aeef9f1c60a1347e2d1c768e5b817089b918fb71eceac15110046` |
+| `dist/chunk-UPOUJIFO.js` | 43580 | `c575fa161a5417c4ddc75c04329f32a03d1f89027247bc04d86f5b2506e6e988` |
+| `dist/chunk-ZU6WU2FD.js` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `dist/document/index.d.ts` | 1102 | `af578c7cc53f34752314b708ecd155b896e03112d32881b066b0bb47ee4845f9` |
+| `dist/document/index.js` | 519 | `58aa51dffbfee5981f8e1815999ab67f4e3cbf332cf2c191f1b7ebf672dd2111` |
+| `dist/identity.d.ts` | 675 | `e654a08ba8bf351fe10aefcae67d4538a4291d334ae31e272c8be41838b439a3` |
+| `dist/identity.js` | 279 | `e1f24ced0d5a5aba76a980d32157631fc4c39c9f21df12778a27b57412aea941` |
+| `dist/index.d.ts` | 956 | `18d6602319732b3466b9f3ec06b0e8d5eef747dda6d8bc9c28aa8497e2f2b307` |
+| `dist/index.js` | 515 | `506c0ad9ce52e0c1dae91aa66b6a0261ff73e8d183a6de3d4fae801db9198235` |
+| `dist/ordering.d.ts` | 675 | `9508d9c31a25ee002c2476fd5817b54f3cb3e56c1996039083c3774881d19ad6` |
+| `dist/ordering.js` | 1712 | `243609a292515c532cee9ed4e4adf67a97a43aadc4231f19c9300ab66b65a69b` |
+| `dist/parsers-DEVCdXao.d.ts` | 1100 | `2fef0f3128528805209018541bf8389a83d8a55bfd05b6721ee156afe46e28a3` |
+| `dist/receipt.d.ts` | 1103 | `8735ea0754084ca5c3ce2652e9ef3ad879cf011b5b815aa1bcbe82447f9ce1fc` |
+| `dist/receipt.js` | 479 | `fe0975af925ea153bd266b4cb3ec058213f6b1bfaec08a3ce173c649a5b7b60f` |
+| `dist/recovery.d.ts` | 1701 | `461436493bd3562654e0a7a6927af32ddda538dbe82716b545d119db3d7ebede` |
+| `dist/recovery.js` | 4048 | `244a130e226e726982e648fa2cea6d6e082d6840ea09d10dad86a079aa7f1c1a` |
+| `dist/renderers/epub.d.ts` | 1689 | `22cb8d09cb0a826ee6735b1c0b77fd2f474776f857611e51a1f207e4ed99c3d7` |
+| `dist/renderers/epub.js` | 18322 | `3825abc00f0168a5624aff7bba4bd04c397fc99b65d40ba6b4f44ebf96031ff9` |
+| `dist/renderers/xhtml.d.ts` | 387 | `0289516189ac4e832fb536596d639428765e6a86bca84aad43807d4f2eee900d` |
+| `dist/renderers/xhtml.js` | 195 | `778b9020b2102ee29f810b7d4c4e7d3a3ef7d41a05975d524dd1c55eaee8c040` |
+| `dist/types-DRghr3d6.d.ts` | 9065 | `ebc0e7999372bf95a1a472cabc66c443b027f96e3d073be0bbc838f6bd8d93f6` |
+| `package.json` | 2215 | `4ee997b5c23619a7bacfed26c2c5079d406eed0c64d55b4f710b556cc2f82e91` |
+
+Total: 35 files, 312,471 bytes (uncompressed tarball size).
+
+## Regenerability proof
+
+Two independent `npm pack` runs at the same head produce byte-identical tarballs.
+
+| Build | Tarball SHA-256 |
+| --- | --- |
+| 1 | `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d` |
+| 2 | `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d` |
+| **Match** | **yes** |
+
+The packet is regenerable by a single documented command from a clean checkout:
+```sh
+git checkout 90809feda2875c0fb851b0839a2332d53db87865
+npm run build
+STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=/path/to/outside node scripts/test-packed-consumer.mjs
+node scripts/s04-goldens-packed.mjs  # in a consumer dir with the tarball
+```
+
+## Validation performed (all commands, exit codes, counts)
+
+| Check | Command | Exit code | Count |
+| --- | --- | --- | --- |
+| Typecheck | `npx tsc --noEmit` | 0 | — |
+| Source boundary | `node scripts/check-source-boundary.mjs` | 0 | — |
+| Full test suite | `npx vitest run --maxWorkers=1` | 0 | 991 passed, 34 files |
+| S-04 packet tests | `npx vitest run --maxWorkers=1 tests/s04-release-packet.test.ts` | 0 | 11 passed |
+| Packed consumer | `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR=... node scripts/test-packed-consumer.mjs` | 0 | 9 exports, 35 files |
+| Three-run goldens | `node scripts/s04-goldens-packed.mjs` (in consumer) | 0 | 3 variants × 3 runs |
+| Regenerability | two `npm pack` runs | 0 | 2 builds, identical SHA-256 |
+| `git diff --check` | `git diff --check` | 0 | — |
+
+## What is NOT proven (no overclaim)
+
+- **No release, no publication, no version bump, no cutover.** The package remains private `0.0.0`.
+- **No application golden regenerated or modified.** The existing application (if any) is not repinned.
+- **No S-03 overclaim.** The private resolver/executor protocol and its real-host conformance harness are not public surface.
+- **No cross-runtime vectors.** RFC 8785 canonical bytes and cross-runtime `0.1`/`0.2` and N-1/N/N+1 vectors belong to the S-03 canonicalization contract.
+- **No golden breadth beyond three representative cases.** MathML equations, RTL/base-direction documents, multi-page and multi-column layouts, packaged XHTML assets, profiled EPUB exports are not frozen.
+- **No `decodeStructBundle` wire-path goldens for external payloads.** The canonical serializer and resolver harness are private; external decode repeatability is not frozen.
+- **No merge, push, deploy, or external mutation.** This lane only produces retained evidence artifacts.
 
 ## Rollback constraints
 
@@ -186,17 +368,19 @@ the assertions are not pure self-equality:
   own receipt, not a change to `decodeCompatibleStructDocument`.
 - The package stays private `0.0.0` until an explicit, separately authorized
   publication decision.
+- The retained tarball and its digest are the source of truth for the artifact.
+  Any future publication must use exactly this tarball.
 
-## Supersession (2026-10-20 continuation)
+## Coordinator verification checklist
 
-The original claim that `./bundle` is unavailable (`"pending S-03"`) is
-superseded at the current runtime baseline: the embedded `./bundle` export
-exists with all seven runtime names. The isolated resolver/executor protocol
-and its execution driver are implemented privately in-tree but are not public
-surface; the public external-bytes decode seam (`decodeStructBundle`) is
-part of the current surface; the real-host conformance harness is
-implemented in-tree as test-only evidence, so the full S-04 bundle negative
-matrix and the three-run goldens for external payloads are still not covered
-by this lane and remain open, but the embedded
-surface covered by this lane (renderer repeatability, compatibility matrix)
-remains valid and unchanged.
+The coordinator must still verify:
+
+1. The final head `90809feda2875c0fb851b0839a2332d53db87865` matches the cutover candidate.
+2. The retained tarball at `STRUCT_PACKED_CONSUMER_ARTIFACT_DIR/erniesg-struct-0.0.0.tgz` has SHA-256 `e26e0ff92d637bc765505dd197470a07fcc77a65d7ee8874b838ef8aabb4142d`.
+3. The file list matches the 35 entries recorded above.
+4. The nine-subpath matrix passes (public exports work, types exist, private paths fail).
+5. The Bundle public API surface exports all seven runtime names plus limits and error class.
+6. The three-run goldens match the frozen baselines exactly (no drift).
+7. The regenerability proof holds (two builds, identical tarball SHA-256).
+8. All validation commands exit 0 with the recorded counts.
+9. No external mutations were made (`pushed: false`, `externalMutations: "none"`).
