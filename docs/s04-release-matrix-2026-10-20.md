@@ -193,8 +193,9 @@ superseded at the current runtime baseline
 `7db63613d22c0faba63cd65cc1c4e247b615d491`: the embedded `./bundle` export
 exists with all seven runtime names. The isolated resolver/executor protocol
 and its execution driver are implemented privately in-tree but are not public
-surface; the public external-bytes decode seam and the real-host conformance
-harness remain separately pending, so the full S-04 bundle negative matrix and
-the three-run goldens for external payloads remain gated, but the embedded
+surface; the public external-bytes decode seam (`decodeStructBundle`) is
+part of the current surface; the real-host conformance harness remains
+separately pending, so the full S-04 bundle negative matrix and the
+three-run goldens for external payloads remain gated, but the embedded
 surface covered by this lane (renderer repeatability, compatibility matrix)
 remains valid and unchanged.

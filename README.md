@@ -23,14 +23,18 @@ recovery/XHTML/EPUB capabilities plus a current embedded-only public
 `./bundle` facade that exports all seven runtime names:
 `STRUCT_BUNDLE_LIMITS_PROFILE`, `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`,
 `StructBundleError`, `createStructBundle`, `decodeStructBundle`,
-`encodeStructBundle`, `verifyStructBundle`. The facade returns direct handles
-and throws/rejects the documented structured `StructBundleError`; decode is
-always async (`Promise<VerifiedStructBundle>`); encode returns `Uint8Array`.
-External payloads still fail closed with `UNRESOLVED` (`stage: 'assets'`,
-`code: 'UNRESOLVED'`). The isolated resolver/executor protocol and its
-execution driver are implemented privately in-tree but are not public surface;
-the public external-bytes decode seam and the real-host conformance harness
-remain separately pending; full S-03/S-04 acceptance remains open.
+`encodeStructBundle`, `verifyStructBundle`. The facade returns direct
+handles and throws/rejects the documented structured `StructBundleError`;
+decode is always async (`Promise<VerifiedStructBundle>`); encode returns
+`Uint8Array`. When given the full flat resolver configuration (`resolverExecutor`,
+`resolverPolicy`, `resolverBudget`, `resolverHostSupervisor`, optional
+`resolverSignal`), `decodeStructBundle` resolves external assets through the
+private external core; without it, external payloads fail closed with
+`UNRESOLVED` (`stage: 'assets'`, `code: 'UNRESOLVED'`). The isolated
+resolver/executor protocol and its execution driver are implemented privately
+in-tree but are not public surface. The public external-bytes decode seam
+(`decodeStructBundle`) is part of the current surface; the real-host
+conformance harness and full S-03/S-04 acceptance remain separately pending.
 There is no exact-pinned external consumer, registry release, or publish
 workflow.
 
@@ -41,9 +45,10 @@ direct-handle return, async `decodeStructBundle`, byte-returning
 `encodeStructBundle`, structured `StructBundleError`, and the frozen
 versioned limits profile) is implemented at the current runtime baseline; the
 isolated resolver/executor protocol and its execution driver are implemented
-privately in-tree but are not public surface, and the public external-bytes
-decode seam, the real-host conformance harness, and full S-03/S-04 acceptance
-remain separately pending.
+privately in-tree but are not public surface. The public external-bytes
+decode seam (`decodeStructBundle`) is part of the current surface; the
+real-host conformance harness and full S-03/S-04 acceptance remain separately
+pending.
 
 **Stage status:** Stage 1 is implemented and unreleased; it does not complete
 S-03, S-04, or E-02, and it does not activate a release, route, or writer.

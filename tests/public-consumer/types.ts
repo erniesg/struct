@@ -53,6 +53,10 @@ declare const wireBytes: Uint8Array
 declare const handle: VerifiedStructBundle
 decodeStructBundle(wireBytes)
 decodeStructBundle(wireBytes, { expectedBundleSha256: 'a'.repeat(64) })
+decodeStructBundle(wireBytes, {
+  expectedBundleSha256: 'a'.repeat(64),
+  resolverBudget: { totalTimeoutMs: 100, cleanupReserveMs: 10 },
+} as never)
 createStructBundle({ document: {} as never })
 verifyStructBundle({})
 encodeStructBundle(handle)

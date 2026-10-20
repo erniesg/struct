@@ -4,7 +4,8 @@ Status: **package remains private and unreleased** (supersession: at the
 current runtime baseline `7db63613d22c0faba63cd65cc1c4e247b615d491`, `./bundle`
 is available as an embedded-only export with all seven runtime names, so the
 embedded subset is no longer blocked by the missing `./bundle` export; the
-public external-bytes decode seam and the full conformance harness remain
+public external-bytes decode seam (`decodeStructBundle`) is part of the current
+surface; the full conformance harness remains
 separately pending). Nothing in this validation changes the E02/E03/E04 app
 gates.
 
@@ -84,7 +85,7 @@ exports, the frozen profile (`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION` `1.0.0`
 with `maxConcurrency` 1 and `maxResolverTimeoutMs` 120000), and the structured
 `StructBundleError` are all current and unreleased. The isolated
 resolver/executor protocol and its execution driver are implemented privately
-in-tree but are not public surface; the public external-bytes decode seam, the
-real-host conformance harness, full S-03/S-04 acceptance, and any application
+in-tree but are not public surface; the public external-bytes decode seam (`decodeStructBundle`) is part of the current surface; the real-host
+conformance harness, full S-03/S-04 acceptance, and any application
 repin remain separately pending. The E02/E03/E04 app gates are unchanged by
 this validation.

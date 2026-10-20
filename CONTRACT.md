@@ -36,8 +36,10 @@ unreleased** surface. The facade exports all seven runtime names recorded in
 `StructBundleError` (`FORGED`) for forged handles. External payloads continue
 to fail closed with `UNRESOLVED`. The isolated resolver/executor protocol and
 its execution driver are implemented privately in-tree but are not public
-surface; the public external-bytes decode seam and the real-host conformance
-harness remain separately pending, and full S-03/S-04 acceptance remains open.
+surface. The public external-bytes decode seam (`decodeStructBundle`) is wired
+through the private external core and is part of the current surface; the
+real-host conformance harness remains separately pending, and full S-03/S-04
+acceptance remains open.
 
 Ernie.SG constructs bundles from approved revisions and authenticates producer
 approval/release records. Aether consumes only a verified, exact-pinned bundle
@@ -167,12 +169,13 @@ listed in [API.md](./API.md). `./bundle` is a current embedded-only export
 with all seven runtime names (`STRUCT_BUNDLE_LIMITS_PROFILE`,
 `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
 `createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
-`verifyStructBundle`). It accepts only canonical embedded-asset envelopes and
-fails closed with `UNRESOLVED` for external payloads. The isolated
+`verifyStructBundle`). It accepts embedded-asset envelopes and, when the full flat resolver
+configuration is provided, resolves external assets through the private
+external core (`decodeStructBundle`). The isolated
 resolver/executor protocol and its execution driver are implemented privately
-in-tree but are not part of this public surface; the public external-bytes
-decode seam, the real-host conformance harness, and full S-03/S-04 acceptance
-remain separately pending. These documents ship in the package file list; a
-documentation correction changes packed contents, so any repin requires a
+in-tree but are not part of the public surface. The public external-bytes
+decode seam is part of the current surface; the real-host conformance
+harness and full S-03/S-04 acceptance remain separately pending. These
+documents ship in the package file list; a documentation correction changes packed contents, so any repin requires a
 fresh packaged-artifact and installed-consumer proof. No application repin is
 part of this documentation change.
