@@ -101,10 +101,32 @@ async function main() {
       env: { ...process.env, STRUCT_PACKED_CONSUMER_ARTIFACT_DIR: artifactDir },
     },
   ).trim()
-  // The output may contain progress lines before the JSON; take the last line
-  const packedConsumerJsonLine = packedConsumerOutput.split('\n').pop()?.trim()
-  const packedConsumerResult = JSON.parse(packedConsumerJsonLine || '{}')
-  console.log(`   Tarball SHA-256 verified: ${packedConsumerResult.tarball?.sha256 === tarballSha256}`)
+  // The packed consumer prints progress lines before its JSON result. Select the
+  // last line that is a JSON object instead of the last line by position, and
+  // fail closed when no such line exists: a positional pick silently accepts a
+  // truncated or reordered output.
+  const packedConsumerJsonLine = packedConsumerOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('{'))
+    .pop()
+  if (!packedConsumerJsonLine) {
+    throw new Error(
+      'packed consumer produced no JSON result line; output was:\n' +
+        packedConsumerOutput,
+    )
+  }
+  const packedConsumerResult = JSON.parse(packedConsumerJsonLine)
+  console.log(
+    `   Tarball SHA-256 verified: ${packedConsumerResult.tarball?.sha256 === tarballSha256}`,
+  )
+  // The cross-check must be able to fail the build: a mismatch means the
+  // artifact that was packed is not the artifact that was verified.
+  if (packedConsumerResult.tarball?.sha256 !== tarballSha256) {
+    throw new Error(
+      'packed consumer verified a different tarball than the one that was built',
+    )
+  }
 
   // 7. Run S-04 packet tests
   console.log('\n7. Running S-04 packet tests...')
@@ -116,9 +138,14 @@ async function main() {
 
   // 8. Run three-run goldens
   console.log('\n8. Running three-run renderer goldens...')
-  // The goldens are run via the standalone script in a consumer directory
-  // We'll run it here by creating a temporary consumer
-  const consumerDir = join(tmpdir(), 'struct-s04-goldens-')
+  // The goldens are run via the standalone script in a consumer directory.
+  // The consumer MUST sit next to the tarball that was just built, because the
+  // `file:` specifier resolves relative to the consumer directory. A consumer
+  // placed directly in the system temp directory resolves `file:../<name>` to
+  // a fixed path in the system temp directory, where a stale tarball from an
+  // earlier run can silently satisfy the dependency: the goldens would then
+  // be measured against a different artifact than the one being released.
+  const consumerDir = join(temporary, 's04-goldens-consumer')
   await mkdir(consumerDir, { recursive: true })
   await writeFile(
     join(consumerDir, 'package.json'),
@@ -140,6 +167,28 @@ async function main() {
     cwd: consumerDir,
     stdio: 'inherit',
   })
+  // Fail closed unless the consumer installed exactly the artifact that was
+  // built above. The packed package.json is the repository package.json.
+  const installedManifestPath = join(
+    consumerDir,
+    'node_modules',
+    '@erniesg',
+    'struct',
+    'package.json',
+  )
+  const installedManifestSha256 = createHash('sha256')
+    .update(await readFile(installedManifestPath))
+    .digest('hex')
+  const builtManifestSha256 = createHash('sha256')
+    .update(await readFile(join(repository, 'package.json')))
+    .digest('hex')
+  if (installedManifestSha256 !== builtManifestSha256) {
+    throw new Error(
+      'the goldens consumer did not install the artifact that was built ' +
+        `(installed package.json ${installedManifestSha256}, built ${builtManifestSha256})`,
+    )
+  }
+  console.log(`   Installed artifact identity verified: ${installedManifestSha256}`)
   // Copy the goldens script
   await copyFile(
     join(repository, 'scripts/s04-goldens-packed.mjs'),
