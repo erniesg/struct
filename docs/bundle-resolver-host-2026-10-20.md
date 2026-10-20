@@ -468,3 +468,124 @@ Every process is bounded: the driver enforces a wall budget, the host children
 carry `RLIMIT_CPU`, `RLIMIT_AS`, `RLIMIT_CORE` and `RLIMIT_FSIZE`, and the
 pool disposes its hosts in a `finally` block that also proves zero residual
 state.
+
+---
+
+# Public decode seam conformance (test-only)
+
+**Added:** 2026-10-20, on top of the real OS conformance binding.
+**Contract:** `/home/ubuntu/.local/state/struct-migration/20261020-continuation/resolver-real-conformance-contract.json`.
+
+This section extends the real OS conformance suite to exercise the **public**
+`decodeStructBundle` entry point (`src/bundle/index.ts`) against the same
+sacrificial Linux user + PID namespace host. The public path delegates to the
+private external-bytes core (`src/bundle/external.ts`) which in turn calls
+`resolveStructResolverAssets` (`src/bundle/resolver-execution.ts`) with the
+consumer-owned executor and the mandatory parent fail-stop supervisor. No
+`src/**` files were modified; the suite only adds test code and fixtures.
+
+## Why this is separate from the private-driver conformance
+
+The private-driver conformance suite (`tests/bundle-resolver-real-conformance.test.ts`)
+drives `resolveStructResolverAssets` directly. This suite proves that the **public
+API** (`decodeStructBundle`) correctly wires the resolver options through to the
+same driver and the same real OS host, and that the public error taxonomy
+(`StructBundleError` with stage/code) matches the private driver's behaviour
+exactly.
+
+## The public seam
+
+The public decode options are a flat object with the following mandatory fields
+when the bundle carries external asset references:
+
+| Option | Type | Role |
+|---|---|---|
+| `resolverExecutor` | `StructResolverExecutorV1` | Consumer-owned executor. |
+| `resolverPolicy` | `StructAssetResolutionPolicyV1` | Consumer-owned policy snapshot. |
+| `resolverBudget` | `{ totalTimeoutMs, cleanupReserveMs }` | Explicit budget; no implicit default. |
+| `resolverHostSupervisor` | `StructResolverHostSupervisorV1` | Mandatory parent-owned fail-stop port. |
+| `resolverSignal` | `AbortSignal` | Optional caller abort signal. |
+| `expectedBundleSha256` | `string` | Optional raw bundle digest check. |
+| `limitsProfile` | `string` | Optional profile version (only frozen version accepted). |
+
+All resolver fields must either be absent together (embedded-only decode) or all
+present. An explicit `undefined` is not treated as omitted.
+
+## The cases
+
+Fifteen cases in `tests/bundle-public-resolver-conformance.test.ts`, all driven
+through the public `decodeStructBundle` entry point.
+
+### PUBLIC SUCCESS
+
+| Case | What it proves against the real OS |
+|---|---|
+| resolves the exact bytes of an external asset through the public decodeStructBundle with a real host realm | exact bytes and digest, a genuine handle whose `assetBytes(id)` equals the bytes the host actually produced, verified `documentSha256`/`bundleSha256` and asset digest conserved, one start / one revocation / one cleanup / one termination observed by the host realm, `CapEff=0` in the realm, PID 1 in a dedicated PID namespace, no transport authority |
+
+### PUBLIC FAIL-CLOSED LIFECYCLE
+
+| Case | What it proves |
+|---|---|
+| fails closed when the real host never settles its cleanup | the public decode rejects with `stage: 'resolve', code: 'CLEANUP'`, the parent asks for a fail-stop and proves the lifetime-pipe EOF, empty namespace census, `descendantCount: 0`, reaped host; the slot is permanently retired |
+| fails closed when the terminate and join never settle | the public decode rejects with `stage: 'resolve', code: 'TERMINAL'`, the parent escalates `SIGTERM` → `SIGKILL`, same death proof; slot retired |
+| contains a daemonized descendant that escaped the host process group | the descendant is visible in the namespace census **before** the kill and absent **after** it; lifetime pipe reaches EOF; slot retired; public decode rejects with `stage: 'resolve', code: 'TERMINAL'` |
+| never reopens a retired slot under aggregate pressure | first execution fail-stopped, slot retired; second execution admitted on the other slot; retired slot and identifier never reused; public decode path |
+
+### PUBLIC IDENTITY BINDING
+
+| Case | What it proves |
+|---|---|
+| rejects a revocation receipt bound to a foreign identifier | public decode rejects with `stage: 'resolve', code: 'REVOCATION'`, parent fail-stop with `REVOCATION_RECEIPT`, slot retired |
+| rejects a terminal receipt bound to a foreign identifier | public decode rejects with `stage: 'resolve', code: 'TERMINAL'`, parent fail-stop with `TERMINAL_RECEIPT`, slot retired |
+| rejects a terminal receipt that reports the wrong terminal state | public decode rejects with `stage: 'resolve', code: 'TERMINAL'`, parent fail-stop with `TERMINAL_RECEIPT`, slot retired |
+| rejects a transport receipt that aliases a foreign policy digest | public decode rejects with `stage: 'resolve', code: 'RECEIPT'`, no handle, slot retired |
+| rejects an unconstrained chunk stream that exceeds the declared length | public decode rejects with `stage: 'resolve', code: 'LIMIT'|'LENGTH'`, no handle, slot retired |
+| public decode with swapped execution ID is rejected by the public seam | second decode with same fixed execution ID rejected at allocation with `stage: 'resolve', code: 'ALLOCATE'`, first slot retired on cleanup |
+
+### PUBLIC BUDGET AND ABORT
+
+| Case | What it proves |
+|---|---|
+| fails closed when explicit budget expires | invalid budget (total < cleanup reserve) rejected at options parse with `stage: 'budget', code: 'BUDGET'`, no host contacted |
+| fails closed when caller AbortSignal aborts mid-flight | pre-aborted signal rejected by driver with `stage: 'resolve', code: 'ABORTED'`, no host realm started, no slot retired |
+
+### PUBLIC MISSING CONFIGURATION
+
+| Case | What it proves |
+|---|---|
+| external bundle decoded without mandatory resolver configuration fails closed (UNRESOLVED) | public decode without resolver options rejects with `stage: 'assets', code: 'UNRESOLVED'`, no host contacted, no handle |
+
+### NO REGRESSION
+
+| Case | What it proves |
+|---|---|
+| existing private-driver conformance cases keep passing unchanged | private driver path (`resolveStructResolverAssets`) still works identically, same pool infrastructure, same outcomes |
+
+## Honest labelling of the claims
+
+- The public-seam conformance suite proves that the public `decodeStructBundle`
+  API can be bound to a real host, that it fails closed against a real host, and
+  that the parent can prove host and descendant death against the real operating
+  system.
+- It proves **nothing** about real transport behaviour. The receipt is a
+  synthetic projection.
+- It is **not** S-03 completion and **not** S-04 completion.
+- It is **not** an independent review.
+
+## How to run
+
+```bash
+# the public-seam conformance suite alone
+node_modules/.bin/vitest run tests/bundle-public-resolver-conformance.test.ts --maxWorkers=1 --testTimeout=120000
+
+# the full package suite (includes both private and public conformance)
+node_modules/.bin/vitest run --maxWorkers=1
+
+# the real conformance driver (private driver only)
+node scripts/test-resolver-conformance.mjs
+```
+
+Every process is bounded: the driver enforces a wall budget, the host children
+carry `RLIMIT_CPU`, `RLIMIT_AS`, `RLIMIT_CORE` and `RLIMIT_FSIZE`, and the
+pool disposes its hosts in a `finally` block that also proves zero residual
+state.
