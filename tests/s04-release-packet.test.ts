@@ -98,7 +98,8 @@ describe('S-04 release packet: tarball integrity', () => {
     packedTemporary = temporary
     packedTarballPath = tarballPath
     packedTarballSha256 = tarballSha256
-  })
+    // The build takes longer than vitest's default 10s hook timeout.
+  }, 300_000)
 
   it('tarball has correct package identity', () => {
     expect(packedMetadata.name).toBe(packageJson.name)
