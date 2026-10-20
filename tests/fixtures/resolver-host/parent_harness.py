@@ -299,6 +299,44 @@ def execution_descendant_count(handle):
     return len(ns_outer_members(handle.get("pid_ns")))
 
 
+def wait_census_empty(handle, timeout_s=DEATH_PROOF_TIMEOUT_S):
+    """Wait, bounded, for one execution's namespace census to drain.
+
+    The census is sampled from outside the execution's PID namespace, so a
+    member that has already been killed but has not finished draining is
+    still visible in /proc. A single sample can therefore report a member of
+    a namespace that is already tearing down, and a receipt projected from
+    that sample would claim ``descendantsDead: false`` for an execution the
+    parent has in fact already failed-stopped.
+
+    After a fail-stop the namespace must drain, so the parent samples the
+    census until it is empty instead of sampling it once. The wait is
+    bounded by the same death-proof deadline the rest of the termination
+    path already uses, so it introduces no new timeout constant, no new
+    authority, and it can never become an unbounded wait.
+
+    The wait is fail-closed: a member that is still alive at the bound is
+    reported, never hidden. The last observed member list is returned
+    unchanged so the caller can project a truthful receipt.
+    """
+    deadline = time.monotonic() + timeout_s
+    members = ns_outer_members(handle.get("pid_ns"))
+    while members and time.monotonic() < deadline:
+        time.sleep(0.01)
+        members = ns_outer_members(handle.get("pid_ns"))
+    return members
+
+
+def wait_execution_descendant_count(handle, timeout_s=DEATH_PROOF_TIMEOUT_S):
+    """Last observed descendant count of one execution, after a bounded drain.
+
+    The count is the last census the parent actually observed, so a member
+    that outlives the bound is still counted and the receipt stays
+    fail-closed.
+    """
+    return len(wait_census_empty(handle, timeout_s))
+
+
 def realm_capabilities(identity_value):
     """Capability bitmasks the host realm actually holds."""
     if not identity_value:
@@ -822,6 +860,7 @@ def _never_settling_case(supervisor, ledger, token, name, mode, question):
     eof = supervisor.wait_lifetime_eof(handle)
     reap = supervisor.reap_launcher(handle)
     residual = supervisor.prove_zero_residual([handle])
+    descendant_count = wait_execution_descendant_count(handle)
     waited_ms = int(round((time.monotonic() - fail_stop_started) * 1000))
 
     record["settlement"] = {
@@ -843,7 +882,7 @@ def _never_settling_case(supervisor, ledger, token, name, mode, question):
     record["fail_stop_receipt"] = fail_stop_receipt(
         execution_id,
         reap["launcher_reaped"],
-        execution_descendant_count(handle),
+        descendant_count,
         waited_ms,
     )
 
@@ -950,7 +989,8 @@ def case_daemonized_escaped_descendant(supervisor, ledger, token):
     stopped, hb_pre_stop, hb_final = supervisor.heartbeat_stopped(heartbeat_path)
     reap = supervisor.reap_launcher(handle)
     residual = supervisor.prove_zero_residual([handle])
-    members_after_death = ns_outer_members(handle["pid_ns"])
+    members_after_death = wait_census_empty(handle)
+    descendant_count = len(members_after_death)
     waited_ms = int(round((time.monotonic() - fail_stop_started) * 1000))
 
     record["descendant"]["realm_capabilities"] = realm_capabilities(descendant)
@@ -1003,7 +1043,7 @@ def case_daemonized_escaped_descendant(supervisor, ledger, token):
     record["fail_stop_receipt"] = fail_stop_receipt(
         execution_id,
         reap["launcher_reaped"],
-        execution_descendant_count(handle),
+        descendant_count,
         waited_ms,
     )
 
@@ -1101,6 +1141,11 @@ def case_aggregate_pressure(supervisor, ledger, token):
     termination_a = supervisor.terminate(handle_a)
     eof_a = supervisor.wait_lifetime_eof(handle_a)
     reap_a = supervisor.reap_launcher(handle_a)
+    descendant_count_a = wait_execution_descendant_count(handle_a)
+    # The receipt's waitedMs is the fail-stop wait: terminate, death proof,
+    # launcher reap and the bounded census drain. It is measured before the
+    # residual proof, which is a separate observation and, while another
+    # execution of this case is still alive by design, cannot become clean.
     waited_a_ms = int(round((time.monotonic() - fail_stop_a_started) * 1000))
     residual_a = supervisor.prove_zero_residual([handle_a])
     retired_a, retired_slot_a = ledger.retire(id_a, "FAIL_STOP_AGGREGATE_PRESSURE")
@@ -1115,7 +1160,7 @@ def case_aggregate_pressure(supervisor, ledger, token):
         "slot_retired": retired_a,
         "retired_slot": retired_slot_a,
         "fail_stop_receipt": fail_stop_receipt(
-            id_a, reap_a["launcher_reaped"], execution_descendant_count(handle_a), waited_a_ms
+            id_a, reap_a["launcher_reaped"], descendant_count_a, waited_a_ms
         ),
     })
 
@@ -1194,14 +1239,28 @@ def case_aggregate_pressure(supervisor, ledger, token):
         termination_e = supervisor.terminate(handle_e)
         eof_e = supervisor.wait_lifetime_eof(handle_e)
         reap_e = supervisor.reap_launcher(handle_e)
+        descendant_count_e = wait_execution_descendant_count(handle_e)
         waited_e_ms = int(round((time.monotonic() - fail_stop_e_started) * 1000))
         residual_e = supervisor.prove_zero_residual([handle_e])
         retired_e, retired_slot_e = ledger.retire(id_e, "FAIL_STOP_AGGREGATE_PRESSURE_SECOND")
+        receipt_e = fail_stop_receipt(
+            id_e, reap_e["launcher_reaped"], descendant_count_e, waited_e_ms
+        )
     else:
+        # Execution E was never spawned, so there is no execution to fail-stop
+        # and no fail-stop to project. The published receipt shape pins
+        # hostTerminated and capacityRetired to true, so a receipt here would
+        # claim a termination and a capacity retirement that never happened.
+        # Sampling the census of a namespace that was never created would
+        # claim a death proof for an execution that never existed, so no
+        # census is sampled here either. The case fails on the evidence
+        # recorded above rather than on a fabricated receipt.
         termination_e = {"escalated_to_sigkill": False}
         eof_e = False
         reap_e = {"host_status": None, "launcher_reaped": False}
+        descendant_count_e = None
         retired_e, retired_slot_e = False, None
+        receipt_e = None
     steps.append({
         "step": "fail_stop_execution_e",
         "execution_id": id_e,
@@ -1211,9 +1270,7 @@ def case_aggregate_pressure(supervisor, ledger, token):
         "launcher_reaped": reap_e["launcher_reaped"],
         "slot_retired": retired_e,
         "retired_slot": retired_slot_e,
-        "fail_stop_receipt": fail_stop_receipt(
-            id_e, reap_e["launcher_reaped"], execution_descendant_count(handle_e), waited_e_ms
-        ),
+        "fail_stop_receipt": receipt_e,
     })
 
     id_g = ledger.new_execution_id()
