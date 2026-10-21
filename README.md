@@ -17,8 +17,8 @@ remains generic orchestration and owns none of these domain models.
 
 **Current runtime baseline** (the cutover candidate head; the exact commit is
 recorded in the release packet; the previous baseline
-`e9ea4b8be0b92e6f35262da572a855216286716c` is superseded by it; this change
-touches no runtime code):
+`e9ea4b8be0b92e6f35262da572a855216286716c` is superseded by it; that
+documentation change touched no runtime code):
 this is a private `0.0.0` package with source-neutral document/codecs/IDs/
 recovery/XHTML/EPUB capabilities plus a current embedded-only public
 `./bundle` facade that exports all seven runtime names:
@@ -39,6 +39,14 @@ conformance harness is implemented in-tree as test-only evidence and is not
 public surface; full S-03/S-04 acceptance remains separately pending.
 There is no exact-pinned external consumer, registry release, or publish
 workflow.
+
+The current head adds exactly one additive, optional document field:
+`StructInline` gains a boolean `code` flag that marks a character range as
+verbatim source code and renders as the HTML `<code>` element in the XHTML
+renderer and, through the same XHTML path, in the EPUB content document. A
+document that omits the flag decodes and renders exactly as before, so
+document schema `0.2.0` is unchanged and needs no version bump. The change
+adds no runtime export, no export path, and no `API_MANIFEST.json` entry.
 
 **Documented target** is the ADR-0001 contract in [CONTRACT.md](./CONTRACT.md):
 a source-neutral package with a fail-closed verified `StructBundle` boundary.

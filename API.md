@@ -19,6 +19,17 @@ The prerelease thin paths `./core`, `./schema`, and `./ids` are removed.
 Private `src/**` modules are not consumer APIs. The manifest records only
 runtime exports per path; it has no schema field for type exports (`VerifiedStructBundle`, `StructBundleCreateInput`, etc.), so those are documented here but are not listed in `API_MANIFEST.json`.
 
+## Document surface (`@erniesg/struct/document`)
+
+`StructInline` is the source-neutral inline model. It carries a character
+range and optional flags: `bold`, `italic`, `code`, `verticalAlign`,
+`compactMathAtom`, plus the hyperlink and relationship fields. `code` is an
+optional boolean that marks a range as verbatim source code and renders as the
+HTML `<code>` element in the XHTML and EPUB renderers. It is additive: a
+document that omits it decodes and renders unchanged, so document schema
+`0.2.0` is unchanged and needs no version bump. No runtime export, export
+path, or manifest entry changes with it.
+
 ## Bundle surface (`@erniesg/struct/bundle`)
 
 Runtime exports (exactly seven, matching `API_MANIFEST.json`):

@@ -61,6 +61,10 @@ function renderInline(
       const styled = (content: string) => {
         let rendered = content;
         for (const run of owners) {
+          // Inline code is applied first so it stays the innermost wrapper,
+          // the way a Markdown source `**`code`**` nests. The content is
+          // already escaped, so the element only wraps escaped text.
+          if (run.code) rendered = `<code>${rendered}</code>`;
           if (run.bold) rendered = `<strong>${rendered}</strong>`;
           if (run.italic) rendered = `<em>${rendered}</em>`;
           if (run.verticalAlign === "superscript") {

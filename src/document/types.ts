@@ -99,6 +99,19 @@ export type StructInline = {
   targetIds?: string[]
   bold?: boolean
   italic?: boolean
+  /**
+   * The span is verbatim source code and renders as HTML `<code>`.
+   *
+   * This is an additive optional flag, not a new mark shape: the range is
+   * still a plain character range in the block text, and the only new
+   * information is that the range is code rather than prose. It is the only
+   * neutral way to express inline code, because `href` is a hyperlink,
+   * `semanticRole` names a relationship role, and no other existing field
+   * carries "this text is code". A document that omits the flag decodes and
+   * renders exactly as before, so schema `0.2.0` stays backward compatible
+   * and needs no version bump.
+   */
+  code?: boolean
   verticalAlign?: 'superscript' | 'subscript'
   compactMathAtom?: boolean
   semanticRole?:

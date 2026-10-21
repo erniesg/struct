@@ -47,6 +47,29 @@ approval/release records. Aether consumes only a verified, exact-pinned bundle
 and owns visual composition. Rucksack may orchestrate target-owned commands but
 does not own a Struct model or renderer.
 
+## Inline runs and the inline code flag
+
+An inline run is a character range in a block's own text. The range carries
+formatting flags (`bold`, `italic`, `code`, `verticalAlign`,
+`compactMathAtom`), a hyperlink (`href`), and relationship/semantic references
+(`relationshipId`, `targetIds`, `semanticRole`). Every flag is optional and a
+document that omits a flag decodes and renders exactly as it did before that
+flag existed.
+
+`code` is the optional boolean flag that marks a range as verbatim source
+code. It renders as the HTML `<code>` element in the XHTML renderer and, because
+the EPUB renderer builds its content document from the same XHTML path, in the
+EPUB content document as well. The element is the innermost wrapper of the
+formatting it is combined with, so a bold code range renders as
+`<strong><code>…</code></strong>`.
+
+The flag is additive and backward compatible. It adds no new mark shape and no
+new semantics beyond "this range is code": the range is still a plain character
+range, the text bytes are unchanged, and `code` is rejected on a zero-width run
+exactly like the other formatting flags. Schema `0.2.0` therefore needs no
+version bump: existing documents decode unchanged, and the strict decoder still
+refuses every undeclared inline field.
+
 ## Planned Bundle semantics (normative)
 
 The semantics below are the normative target. Stage 1 implements the surface described in
