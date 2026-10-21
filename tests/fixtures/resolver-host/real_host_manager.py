@@ -399,7 +399,17 @@ class Supervisor:
 
         eof = self.wait_lifetime_eof(host)
         reap = self.reap_launcher(host)
-        members_after = self.namespace_members(host)
+        # The census is observed from OUTSIDE the host's PID namespace, so a
+        # member that has already been killed but has not finished draining is
+        # still visible in /proc. A single sample could therefore report a
+        # member of a namespace that is already tearing down, and the receipt
+        # projected from it would claim `descendantsDead: false` for an
+        # execution this supervisor has in fact already failed-stopped - a
+        # receipt the package's own validator rejects. The census is sampled
+        # with the same bounded drain the parent harness uses, bounded by the
+        # existing death-proof deadline; a member that is still alive at the
+        # bound is still reported, so the receipt stays fail-closed.
+        members_after = ph.wait_census_empty({"pid_ns": host.pid_ns})
         waited_ms = int(round((time.monotonic() - started) * 1000))
 
         descendant_count = len(members_after)
