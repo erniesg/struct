@@ -13,9 +13,16 @@ import {
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
+  type RenderedCaptionPlan,
   type RenderedInlineSourcePlan,
   type RenderedPublicationPlan,
 } from "./xhtml-plan";
+import {
+  planListContainers,
+  planListItem,
+  renderListContainer,
+  type RenderedListItemEntry,
+} from "./xhtml-lists";
 import { normalizeStructDocumentForRenderer } from "./ingress";
 import { verifyStructReceipt } from "../receipt";
 import { mathMlForXhtml, safeMathMl } from "./xhtml-mathml";
@@ -239,6 +246,60 @@ function renderSourceObservationAnchors(block: StructBlock) {
     .join("");
 }
 
+/**
+ * Render a caption block that a matched `caption` relationship attaches to
+ * a host block.
+ *
+ * The caption is published once, inside the host's `<figcaption>`, and the
+ * caption block's own identifier and source anchors travel with it, so the
+ * caption's anchor still resolves and the caption is not published twice.
+ */
+function renderAttachedCaption(
+  document: StructDocument,
+  caption: RenderedCaptionPlan,
+  emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
+) {
+  const captionBlock = document.blocks[caption.captionBlockIndex]!;
+  const id = attribute(captionBlock.id);
+  const content = renderInline(
+    document,
+    publicationPlan.sourceByKey.get(`block:${caption.captionBlockIndex}`)!,
+    emittedRelationshipIds,
+    publicationPlan,
+  );
+  const sourceAnchors = renderSourceObservationAnchors(captionBlock);
+  return `<figcaption id="${id}" data-struct-id="${id}" data-relationship-id="${attribute(
+    caption.relationshipIdStable,
+  )}">${sourceAnchors}${content}</figcaption>`;
+}
+
+/**
+ * The caption of a host block.
+ *
+ * A caption block that the graph attaches to the host is the host's
+ * caption. Otherwise the host publishes its own text, or its label when it
+ * has no text, exactly as before. No caption is ever chosen by comparing
+ * text: an unlinked caption block stays its own paragraph.
+ */
+function renderFigcaption(
+  document: StructDocument,
+  block: StructBlock,
+  content: string,
+  emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
+) {
+  const attached = publicationPlan.captionsByHostBlockId.get(block.id);
+  if (attached)
+    return renderAttachedCaption(
+      document,
+      attached,
+      emittedRelationshipIds,
+      publicationPlan,
+    );
+  return `<figcaption>${content || text(block.label ?? "")}</figcaption>`;
+}
+
 function renderBlock(
   document: StructDocument,
   block: StructBlock,
@@ -251,8 +312,23 @@ function renderBlock(
   if (block.kind === "furniture") return "";
   const id = attribute(block.id);
   const sourceAnchors = renderSourceObservationAnchors(block);
+  // A caption that is attached to a host block is published inside that
+  // host's figcaption, so it is not published a second time here.
+  if (
+    block.kind === "caption" &&
+    publicationPlan.attachedCaptionBlockIds.has(block.id)
+  )
+    return "";
   if (block.kind === "table" && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`;
+    const figcaption = publicationPlan.captionsByHostBlockId.has(block.id)
+      ? renderAttachedCaption(
+          document,
+          publicationPlan.captionsByHostBlockId.get(block.id)!,
+          emittedRelationshipIds,
+          publicationPlan,
+        )
+      : "";
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}${figcaption}</figure>`;
   }
   const content = renderInline(
     document,
@@ -270,11 +346,8 @@ function renderBlock(
   if (block.kind === "quote") {
     return `<blockquote id="${id}" data-struct-id="${id}">${sourceAnchors}<p>${content}</p></blockquote>`;
   }
-  if (block.kind === "list-item") {
-    return `<li id="${id}" data-struct-id="${id}">${sourceAnchors}${content}</li>`;
-  }
   if (block.kind === "equation" && safeMathMl(block.attributes?.mathml)) {
-    return `<figure id="${id}" data-struct-id="${id}" class="equation">${sourceAnchors}${mathMlForXhtml(block.attributes!.mathml)}<figcaption>${content || text(block.label ?? "")}</figcaption></figure>`;
+    return `<figure id="${id}" data-struct-id="${id}" class="equation">${sourceAnchors}${mathMlForXhtml(block.attributes!.mathml)}${renderFigcaption(document, block, content, emittedRelationshipIds, publicationPlan)}</figure>`;
   }
   if (
     block.kind === "figure" ||
@@ -290,7 +363,7 @@ function renderBlock(
           `<img src="${attribute(asset.href)}" alt="${attribute(block.label ?? block.text)}" />`,
       )
       .join("");
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${artwork}<figcaption>${content || text(block.label ?? "")}</figcaption></figure>`;
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${artwork}${renderFigcaption(document, block, content, emittedRelationshipIds, publicationPlan)}</figure>`;
   }
   if (block.kind === "caption") {
     return `<p id="${id}" data-struct-id="${id}" class="caption">${sourceAnchors}${content}</p>`;
@@ -314,9 +387,58 @@ function renderBlock(
 }
 
 /**
- * Group consecutive list-item blocks into one `<ol>`/`<ul>`; a change of the
- * optional `listId` attribute starts a new list and the first item decides
- * ordering. Furniture blocks render nothing and never split a list.
+ * Render one contiguous run of list items as one or more lists.
+ *
+ * A list item carries either the flat list contract (a list identity, with
+ * the first item of the list deciding whether it is ordered) or the nested
+ * list contract (a declared level and ordering). The renderer publishes the
+ * run as nested `<ul>`/`<ol>` containers inside the parent `<li>` when the
+ * items declare a level, and as one flat list per list identity otherwise.
+ */
+function renderListRun(
+  document: StructDocument,
+  run: ReadonlyArray<{ block: StructBlock; blockIndex: number }>,
+  emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
+) {
+  const items = run.map((entry) =>
+    planListItem(entry.block, entry.blockIndex),
+  );
+  const containers = planListContainers(items);
+  const renderItem = (
+    entry: RenderedListItemEntry,
+    indent: string,
+  ): string => {
+    const { block, blockIndex } = entry.item;
+    const id = attribute(block.id);
+    const sourceAnchors = renderSourceObservationAnchors(block);
+    const content = renderInline(
+      document,
+      publicationPlan.sourceByKey.get(`block:${blockIndex}`)!,
+      emittedRelationshipIds,
+      publicationPlan,
+    );
+    const children = entry.children
+      .map(
+        (child) =>
+          `\n${indent}  ${renderListContainer(child, renderItem, `${indent}    `)}`,
+      )
+      .join("");
+    const closing = children ? `\n${indent}</li>` : "</li>";
+    return `<li id="${id}" data-struct-id="${id}">${sourceAnchors}${content}${children}${closing}`;
+  };
+  return containers
+    .map((container) => renderListContainer(container, renderItem, "  "))
+    .join("\n  ");
+}
+
+/**
+ * Render the document's blocks in reading order.
+ *
+ * Consecutive list items are grouped into lists: a change of the optional
+ * `listId` attribute starts a new list and the first item decides
+ * ordering, and a declared `listLevel` nests a list inside the item above
+ * it. Furniture blocks render nothing and never split a list.
  */
 function renderBlocks(
   document: StructDocument,
@@ -324,40 +446,43 @@ function renderBlocks(
   publicationPlan: RenderedPublicationPlan,
 ) {
   const rendered: string[] = [];
-  let openList: { tag: "ol" | "ul"; listId: string | null } | null = null;
-  const closeList = () => {
-    if (openList) {
-      rendered.push(`</${openList.tag}>`);
-      openList = null;
+  let index = 0;
+  while (index < document.blocks.length) {
+    const block = document.blocks[index]!;
+    if (block.kind === "furniture") {
+      index += 1;
+      continue;
     }
-  };
-  for (const [blockIndex, block] of document.blocks.entries()) {
-    if (block.kind === "furniture") continue;
     if (block.kind === "list-item") {
-      const listId =
-        typeof block.attributes?.listId === "string"
-          ? block.attributes.listId
-          : null;
-      if (!openList || openList.listId !== listId) {
-        closeList();
-        const tag = block.attributes?.ordered === true ? "ol" : "ul";
-        rendered.push(`<${tag}>`);
-        openList = { tag, listId };
+      const run: Array<{ block: StructBlock; blockIndex: number }> = [];
+      let cursor = index;
+      while (cursor < document.blocks.length) {
+        const candidate = document.blocks[cursor]!;
+        if (candidate.kind === "furniture") {
+          cursor += 1;
+          continue;
+        }
+        if (candidate.kind !== "list-item") break;
+        run.push({ block: candidate, blockIndex: cursor });
+        cursor += 1;
       }
-    } else {
-      closeList();
+      rendered.push(
+        renderListRun(document, run, emittedRelationshipIds, publicationPlan),
+      );
+      index = cursor;
+      continue;
     }
     rendered.push(
       renderBlock(
         document,
         block,
-        blockIndex,
+        index,
         emittedRelationshipIds,
         publicationPlan,
       ),
     );
+    index += 1;
   }
-  closeList();
   return rendered.join("\n  ");
 }
 
