@@ -277,10 +277,18 @@ function renderAttachedCaption(
 /**
  * The caption of a host block.
  *
- * A caption block that the graph attaches to the host is the host's
- * caption. Otherwise the host publishes its own text, or its label when it
- * has no text, exactly as before. No caption is ever chosen by comparing
- * text: an unlinked caption block stays its own paragraph.
+ * Precedence rule: an attached caption is the host's caption. When a caption
+ * block is attached to the host by a matched `caption` relationship, the
+ * caption's text is published inside the host's `<figcaption>` and the
+ * host's own figcaption text is not published a second time. That is what
+ * closes the duplication where the host carries its own copy of the caption
+ * text. A host whose own caption text differs from the attached caption's
+ * text is a document inconsistency and is refused while the publication is
+ * planned, so the host's text is never silently dropped.
+ *
+ * Otherwise the host publishes its own text, or its label when it has no
+ * text, exactly as before. No caption is ever chosen by comparing text: an
+ * unlinked caption block stays its own paragraph.
  */
 function renderFigcaption(
   document: StructDocument,
@@ -389,11 +397,17 @@ function renderBlock(
 /**
  * Render one contiguous run of list items as one or more lists.
  *
- * A list item carries either the flat list contract (a list identity, with
- * the first item of the list deciding whether it is ordered) or the nested
- * list contract (a declared level and ordering). The renderer publishes the
- * run as nested `<ul>`/`<ol>` containers inside the parent `<li>` when the
- * items declare a level, and as one flat list per list identity otherwise.
+ * A contiguous run of list items is one list. A list item carries either the
+ * flat list contract (a list identity, with the first item of the list
+ * deciding whether it is ordered) or the nested list contract (a declared
+ * level and ordering). When no item of the run declares the nested
+ * contract, the run is published as one flat list per list identity. When
+ * any item of the run declares the nested contract, the run is published as
+ * nested `<ul>`/`<ol>` containers inside the parent `<li>`, and the items
+ * that do not declare nesting are the outermost items of that list. A
+ * change of the list identity is a hard boundary in both contracts: the
+ * following list never joins the open list's container, and it keeps its own
+ * declared nesting.
  */
 function renderListRun(
   document: StructDocument,

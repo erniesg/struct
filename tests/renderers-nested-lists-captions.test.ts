@@ -4,6 +4,7 @@ import { XMLValidator } from 'fast-xml-parser'
 import { buildStructEpub } from '../src/renderers/epub'
 import { renderPublicationXhtml } from '../src/renderers/xhtml'
 import { MAX_RENDERED_LIST_NESTING_DEPTH } from '../src/renderers/xhtml-lists'
+import { RenderedPublicationPlanError } from '../src/renderers/xhtml-plan'
 import {
   assetBytesHash,
   evidence,
@@ -298,6 +299,68 @@ describe('STRUCT nested lists', () => {
       '<ul>\n  <li id="li-1" data-struct-id="li-1">first list</li>\n  </ul>\n  <ul>\n  <li id="li-2" data-struct-id="li-2">second list</li>\n  </ul>',
     )
   })
+
+  it('keeps the declared nesting of the list after a listId boundary', () => {
+    // The listId boundary stays hard: the second list never joins the first
+    // list's container. The second list keeps its own declared nesting: its
+    // items declare level 1, so the second list is rooted one level deep
+    // instead of being flattened to the root level.
+    const xhtml = renderPublicationXhtml(
+      documentWith([
+        block('li-a1', 'list-item', 'li-a1', 0, {
+          listLevel: 0,
+          listOrdered: false,
+          listId: 'a',
+        }),
+        block('li-a2', 'list-item', 'li-a2', 1, {
+          listLevel: 1,
+          listOrdered: false,
+          listId: 'a',
+        }),
+        block('li-b1', 'list-item', 'li-b1', 2, {
+          listLevel: 1,
+          listOrdered: false,
+          listId: 'b',
+        }),
+        block('li-b2', 'list-item', 'li-b2', 3, {
+          listLevel: 1,
+          listOrdered: false,
+          listId: 'b',
+        }),
+      ]),
+    )
+
+    expect(xhtml).toContain(
+      '<ul>\n  <li id="li-a1" data-struct-id="li-a1">li-a1\n    <ul>\n      <li id="li-a2" data-struct-id="li-a2">li-a2</li>\n      </ul>\n    <ul>\n      <li id="li-b1" data-struct-id="li-b1">li-b1</li>\n      <li id="li-b2" data-struct-id="li-b2">li-b2</li>\n      </ul>\n  </li>\n  </ul>',
+    )
+    // The boundary is still hard: the second list is its own container.
+    expect(xhtml.match(/<ul>/g)).toHaveLength(3)
+    expect(XMLValidator.validate(xhtml)).toBe(true)
+  })
+
+  it('publishes a mixed flat and nested run as one list', () => {
+    // A contiguous run of list items is one list: the item that does not
+    // declare the nested contract is the outermost item of the same list.
+    const xhtml = renderPublicationXhtml(
+      documentWith([
+        block('li-1', 'list-item', 'first', 0, { ordered: true }),
+        block('li-2', 'list-item', 'second', 1, {
+          listLevel: 0,
+          listOrdered: true,
+        }),
+        block('li-3', 'list-item', 'third', 2, {
+          listLevel: 1,
+          listOrdered: true,
+        }),
+      ]),
+    )
+
+    expect(xhtml).toContain(
+      '<ol>\n  <li id="li-1" data-struct-id="li-1">first</li>\n  <li id="li-2" data-struct-id="li-2">second\n    <ol>\n      <li id="li-3" data-struct-id="li-3">third</li>\n      </ol>\n  </li>\n  </ol>',
+    )
+    expect(xhtml.match(/<\/ol>/g)).toHaveLength(2)
+    expect(XMLValidator.validate(xhtml)).toBe(true)
+  })
 })
 
 describe('STRUCT figure captions', () => {
@@ -459,5 +522,80 @@ describe('STRUCT figure captions', () => {
     expect(content).toContain(
       '<ol>\n  <li id="li-parent" data-struct-id="li-parent">Ordered parent item\n    <ul>\n      <li id="li-child" data-struct-id="li-child">Nested bullet item</li>\n      </ul>\n  </li>\n  </ol>',
     )
+  })
+
+  it('publishes the attached caption once when the host carries the same text', () => {
+    // Precedence: the attached caption is the host's caption. The host's own
+    // copy of the caption text is the duplicate and is not published twice.
+    const xhtml = renderPublicationXhtml(
+      documentWith(
+        [
+          {
+            ...block('figure-1', 'figure', 'Figure 1. A synthetic image.', 0),
+            label: 'A synthetic image.',
+          },
+          block('caption-1', 'caption', 'Figure 1. A synthetic image.', 1),
+        ],
+        [captionRelationship('rel-1', 'figure-1', 'caption-1')],
+      ),
+    )
+
+    expect(xhtml.match(/Figure 1\. A synthetic image\./g)).toHaveLength(1)
+    expect(xhtml).toContain(
+      '<figcaption id="caption-1" data-struct-id="caption-1" data-relationship-id="rel-1">Figure 1. A synthetic image.</figcaption>',
+    )
+  })
+
+  it('refuses a host whose own caption text differs from the attached caption', () => {
+    // The host's own text is not silently dropped: the document is
+    // inconsistent and the renderer refuses it instead of publishing a
+    // caption that contradicts the host's own text.
+    const document = documentWith(
+      [
+        {
+          ...block('figure-1', 'figure', 'HOST TEXT', 0),
+          label: 'A synthetic image.',
+        },
+        block('caption-1', 'caption', 'CAPTION TEXT', 1),
+      ],
+      [captionRelationship('rel-1', 'figure-1', 'caption-1')],
+    )
+
+    let raised: unknown
+    try {
+      renderPublicationXhtml(document)
+    } catch (error) {
+      raised = error
+    }
+
+    expect(raised).toBeInstanceOf(RenderedPublicationPlanError)
+    expect((raised as RenderedPublicationPlanError).code).toBe(
+      'CONFLICTING_CAPTION',
+    )
+  })
+
+  it('publishes the attached caption when the host carries no own caption text', () => {
+    // The host has no figcaption text of its own: its label stays published
+    // as the alt attribute and the attached caption is the host's caption.
+    const xhtml = renderPublicationXhtml(
+      documentWith(
+        [
+          {
+            ...block('figure-1', 'figure', '', 0),
+            label: 'A synthetic image.',
+            fallbackAssetIds: ['asset-1'],
+          },
+          block('caption-1', 'caption', 'Figure 1. A synthetic image.', 1),
+        ],
+        [captionRelationship('rel-1', 'figure-1', 'caption-1')],
+        true,
+      ),
+    )
+
+    expect(xhtml).toContain('alt="A synthetic image."')
+    expect(xhtml).toContain(
+      '<figcaption id="caption-1" data-struct-id="caption-1" data-relationship-id="rel-1">Figure 1. A synthetic image.</figcaption>',
+    )
+    expect(xhtml).not.toContain('class="caption"')
   })
 })

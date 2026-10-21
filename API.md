@@ -30,6 +30,43 @@ document that omits it decodes and renders unchanged, so document schema
 `0.2.0` is unchanged and needs no version bump. No runtime export, export
 path, or manifest entry changes with it.
 
+## Renderer surface (`@erniesg/struct/renderers/xhtml`)
+
+`renderPublicationXhtml(document, options?)` is the only runtime export of this path. It renders a `StructDocument` into a deterministic XHTML document. The list and caption rules below are part of this package's contract: an application may rely on them without reading the renderer source.
+
+### List attributes
+
+The list attributes are optional, additive members of the existing free-form `attributes` bag of a `list-item` block (`Record<string, string | number | boolean>`). A document that omits them decodes and renders unchanged, the document schema stays `0.2.0`, and no runtime export, export path, or manifest entry changes with them.
+
+| Attribute | Type | Meaning |
+| --- | --- | --- |
+| `listLevel` | integer | The item's declared nesting level. Only an **integer** is nesting metadata. A non-negative integer is the item's depth; a negative integer is nesting metadata whose depth resolves to the outermost level (`0`). A fractional or non-numeric `listLevel` is **not** nesting metadata at all. |
+| `listOrdered` | boolean | The item's list ordering. It is the explicit spelling of the older `ordered` attribute and wins when a document declares both. |
+| `listOrdinal` | integer | The item's number inside an ordered list. It becomes the `<ol start="N">` value of the item's list when it differs from `1`. It is not nesting metadata. |
+| `listId` | string | The list identity. It is the list's identity in the flat contract and a hard boundary in the nested contract. |
+| `ordered` | boolean | The pre-existing ordering flag. It is used when `listOrdered` is absent. |
+
+A fractional or non-numeric `listLevel` is therefore published by the flat contract, while a negative integer `listLevel` is published by the nested contract as an outermost item. The resolved depth of any non-nesting-metadata value is the outermost level, but that depth is only consulted for items that declare the nested contract.
+
+### List grouping rules
+
+- A **contiguous run** of `list-item` blocks is **one list**. Furniture blocks do not split a run; any other block kind does.
+- The run is a **flat list** when no item in it declares the nested contract (no integer `listLevel` and no boolean `listOrdered`). Consecutive items that share a `listId` form one list, and the **first** item of the list decides whether the list is ordered. This is the original list contract and it is unchanged: a document that declares no nesting metadata renders exactly as it did before nested lists existed.
+- The run is a **nested list** when any item in it declares the nested contract. The items are grouped by their declared level, and the items that do not declare nesting are the outermost items of that same list. A run that mixes the two contracts therefore publishes **one** list, not one list per contract.
+- The declared level is a **grouping key**, not the rendered depth: the declared level of the run's first item is the base, the items that declare the same level stay together, and a level that jumps by more than one opens exactly one nested list.
+- A **change of `listId` is a hard boundary**: the following list never joins the open list's container and never shares its items. The list after the boundary keeps its own declared nesting: it is rooted at its own declared level, measured from the base level of the run, and it opens inside the item published at the parent depth. The boundary never flattens the following list's declared nesting to the root level.
+- A **sibling whose ordering differs** from the open list starts a new sibling list instead of mixing `<ol>` and `<ul>` items in one container.
+- The rendered nesting depth is bounded: at most 16 nested lists below the outermost list. An item that would open a deeper container joins the enclosing list instead.
+
+### Caption attachment
+
+- A caption is attached to a host block only through the document's declared relationship: `kind` `'caption'`, `status` `'matched'`, `from` the **host** block id (a `figure`, `table`, or `equation` block), and `to` an array holding the **caption** block id. The renderer never matches a caption by text, label, or position.
+- An attached caption is published **exactly once**, inside the host's `<figcaption>`, and the caption block is not published again as a paragraph. The figcaption carries the caption block's id, its `data-struct-id`, its source observation anchors, and the `data-relationship-id` of the attaching relationship. The host's alt text is unaffected.
+- **Precedence rule: the attached caption is the host's caption.** The caption's content is published inside the host's `<figcaption>`, and the host's own figcaption text is not published a second time. This is what closes the duplication where the host carries its own copy of the caption text.
+- A host whose own caption text **differs** from the attached caption's text is a document inconsistency, and the renderer does not swallow it. The publication is refused with the renderer's publication-plan error (`name` `RenderedPublicationPlanError`, `code` `CONFLICTING_CAPTION`; the same error type already carries the pre-existing `BUDGET` and `DUPLICATE_IDENTIFIER` codes). The publication renderer returns markup and has no diagnostics channel, so refusing the document is the only observable, fail-closed report. A host that carries no caption text of its own (an empty host text) is not an inconsistency: its label stays published as the alt attribute, so nothing is lost.
+- An **ambiguous** attachment is not attached at all: a host with more than one matched caption, or a caption claimed by more than one host, keeps both sides published exactly as the graph states them.
+- A caption whose relationship is not `matched`, or whose relationship points the other way, stays its own paragraph and the host keeps its own `<figcaption>`.
+
 ## Bundle surface (`@erniesg/struct/bundle`)
 
 Runtime exports (exactly seven, matching `API_MANIFEST.json`):

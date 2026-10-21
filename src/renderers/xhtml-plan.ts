@@ -410,7 +410,7 @@ export type RenderedPublicationPlan = {
 
 export class RenderedPublicationPlanError extends Error {
   constructor(
-    readonly code: 'BUDGET' | 'DUPLICATE_IDENTIFIER',
+    readonly code: 'BUDGET' | 'DUPLICATE_IDENTIFIER' | 'CONFLICTING_CAPTION',
     readonly path: string,
     message: string,
   ) {
@@ -864,6 +864,16 @@ function materializeInlinePlan(draft: InlineDraft): RenderedInlineSegment[] {
  * attachment - a host with more than one caption, or a caption claimed by
  * more than one host - is not attached at all, so both sides stay published
  * exactly as the graph states them.
+ *
+ * The attached caption is the host's caption: it is published inside the
+ * host's `<figcaption>`, and the host's own caption text is not published a
+ * second time. That precedence is what closes the duplication where the host
+ * carries its own copy of the caption text. A host whose own caption text
+ * differs from the attached caption's text is therefore a document
+ * inconsistency, and the renderer refuses the document instead of silently
+ * dropping the host's text: the publication renderer returns markup and has
+ * no diagnostics channel, so the only observable, fail-closed report is the
+ * refusal itself.
  */
 function planAttachedCaptions(
   document: StructDocument,
@@ -924,6 +934,16 @@ function planAttachedCaptions(
     if ((hostsByCaption.get(claim.captionBlockId)?.size ?? 0) !== 1) continue
     const captionBlockIndex = blockIndexById.get(claim.captionBlockId)
     if (captionBlockIndex === undefined) continue
+    const hostBlockIndex = blockIndexById.get(hostBlockId)
+    if (hostBlockIndex === undefined) continue
+    const hostText = document.blocks[hostBlockIndex]!.text.trim()
+    const captionText = document.blocks[captionBlockIndex]!.text.trim()
+    if (hostText !== '' && hostText !== captionText)
+      throw new RenderedPublicationPlanError(
+        'CONFLICTING_CAPTION',
+        `$.blocks[${hostBlockIndex}].text`,
+        `attached caption ${claim.captionBlockId} contradicts the caption text of host ${hostBlockId}`,
+      )
     captionsByHostBlockId.set(hostBlockId, {
       captionBlockId: claim.captionBlockId,
       captionBlockIndex,

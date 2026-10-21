@@ -50,8 +50,16 @@ function integerAttribute(value: unknown): number | null {
  * The nesting depth declared by a list item.
  *
  * `listLevel` is the additive compatibility attribute: a non-negative
- * integer is the item's depth, and anything else (absent, fractional,
- * negative, or not a number) is the outermost level.
+ * integer is the item's depth. Every other value (absent, fractional,
+ * negative, or not a number) resolves to the outermost level, 0.
+ *
+ * The resolved depth and the contract the item is published by are two
+ * different questions, and `listItemDeclaresNesting` decides the contract.
+ * Only an integer `listLevel` (or a boolean `listOrdered`) declares the
+ * nested contract, so a fractional or non-numeric `listLevel` is not nesting
+ * metadata at all and the item is published by the flat contract, while a
+ * negative integer `listLevel` is nesting metadata whose depth resolves to
+ * the outermost level.
  */
 export function listItemLevel(attributes: Record<string, unknown> | undefined) {
   const level = integerAttribute(attributes?.listLevel)
@@ -88,7 +96,15 @@ export function listItemListId(
   return typeof attributes?.listId === 'string' ? attributes.listId : null
 }
 
-/** True when the item declares the nesting metadata of a nested list. */
+/**
+ * True when the item declares the nesting metadata of a nested list.
+ *
+ * Only an integer `listLevel` or a boolean `listOrdered` declares the
+ * nested contract. A fractional or non-numeric `listLevel` is not nesting
+ * metadata: the item is published by the flat contract. A negative integer
+ * `listLevel` is nesting metadata, and its depth resolves to the outermost
+ * level.
+ */
 export function listItemDeclaresNesting(
   attributes: Record<string, unknown> | undefined,
 ) {
@@ -151,17 +167,39 @@ type Frame = {
  * items that declare the same level stay together. A sibling whose ordering
  * differs from the open list starts a new sibling list instead of mixing
  * `<ol>` and `<ul>` items in one container.
+ *
+ * A change of the list identity is a hard boundary: the open list ends, and
+ * the next list never joins the open list's container and never shares its
+ * items. The list after the boundary keeps its own declared nesting. It is
+ * rooted at its own declared level, measured from the base level of the run
+ * (the declared level of the run's first item), and it opens inside the item
+ * published at the parent depth, so the boundary never flattens the
+ * following list's declared nesting to the root level.
  */
 function buildNestedContainers(
   items: readonly RenderedListItem[],
 ): RenderedListContainer[] {
   const roots: RenderedListContainer[] = []
   const stack: Frame[] = []
+  // The base level of the run: the declared level of its first item. Every
+  // other item's depth is measured from it.
+  const baseLevel = items.length > 0 ? items[0]!.level : 0
+  // The last item published at each rendered depth. The list after a list
+  // identity boundary opens inside the item at the parent depth, so the
+  // boundary keeps the declared nesting of the following list.
+  const lastItemAtDepth: Array<RenderedListItemEntry | undefined> = []
   for (const item of items) {
     const level = item.level
+    let boundary = false
     while (stack.length > 0) {
       const top = stack[stack.length - 1]!
-      if (top.listId !== item.listId || top.level > level) {
+      if (top.listId !== item.listId) {
+        // The list identity changed: the open list ends here.
+        stack.pop()
+        boundary = true
+        continue
+      }
+      if (top.level > level) {
         stack.pop()
         continue
       }
@@ -173,6 +211,7 @@ function buildNestedContainers(
         const entry: RenderedListItemEntry = { item, children: [] }
         top.container.items.push(entry)
         top.lastItem = entry
+        lastItemAtDepth[top.depth] = entry
         continue
       }
       // The sibling changes ordering: the open list ends and a sibling list
@@ -193,9 +232,31 @@ function buildNestedContainers(
       const entry: RenderedListItemEntry = { item, children: [] }
       container.items.push(entry)
       frame.lastItem = entry
+      lastItemAtDepth[frame.depth] = entry
       continue
     }
-    const depth = top ? top.depth + 1 : 0
+    let depth: number
+    let parent: RenderedListItemEntry | undefined
+    if (top) {
+      depth = top.depth + 1
+      parent = top.lastItem ?? undefined
+    } else if (boundary) {
+      // The list after a list identity boundary is rooted at its own
+      // declared level, measured from the base level of the run, and opens
+      // inside the item published at the parent depth.
+      const target = Math.min(
+        Math.max(0, level - baseLevel),
+        MAX_RENDERED_LIST_NESTING_DEPTH,
+      )
+      let parentDepth = target - 1
+      while (parentDepth >= 0 && lastItemAtDepth[parentDepth] === undefined)
+        parentDepth -= 1
+      depth = parentDepth < 0 ? 0 : parentDepth + 1
+      parent = parentDepth < 0 ? undefined : lastItemAtDepth[parentDepth]
+    } else {
+      depth = 0
+      parent = undefined
+    }
     if (top && depth > MAX_RENDERED_LIST_NESTING_DEPTH) {
       // The declared depth is beyond the rendered bound: the item joins the
       // enclosing list instead of opening another container.
@@ -206,9 +267,9 @@ function buildNestedContainers(
     }
     const container = createContainer(item.ordered, item.ordinal)
     let siblings: RenderedListContainer[]
-    if (top && top.lastItem) {
-      top.lastItem.children.push(container)
-      siblings = top.lastItem.children
+    if (parent) {
+      parent.children.push(container)
+      siblings = parent.children
     } else {
       roots.push(container)
       siblings = roots
@@ -226,6 +287,7 @@ function buildNestedContainers(
     const entry: RenderedListItemEntry = { item, children: [] }
     container.items.push(entry)
     frame.lastItem = entry
+    lastItemAtDepth[depth] = entry
   }
   return roots
 }
@@ -258,33 +320,25 @@ function buildFlatContainers(
 /**
  * Plan the lists of one contiguous run of list items.
  *
- * Items that declare nesting metadata and items that do not are grouped
- * separately, because the two contracts are different: the flat contract
- * groups by list identity, and the nested contract groups by declared
- * level. A run that mixes them publishes one list per group.
+ * A contiguous run of list items is one list. The run is a flat list when no
+ * item in it declares the nested contract: consecutive items that share a
+ * list identity form one list, and the first item of the list decides
+ * whether the list is ordered. This is the original list contract, and a
+ * document that declares no nesting metadata renders exactly as it did
+ * before nested lists existed.
+ *
+ * The run is a nested list when any item in it declares the nested
+ * contract. The items are then grouped by their declared level, and the
+ * items that do not declare nesting are the outermost items of that same
+ * list. A run that mixes the two contracts therefore publishes one list,
+ * not one list per contract.
  */
 export function planListContainers(
   items: readonly RenderedListItem[],
 ): RenderedListContainer[] {
-  const containers: RenderedListContainer[] = []
-  let segment: RenderedListItem[] = []
-  let segmentNested: boolean | null = null
-  const flush = () => {
-    if (segment.length === 0) return
-    containers.push(
-      ...(segmentNested
-        ? buildNestedContainers(segment)
-        : buildFlatContainers(segment)),
-    )
-    segment = []
-  }
-  for (const item of items) {
-    if (segmentNested !== null && item.nested !== segmentNested) flush()
-    segmentNested = item.nested
-    segment.push(item)
-  }
-  flush()
-  return containers
+  if (items.length === 0) return []
+  const nested = items.some((item) => item.nested)
+  return nested ? buildNestedContainers(items) : buildFlatContainers(items)
 }
 
 /**
