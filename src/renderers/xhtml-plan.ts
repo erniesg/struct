@@ -357,6 +357,21 @@ export type RenderedHyperlinkPlan = {
   estimatedBytesPerSegment: number
 }
 
+/**
+ * A caption block that is attached to a figure, table, or equation block by
+ * a matched `caption` relationship.
+ *
+ * The attachment is the graph's own statement that the caption block is the
+ * host's caption, so the renderer can publish the caption once, inside the
+ * host's `<figcaption>`, without comparing any text.
+ */
+export type RenderedCaptionPlan = {
+  captionBlockId: string
+  captionBlockIndex: number
+  relationshipId: string
+  relationshipIdStable: string
+}
+
 type DraftRun = {
   run: StructInline
   originalIndex: number
@@ -387,11 +402,15 @@ export type RenderedPublicationPlan = {
   >
   semanticByOwnerKey: ReadonlyMap<string, RenderedSemanticPlan>
   hyperlinkByOwnerKey: ReadonlyMap<string, RenderedHyperlinkPlan>
+  /** Caption blocks that are published inside their host's figcaption. */
+  captionsByHostBlockId: ReadonlyMap<string, RenderedCaptionPlan>
+  /** The caption blocks that are published inside a host's figcaption. */
+  attachedCaptionBlockIds: ReadonlySet<string>
 }
 
 export class RenderedPublicationPlanError extends Error {
   constructor(
-    readonly code: 'BUDGET' | 'DUPLICATE_IDENTIFIER',
+    readonly code: 'BUDGET' | 'DUPLICATE_IDENTIFIER' | 'CONFLICTING_CAPTION',
     readonly path: string,
     message: string,
   ) {
@@ -835,6 +854,107 @@ function materializeInlinePlan(draft: InlineDraft): RenderedInlineSegment[] {
   return segments
 }
 
+/**
+ * Collect the caption blocks that a matched `caption` relationship attaches
+ * to a figure, table, or equation block.
+ *
+ * The relationship is the only attachment evidence the renderer accepts: a
+ * caption is never attached because its text matches another caption, and
+ * never because some other relationship happens to mention it. An ambiguous
+ * attachment - a host with more than one caption, or a caption claimed by
+ * more than one host - is not attached at all, so both sides stay published
+ * exactly as the graph states them.
+ *
+ * The attached caption is the host's caption: it is published inside the
+ * host's `<figcaption>`, and the host's own caption text is not published a
+ * second time. That precedence is what closes the duplication where the host
+ * carries its own copy of the caption text. A host whose own caption text
+ * differs from the attached caption's text is therefore a document
+ * inconsistency, and the renderer refuses the document instead of silently
+ * dropping the host's text: the publication renderer returns markup and has
+ * no diagnostics channel, so the only observable, fail-closed report is the
+ * refusal itself.
+ */
+function planAttachedCaptions(
+  document: StructDocument,
+  relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
+): {
+  captionsByHostBlockId: Map<string, RenderedCaptionPlan>
+  attachedCaptionBlockIds: Set<string>
+} {
+  const captionsByHostBlockId = new Map<string, RenderedCaptionPlan>()
+  const attachedCaptionBlockIds = new Set<string>()
+  const blockIndexById = new Map<string, number>()
+  document.blocks.forEach((block, index) => {
+    if (!blockIndexById.has(block.id)) blockIndexById.set(block.id, index)
+  })
+  const hostIds = new Set(
+    document.blocks
+      .filter(
+        (block) =>
+          block.kind === 'figure' ||
+          block.kind === 'table' ||
+          block.kind === 'equation',
+      )
+      .map((block) => block.id),
+  )
+  const captionBlockIds = new Set(
+    document.blocks
+      .filter((block) => block.kind === 'caption')
+      .map((block) => block.id),
+  )
+  const claimsByHost = new Map<
+    string,
+    Array<{ captionBlockId: string; relationshipId: string }>
+  >()
+  const hostsByCaption = new Map<string, Set<string>>()
+  for (const relationship of relationships.values()) {
+    if (relationship.kind !== 'caption') continue
+    if (relationship.status !== 'matched') continue
+    if (!hostIds.has(relationship.from)) continue
+    for (const target of relationship.to) {
+      if (!captionBlockIds.has(target)) continue
+      const claims = claimsByHost.get(relationship.from) ?? []
+      claims.push({
+        captionBlockId: target,
+        relationshipId: relationship.id,
+      })
+      claimsByHost.set(relationship.from, claims)
+      const hosts = hostsByCaption.get(target) ?? new Set<string>()
+      hosts.add(relationship.from)
+      hostsByCaption.set(target, hosts)
+    }
+  }
+  for (const [hostBlockId, claims] of claimsByHost) {
+    const distinctCaptions = new Set(
+      claims.map((claim) => claim.captionBlockId),
+    )
+    if (distinctCaptions.size !== 1) continue
+    const claim = claims[0]!
+    if ((hostsByCaption.get(claim.captionBlockId)?.size ?? 0) !== 1) continue
+    const captionBlockIndex = blockIndexById.get(claim.captionBlockId)
+    if (captionBlockIndex === undefined) continue
+    const hostBlockIndex = blockIndexById.get(hostBlockId)
+    if (hostBlockIndex === undefined) continue
+    const hostText = document.blocks[hostBlockIndex]!.text.trim()
+    const captionText = document.blocks[captionBlockIndex]!.text.trim()
+    if (hostText !== '' && hostText !== captionText)
+      throw new RenderedPublicationPlanError(
+        'CONFLICTING_CAPTION',
+        `$.blocks[${hostBlockIndex}].text`,
+        `attached caption ${claim.captionBlockId} contradicts the caption text of host ${hostBlockId}`,
+      )
+    captionsByHostBlockId.set(hostBlockId, {
+      captionBlockId: claim.captionBlockId,
+      captionBlockIndex,
+      relationshipId: claim.relationshipId,
+      relationshipIdStable: stableId(claim.relationshipId),
+    })
+    attachedCaptionBlockIds.add(claim.captionBlockId)
+  }
+  return { captionsByHostBlockId, attachedCaptionBlockIds }
+}
+
 /** Build one document-local publication plan before any rendered owner arrays. */
 export function buildRenderedPublicationPlan(
   document: StructDocument,
@@ -936,6 +1056,8 @@ export function buildRenderedPublicationPlan(
     notes.push(note)
     authorNotesByAuthor.set(note.author, notes)
   }
+  const { captionsByHostBlockId, attachedCaptionBlockIds } =
+    planAttachedCaptions(document, relationships)
   return {
     sources,
     sourceByKey,
@@ -945,6 +1067,8 @@ export function buildRenderedPublicationPlan(
     authorNotesByAuthor,
     semanticByOwnerKey,
     hyperlinkByOwnerKey,
+    captionsByHostBlockId,
+    attachedCaptionBlockIds,
   }
 }
 

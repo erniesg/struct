@@ -70,6 +70,39 @@ exactly like the other formatting flags. Schema `0.2.0` therefore needs no
 version bump: existing documents decode unchanged, and the strict decoder still
 refuses every undeclared inline field.
 
+## Publication lists and attached captions (normative)
+
+A list item carries optional, additive attributes in the document's free-form
+attribute bag: `listLevel`, `listOrdered`, `listOrdinal`, plus the pre-existing
+`ordered` and `listId`. A document that omits them decodes and renders exactly
+as it did before they existed, so schema `0.2.0` needs no version bump.
+
+A contiguous run of `list-item` blocks is one list. The run is a flat list when
+no item declares the nested contract (no integer `listLevel` and no boolean
+`listOrdered`); the flat contract groups by `listId`, and the first item of a
+list decides whether the list is ordered. The run is a nested list when any
+item declares the nested contract; the items are then grouped by their declared
+level, and the items that do not declare nesting are the outermost items of
+that same list, so a run that mixes the two contracts publishes one list and
+not one list per contract. A change of `listId` is a hard boundary in both
+contracts: the following list never joins the open list's container, and it
+keeps its own declared nesting instead of being flattened to the root level.
+
+A caption is attached to a host block (`figure`, `table`, `equation`) only
+through a declared relationship: `kind` `caption`, `status` `matched`, `from`
+the host block id, `to` the caption block id. An attached caption is published
+exactly once, inside the host's `<figcaption>`, and the caption block is not
+published again as a paragraph. The attached caption is authoritative for the
+host's figcaption: the host's own figcaption text is not published a second
+time. That precedence is what closes the duplication where the host carries
+its own copy of the caption text. A host whose own caption text differs from
+the attached caption's text is a document inconsistency, and the renderer fails
+closed on it — it refuses the publication with the renderer's publication-plan
+error instead of silently dropping the host's text. The publication renderer
+returns markup and has no diagnostics channel, so the refusal is the only
+observable report. The full attribute table, the grouping rules and the
+caption-attachment rules are in [API.md](./API.md).
+
 ## Planned Bundle semantics (normative)
 
 The semantics below are the normative target. Stage 1 implements the surface described in
