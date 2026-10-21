@@ -10,6 +10,7 @@ const acceptedExports = [
   './recovery',
   './renderers/xhtml',
   './renderers/epub',
+  './bundle',
 ]
 
 const stableIdentityExports = [

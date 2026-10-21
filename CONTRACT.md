@@ -22,14 +22,25 @@ Emitted XHTML identifier normalization, collision checks, and publication
 planning belong to the XHTML renderer boundary; a semantically valid document
 is not rejected merely because renderer-normalized identifiers collide.
 
-At base `6ecb78d1753b847ec7295bf45f43237225663728`, only the private `0.0.0`
-document/codecs/IDs/recovery/XHTML/EPUB capabilities are **current**.
-`StructBundle`, its decoder, verifier, resolver executor, and `./bundle`
-facade are a **documented target**, planned for S-03. Exact code plus local
-evidence is **implemented, unreleased**; it is not a release. **Released**
-requires the exact registry version, immutable artifact digest, install proof,
-and release record. Local tests, branches, and documentation are not release
-evidence.
+At the current runtime baseline (the cutover candidate head; the exact commit
+is recorded in the release packet),
+the private `0.0.0` document/codecs/IDs/recovery/XHTML/EPUB capabilities plus
+the current embedded-only public `./bundle` facade are **current, implemented,
+unreleased** surface. The facade exports all seven runtime names recorded in
+`API_MANIFEST.json`: `STRUCT_BUNDLE_LIMITS_PROFILE`,
+`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
+`createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
+`verifyStructBundle`. It follows the ADR-0001 minimum stable contract:
+`createStructBundle` and `verifyStructBundle` return a direct handle or throw
+`StructBundleError`; `decodeStructBundle` is always async and rejects with
+`StructBundleError`; `encodeStructBundle` returns `Uint8Array` and throws
+`StructBundleError` (`FORGED`) for forged handles. External payloads continue
+to fail closed with `UNRESOLVED`. The isolated resolver/executor protocol and
+its execution driver are implemented privately in-tree but are not public
+surface. The public external-bytes decode seam (`decodeStructBundle`) is wired
+through the private external core and is part of the current surface; the
+real-host conformance harness is implemented in-tree as test-only evidence and
+is not public surface; full S-03/S-04 acceptance remains open.
 
 Ernie.SG constructs bundles from approved revisions and authenticates producer
 approval/release records. Aether consumes only a verified, exact-pinned bundle
@@ -37,6 +48,14 @@ and owns visual composition. Rucksack may orchestrate target-owned commands but
 does not own a Struct model or renderer.
 
 ## Planned Bundle semantics (normative)
+
+The semantics below are the normative target. Stage 1 implements the surface described in
+[Current public surface](#current-public-surface) — the embedded
+create/verify/encode facade, the frozen versioned limits profile, and the public
+external-bytes decode seam. The resolver/executor protocol remains private; the
+real-host conformance harness exists only as in-tree test evidence. Nothing in
+this section asserts that the target operations beyond that surface exist
+today.
 
 The JSON envelope (`StructBundleJson`), its byte-free document projection
 (`StructBundleDocumentJson`), and an opaque runtime `VerifiedStructBundle` are
@@ -147,5 +166,18 @@ must prove zero allocation and zero start for each of those evidence failures.
 ## Current public surface
 
 The actual current package paths and the intended first-release surface are
-listed in [API.md](./API.md). `./bundle` is unavailable until S-03 completes;
-no documentation in this contract makes it a current runtime capability.
+listed in [API.md](./API.md). `./bundle` is a current embedded-only export
+with all seven runtime names (`STRUCT_BUNDLE_LIMITS_PROFILE`,
+`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
+`createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
+`verifyStructBundle`). It accepts embedded-asset envelopes and, when the full flat resolver
+configuration is provided, resolves external assets through the private
+external core (`decodeStructBundle`). The isolated
+resolver/executor protocol and its execution driver are implemented privately
+in-tree but are not part of the public surface. The public external-bytes
+decode seam is part of the current surface; the real-host conformance
+harness is implemented in-tree as test-only evidence, while full S-03/S-04
+acceptance remains separately pending. These
+documents ship in the package file list; a documentation correction changes packed contents, so any repin requires a
+fresh packaged-artifact and installed-consumer proof. No application repin is
+part of this documentation change.

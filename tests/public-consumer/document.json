@@ -1,0 +1,273 @@
+{
+  "schemaVersion": "0.2.0",
+  "documentId": "s04-assets-links",
+  "source": {
+    "format": "docx",
+    "fileName": "s04-fixture.docx",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "byteLength": 4096,
+    "pageCount": 1,
+    "localOnly": true
+  },
+  "metadata": {
+    "title": "Assets and links baseline",
+    "subtitle": "Repeatability fixture",
+    "authors": [
+      "Ada Lovelace",
+      "Grace Hopper"
+    ],
+    "abstract": "Frozen S04 renderer baseline fixture.",
+    "language": "en",
+    "baseDirection": "ltr",
+    "publicationDate": "2026-10-20",
+    "artifactModifiedAt": "2026-10-20T00:00:00Z",
+    "updated": "2026-10-20",
+    "affiliations": [
+      "Analytical Engine Laboratory"
+    ],
+    "authorAffiliations": [
+      {
+        "author": "Ada Lovelace",
+        "label": "1"
+      },
+      {
+        "author": "Grace Hopper",
+        "label": "1"
+      }
+    ]
+  },
+  "blocks": [
+    {
+      "id": "s04-figure-intro",
+      "kind": "paragraph",
+      "text": "See figure one and the source.",
+      "page": 1,
+      "order": 0,
+      "column": "single",
+      "inline": [
+        {
+          "start": 4,
+          "end": 14,
+          "href": "#s04-figure",
+          "semanticRole": "cross-reference",
+          "relationshipId": "s04-rel-figure"
+        },
+        {
+          "start": 23,
+          "end": 29,
+          "href": "https://example.org/source"
+        }
+      ],
+      "evidence": {
+        "confidence": 1,
+        "pages": [
+          1
+        ],
+        "boxes": [
+          {
+            "page": 1,
+            "x": 0,
+            "y": 0,
+            "width": 10,
+            "height": 10,
+            "rotation": 0
+          }
+        ],
+        "sourceIds": [
+          "s04-source-node"
+        ]
+      }
+    },
+    {
+      "id": "s04-figure",
+      "kind": "figure",
+      "text": "",
+      "page": 1,
+      "order": 1,
+      "column": "single",
+      "label": "Figure one",
+      "inline": [],
+      "evidence": {
+        "confidence": 1,
+        "pages": [
+          1
+        ],
+        "boxes": [
+          {
+            "page": 1,
+            "x": 0,
+            "y": 0,
+            "width": 10,
+            "height": 10,
+            "rotation": 0
+          }
+        ],
+        "sourceIds": [
+          "s04-source-node"
+        ]
+      },
+      "fallbackAssetIds": [
+        "asset-s04-packed-marker-7c1f9ab2"
+      ],
+      "attributes": {
+        "objectType": "figure"
+      }
+    },
+    {
+      "id": "s04-caption",
+      "kind": "caption",
+      "text": "Measured figure caption",
+      "page": 1,
+      "order": 2,
+      "column": "single",
+      "inline": [],
+      "evidence": {
+        "confidence": 1,
+        "pages": [
+          1
+        ],
+        "boxes": [
+          {
+            "page": 1,
+            "x": 0,
+            "y": 0,
+            "width": 10,
+            "height": 10,
+            "rotation": 0
+          }
+        ],
+        "sourceIds": [
+          "s04-source-node"
+        ]
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-s04-packed-marker-7c1f9ab2",
+      "kind": "figure",
+      "href": "assets/asset-s04-packed-marker-7c1f9ab2.png",
+      "mediaType": "image/png",
+      "sha256": "606620383062beb1f62e53d1466a3e838e19de27cae890df4d8a542de833baba",
+      "width": 320,
+      "height": 200,
+      "bytes": "iVBORw0KGgoAAAAB",
+      "sourceObjectIds": [
+        "s04-source-asset"
+      ],
+      "evidence": {
+        "confidence": 1,
+        "pages": [
+          1
+        ],
+        "boxes": [
+          {
+            "page": 1,
+            "x": 0,
+            "y": 0,
+            "width": 10,
+            "height": 10,
+            "rotation": 0
+          }
+        ],
+        "sourceIds": [
+          "s04-source-node"
+        ]
+      },
+      "fallback": "asset"
+    }
+  ],
+  "relationships": [
+    {
+      "id": "s04-rel-figure",
+      "kind": "caption",
+      "from": "s04-caption",
+      "to": [
+        "s04-figure"
+      ],
+      "status": "matched",
+      "confidence": 1,
+      "evidence": {
+        "confidence": 1,
+        "pages": [
+          1
+        ],
+        "boxes": [
+          {
+            "page": 1,
+            "x": 0,
+            "y": 0,
+            "width": 10,
+            "height": 10,
+            "rotation": 0
+          }
+        ],
+        "sourceIds": [
+          "s04-source-node"
+        ]
+      }
+    }
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "width": 600,
+      "height": 800,
+      "rotation": 0,
+      "blocks": [
+        "s04-figure-intro",
+        "s04-figure",
+        "s04-caption"
+      ],
+      "columns": [
+        {
+          "id": "page-1-single",
+          "side": "single",
+          "blockIds": [
+            "s04-figure-intro",
+            "s04-figure",
+            "s04-caption"
+          ]
+        }
+      ]
+    }
+  ],
+  "diagnostics": [],
+  "recovery": {
+    "status": "ready",
+    "title": "Ready",
+    "summary": "No recovery required",
+    "issues": []
+  },
+  "receipt": {
+    "schemaVersion": "0.2.0",
+    "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "blockCount": 3,
+    "assetCount": 1,
+    "relationshipCount": 1,
+    "diagnosticCount": 0,
+    "textCharacterCount": 53,
+    "conservation": {
+      "sourceNodeCount": 3,
+      "accountedSourceNodeCount": 3,
+      "sourceRegionCount": 0,
+      "accountedSourceRegionCount": 0,
+      "sourceAnnotationCount": 3,
+      "accountedSourceAnnotationCount": 3,
+      "sourceAssetCount": 1,
+      "accountedSourceAssetCount": 1,
+      "sourceRelationshipCount": 1,
+      "accountedSourceRelationshipCount": 1,
+      "sourceDiagnosticCount": 0,
+      "accountedSourceDiagnosticCount": 0,
+      "sourceTextCharacterCount": 53,
+      "structBlockCount": 3,
+      "structAssetCount": 1,
+      "structRelationshipCount": 1,
+      "structDiagnosticCount": 0,
+      "structTextCharacterCount": 53
+    },
+    "generatedSha256": "508765c5c0317d14aa7b7c9905d2e08abec725a126326bcbb4dfd105538afbf6",
+    "documentId": "s04-assets-links"
+  }
+}

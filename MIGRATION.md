@@ -30,8 +30,24 @@ operation, not a migration. It remains available through **2026-11-30** and is
 removed after that date. No transform or migration receipt is invented.
 
 The old package paths `./core`, `./schema`, and `./ids` are removed in favor of
-the explicit paths in [API.md](./API.md). `./bundle` remains unavailable until
-S-03.
+the explicit paths in [API.md](./API.md). `./bundle` is a current embedded-only
+export with all seven runtime names (`STRUCT_BUNDLE_LIMITS_PROFILE`,
+`STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`, `StructBundleError`,
+`createStructBundle`, `decodeStructBundle`, `encodeStructBundle`,
+`verifyStructBundle`); it follows the ADR-0001 contract (direct handle,
+async decode with structured rejection, byte encoder with structured throw for
+forged handles). Its external-payload path requires the full flat resolver
+configuration (`resolverExecutor`, `resolverPolicy`, `resolverBudget`,
+`resolverHostSupervisor`, optional `resolverSignal`); without it, external
+payloads fail closed with `UNRESOLVED`. The public external-bytes decode
+seam (`decodeStructBundle`) is wired through the private external core and
+is part of the current surface. Bundle creation, value verification, and the
+public versioned limits profile are implemented at the current runtime
+baseline; the external resolver wiring is public through the decode seam. The
+isolated resolver/executor protocol and its execution driver are implemented
+privately in-tree but are not public surface; the real-host conformance
+harness is implemented in-tree as test-only evidence and is not public surface;
+full S-03/S-04 acceptance remains open.
 
 ## Staged migration contract
 
@@ -75,6 +91,10 @@ First-release evidence is an exact package version and tarball digest, declared
 export map and compatibility matrix, source-boundary/type/build/test evidence,
 a clean packed-consumer install proof, and recorded renderer/profile evidence
 where relevant. Those gates establish an **implemented, unreleased** artifact;
-they do not publish it. A **released** package additionally needs separately
+they do not publish it. Because README.md, CONTRACT.md, and MIGRATION.md ship in
+the package file list, a documentation correction changes the packed contents:
+any application repin needs a freshly packed artifact with its own digest and
+installed-consumer proof at an exact head. No application repin is part of this
+documentation change. A **released** package additionally needs separately
 authorized registry publication, install proof, immutable artifact digest, and
 a release record.

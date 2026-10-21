@@ -15,14 +15,45 @@ remains generic orchestration and owns none of these domain models.
 
 ## State and evidence
 
-**Current** at base `6ecb78d1753b847ec7295bf45f43237225663728`: this is a
-private `0.0.0` package with source-neutral document/codecs/IDs/recovery/XHTML/
-EPUB code. It has no runtime `StructBundle`, bundle decoder or verifier,
-exact-pinned external consumer, registry release, or publish workflow.
+**Current runtime baseline** (the cutover candidate head; the exact commit is
+recorded in the release packet; the previous baseline
+`e9ea4b8be0b92e6f35262da572a855216286716c` is superseded by it; this change
+touches no runtime code):
+this is a private `0.0.0` package with source-neutral document/codecs/IDs/
+recovery/XHTML/EPUB capabilities plus a current embedded-only public
+`./bundle` facade that exports all seven runtime names:
+`STRUCT_BUNDLE_LIMITS_PROFILE`, `STRUCT_BUNDLE_LIMITS_PROFILE_VERSION`,
+`StructBundleError`, `createStructBundle`, `decodeStructBundle`,
+`encodeStructBundle`, `verifyStructBundle`. The facade returns direct
+handles and throws/rejects the documented structured `StructBundleError`;
+decode is always async (`Promise<VerifiedStructBundle>`); encode returns
+`Uint8Array`. When given the full flat resolver configuration (`resolverExecutor`,
+`resolverPolicy`, `resolverBudget`, `resolverHostSupervisor`, optional
+`resolverSignal`), `decodeStructBundle` resolves external assets through the
+private external core; without it, external payloads fail closed with
+`UNRESOLVED` (`stage: 'assets'`, `code: 'UNRESOLVED'`). The isolated
+resolver/executor protocol and its execution driver are implemented privately
+in-tree but are not public surface. The public external-bytes decode seam
+(`decodeStructBundle`) is part of the current surface; the real-host
+conformance harness is implemented in-tree as test-only evidence and is not
+public surface; full S-03/S-04 acceptance remains separately pending.
+There is no exact-pinned external consumer, registry release, or publish
+workflow.
 
 **Documented target** is the ADR-0001 contract in [CONTRACT.md](./CONTRACT.md):
 a source-neutral package with a fail-closed verified `StructBundle` boundary.
-The Bundle facade is planned for S-03 and is not a current export.
+The current embedded facade (`createStructBundle`, `verifyStructBundle`,
+direct-handle return, async `decodeStructBundle`, byte-returning
+`encodeStructBundle`, structured `StructBundleError`, and the frozen
+versioned limits profile) is implemented at the current runtime baseline; the
+isolated resolver/executor protocol and its execution driver are implemented
+privately in-tree but are not public surface. The public external-bytes
+decode seam (`decodeStructBundle`) is part of the current surface; the
+real-host conformance harness is implemented in-tree as test-only evidence and
+is not public surface; full S-03/S-04 acceptance remains separately pending.
+
+**Stage status:** Stage 1 is implemented and unreleased; it does not complete
+S-03, S-04, or E-02, and it does not activate a release, route, or writer.
 
 **Implemented, unreleased** means exact code and local evidence exist, but not
 a package or application release. **Released** requires an exact registry
@@ -57,5 +88,8 @@ subpaths and the bounded deprecated-alias window.
 
 [CONTRACT.md](./CONTRACT.md) is the normative package contract; it links to
 ADR-0001 for the complete planned Bundle protocol. [MIGRATION.md](./MIGRATION.md)
-records source provenance and the staged consumer migration. This bootstrap
-package remains private and has no publishing workflow.
+records source provenance and the staged consumer migration. These contract
+documents ship in the package file list, so this documentation correction
+requires a fresh packed artifact, digest, and installed-consumer proof before
+any application repin; no application repin is part of this change. The
+bootstrap package remains private and has no publishing workflow.
