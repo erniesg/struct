@@ -216,6 +216,7 @@ function parseInline(value: unknown, path: string): StructInline {
       'targetIds',
       'bold',
       'italic',
+      'code',
       'verticalAlign',
       'compactMathAtom',
       'semanticRole',
@@ -233,6 +234,7 @@ function parseInline(value: unknown, path: string): StructInline {
       'targetIds',
       'bold',
       'italic',
+      'code',
       'verticalAlign',
       'compactMathAtom',
       'semanticRole',
@@ -270,6 +272,9 @@ function parseInline(value: unknown, path: string): StructInline {
       : {}),
     ...(has(parsed, 'italic')
       ? { italic: booleanValue(parsed.italic, `${path}.italic`) }
+      : {}),
+    ...(has(parsed, 'code')
+      ? { code: booleanValue(parsed.code, `${path}.code`) }
       : {}),
     ...(has(parsed, 'verticalAlign')
       ? {
